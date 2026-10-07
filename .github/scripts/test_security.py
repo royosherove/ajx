@@ -13,6 +13,7 @@ SCANNER = shutil.which(sys.argv[1] if len(sys.argv) > 1 else "gitleaks")
 sys.argv[1:] = []
 if not SCANNER:
     raise SystemExit("Gitleaks is required.")
+SCANNER = str(Path(SCANNER).resolve())
 
 
 class PublicationChecks(unittest.TestCase):

@@ -1,9 +1,12 @@
 # Working on AJX
 
 Read README.md, CONTRIBUTING.md, and SECURITY.md before changing behavior.
-The skill lives in `skills/ajxv2`; the CLI is `skills/ajxv2/bin/ajx2`.
+The skill lives in `skills/ajx`; the CLI is `skills/ajx/bin/ajx`.
+AJX v1 is the first public version. Keep public docs focused on user needs and
+shipped behavior; exclude private case studies, internal planning, and
+unsupported performance or launch claims.
 
-Run `python3 -I skills/ajxv2/tests/test_ajx2.py` for relevant code changes.
+Run `python3 -I skills/ajx/tests/test_ajx.py` for relevant code changes.
 Use synthetic fixtures and fake harnesses. Do not run live agent or cloud trials
 as part of ordinary tests.
 

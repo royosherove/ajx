@@ -18,6 +18,8 @@ Before changing visibility or tagging a release:
 6. Have the repository owner explicitly authorize the visibility change or
    release. Repository preparation does not publish it automatically.
 
-The GitHub repository starts from a cleaned source snapshot with fresh history.
-Historical design and review documents describe development before that
-snapshot; their findings are retained for context, not as release certification.
+AJX v1 is the first public version. Keep the package version, CLI version output,
+documentation, and any release tag consistent. Review public claims against the
+shipped behavior and evidence available to readers. Report projections as modeled
+and keep unsupported performance, adoption, and compatibility claims out of the
+release material.

@@ -4,8 +4,8 @@ Use Python 3.11 or newer on macOS or Linux. The runtime and offline tests use
 only the Python standard library.
 
 ```sh
-python3 -I skills/ajxv2/tests/test_ajx2.py
-python3 skills/ajxv2/bin/ajx2 --help
+python3 -I skills/ajx/tests/test_ajx.py
+python3 skills/ajx/bin/ajx --help
 ```
 
 Keep changes focused. Explain the problem, the resulting behavior, and how you

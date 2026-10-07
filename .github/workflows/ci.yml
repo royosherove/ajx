@@ -27,9 +27,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Offline regression tests
-        run: python -I skills/ajxv2/tests/test_ajx2.py
+        run: python -I skills/ajx/tests/test_ajx.py
       - name: CLI smoke test
-        run: python skills/ajxv2/bin/ajx2 --help
+        run: |
+          python skills/ajx/bin/ajx --help
+          python skills/ajx/bin/ajx --version
 
   security:
     name: Secrets and privacy

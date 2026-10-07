@@ -1,0 +1,109 @@
+# Annotated example: compare how three agent setups fare at the same CLI task.
+[trial]
+id = "agentcore-local-01"
+product = "agentcore-cli"
+product_version_cmd = "agentcore --version"
+workspace_root = "/tmp"
+repetitions = 2                   # variance: min/median/max per cell in the matrix report
+parallel = 1                      # keep 1 for comparable wall clock
+timeout_seconds = 1800
+narrate_timeout_seconds = 900
+max_budget_usd = 5
+order_seed = 42                   # interleaved shuffled order: all cells r1, then r2 ...
+cache = "isolated"
+
+[task]
+prompt_file = "task-prompt.md"
+materials = ["https://github.com/aws/agentcore-cli"]
+human = "unavailable"
+# identity_cmd = "aws sts get-caller-identity --profile <task profile>"   # tasks that use an account: the
+#                                 # account the worker acts in; doctor runs it in the worker's own tool shell
+
+# [env]                           # extra worker env. Not for credentials the model also reads (Bedrock
+# MY_FLAG = "1"                   # reads AWS_*): doctor warns on such collisions and on values that the
+#                                 # harness settings or ~/.zshenv replace before the agent sees them
+
+# [[preflight]]                   # must pass before each worker starts, in the verify/teardown env;
+# name = "task credentials work"  # a task whose cleanup cannot authenticate never starts
+# run = "aws sts get-caller-identity --profile <task profile>"
+# allow_auth_errors = true        # only for a check that expects access to be denied
+# A complete cloud task (credential preflight, tagged teardown, separate model profile): aws-cloud/
+
+[[setup]]
+run = "git init -q && git -c user.name=ajx -c user.email=ajx@example.com commit -q --allow-empty -m start"
+
+[[verify]]
+name = "an agent project was created"
+type = "file_exists"
+path = "**/pyproject.toml"
+
+[[verify]]
+name = "local invoke response was saved"
+type = "shell"
+run = "test -s response.txt && grep -qi 'hello' response.txt"
+scope = "proves a non-empty response containing 'hello' was written; does not prove it came from the agent runtime"
+
+[[teardown]]
+run = "true"                      # for cloud tasks: find and delete resources tagged with $AJX_RUN_TOKEN
+
+[reporter]
+harness = "claude-code"
+model = "opus"
+auth = "inherit"
+
+# ---- auth profiles (optional; secrets are referenced from the caller's env, never stored) ----
+[auth.bedrock-sandbox]               # the model's credentials; the task's account is [task] identity_cmd
+type = "claude-bedrock"
+env = { AWS_PROFILE = "sandbox", AWS_REGION = "us-east-1" }
+identity_cmd = ["aws", "sts", "get-caller-identity", "--profile", "sandbox"]
+
+[auth.openai]
+type = "openai-api"
+env = { OPENAI_API_KEY = "${OPENAI_API_KEY}" }
+
+# ---- a harness ajx does not know, declared without code ----
+[adapters.opencode]
+execute = ["opencode", "run", "{prompt}"]
+model_args = ["--model", "{model}"]
+version = ["opencode", "--version"]
+
+# ---- matrix cells ----
+[[cells]]
+id = "cc"
+harness = "claude-code"
+models = ["sonnet", "opus"]       # one cell per model: cc-sonnet, cc-opus (`--cells cc` selects both)
+config = "clean"
+auth = "bedrock-sandbox"
+# permission_mode = "bypassPermissions"   # claude-code only; default bypasses prompts (headless)
+# permission_args = ["--yolo"]             # codex/gemini-cli/cursor-agent/copilot-cli override of their auto-approve flag
+# effort = "high"
+# args = []                                # extra harness args
+# env = {}                                 # extra worker env (values are not recorded)
+
+[[cells]]
+id = "cc-sonnet-user"
+harness = "claude-code"
+model = "sonnet"
+config = "user"                   # the user's own skills/MCP/CLAUDE.md: tests the "my setup" experience
+auth = "bedrock-sandbox"
+
+[[cells]]
+id = "kiro-sonnet"
+harness = "kiro-cli"
+model = "claude-sonnet-4.5"
+
+[[cells]]
+id = "codex-gpt5"
+harness = "codex"
+model = "gpt-5"                   # one model; names pass through to the harness's --model unchanged
+auth = "openai"
+
+[[cells]]
+id = "opencode-default"
+harness = "opencode"
+
+# per-cell runner example (docker image must contain the harness and its login/credentials via env)
+# [[cells]]
+# id = "cc-in-docker"
+# harness = "claude-code"
+# runner = { type = "docker", image = "my/agent-sandbox:latest", mounts = ["~/.claude:/root/.claude"] }

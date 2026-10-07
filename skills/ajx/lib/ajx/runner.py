@@ -1,0 +1,539 @@
+"""Cell lifecycle orchestration. Each (cell, repetition) is one ordinary AJX run.
+
+Stages (resumable; each writes a marker in state.json):
+  prepare -> execute -> verify -> teardown -> normalize -> narrate -> extract -> measure -> render -> archive
+
+Rules:
+- A stage runs once its prerequisites reached a terminal status (done, error, or interrupted);
+  later stages degrade gracefully so the two primary artifacts exist even for a failed task.
+- `execute` is never retried implicitly: a run whose worker crashed or was interrupted keeps
+  its evidence and is marked `interrupted`; redoing the task means a new repetition.
+- No worker starts unless every [[preflight]] passed in that run's prepare stage.
+- Teardown runs once execute has started, including on a later invocation after a crash. Its
+  stage status says it ran; state["teardown"]["status"] says whether it could have cleaned up.
+- Workspaces always end up archived under the run dir (or on prepare failure) so the shared
+  workspace root never reveals sibling runs.
+"""
+
+import json
+import os
+import platform
+import secrets
+import shutil
+import socket
+import subprocess
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+from . import envcheck, plugins, reporter, render, spec as specmod
+from .evidence import assign_ids, build_digest, isolation_scan, measure_run
+from .util import kill_group, now, read_json, run_shell, skill_fingerprint, write_json
+
+STAGES = ("prepare", "execute", "verify", "teardown", "normalize", "narrate", "extract",
+          "measure", "render", "archive")
+PREREQS = {"execute": ("prepare",), "verify": ("execute",), "teardown": ("prepare",),
+           "normalize": ("execute",), "narrate": ("normalize",), "extract": ("narrate",),
+           "measure": ("normalize",), "render": ("measure",), "archive": ("teardown",)}
+TERMINAL = ("done", "error", "interrupted")
+NOT_REDOABLE = ("prepare", "execute")
+NOT_REDOABLE_AFTER_ARCHIVE = ("narrate",)   # resume needs the original cwd and harness config
+CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "credentials", "token.json", "tokens.json")
+
+
+class LockedError(RuntimeError):
+    pass
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def acquire_lock(out_dir):
+    """One ajx per matrix directory: a second run would mark live workers interrupted and
+    archive workspaces still in use."""
+    path = Path(out_dir) / ".lock"
+    if path.exists():
+        info = read_json(path, {}) or {}
+        same_host = info.get("host") == socket.gethostname()
+        if same_host and info.get("pid") and _pid_alive(int(info["pid"])):
+            raise LockedError(f"another ajx (pid {info['pid']}) is running this matrix since {info.get('at')}; "
+                              f"stop it or wait. Remove {path} only if that process is gone.")
+        if not same_host:
+            raise LockedError(f"lock held by {info.get('host')} (pid {info.get('pid')}); remove {path} if stale")
+    write_json(path, {"pid": os.getpid(), "host": socket.gethostname(), "at": now()})
+    return path
+
+
+def release_lock(path):
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+
+CACHE_VARS = ("npm_config_cache", "YARN_CACHE_FOLDER", "PNPM_STORE_DIR", "UV_CACHE_DIR",
+              "PIP_CACHE_DIR", "POETRY_CACHE_DIR", "GOCACHE", "GOMODCACHE", "BUN_INSTALL_CACHE_DIR",
+              "DENO_DIR", "NUGET_PACKAGES", "GRADLE_USER_HOME")
+
+DEFAULT_PROBES = {"python": ["python3", "--version"], "node": ["node", "--version"],
+                  "npm": ["npm", "--version"], "uv": ["uv", "--version"], "git": ["git", "--version"],
+                  "docker": ["docker", "--version"]}
+
+SENSITIVE_NAME_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AWS_", "GOOGLE_", "ANTHROPIC_",
+                        "OPENAI_", "AZURE_", "GEMINI_", "CURSOR_", "COPILOT_", "GH_", "CLAUDE_CODE_USE")
+
+JOURNEY_UNAVAILABLE = "unavailable"
+
+
+def _probe(argv):
+    if not argv or not shutil.which(argv[0]):
+        return None
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        text = (out.stdout or out.stderr).strip()
+        return text.splitlines()[0][:160] if text else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _rand():
+    return secrets.token_hex(5)
+
+
+class Run:
+    def __init__(self, spec, cell, rep, log):
+        self.spec, self.cell, self.rep, self.log = spec, cell, rep, log
+        self.run_id = f"{cell['id']}-r{rep}"
+        self.out_dir = Path(spec["trial"]["output_dir"])
+        self.run_dir = self.out_dir / "runs" / self.run_id
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.state_path = self.run_dir / "state.json"
+        self.state = read_json(self.state_path, {"stages": {}})
+        self.harness = specmod.harness_for(spec, cell["harness"])
+        self.auth = specmod.auth_for(spec, cell)
+        self.runner = specmod.runner_for(spec, cell)
+
+    # ------------------------------------------------------------------ state
+
+    def save(self):
+        write_json(self.state_path, self.state)
+
+    def status(self, stage):
+        return self.state["stages"].get(stage, {}).get("status")
+
+    def done(self, stage):
+        return self.status(stage) == "done"
+
+    def mark(self, stage, status, **extra):
+        self.state["stages"][stage] = {"status": status, "at": now(), **extra}
+        self.save()
+
+    def ctx(self):
+        paths = self.state.get("paths", {})
+        archived = self.state.get("archived", {})
+        env = specmod.worker_env(self.spec, self.cell, self.auth)
+        if self.spec["trial"]["cache"] == "isolated" and paths.get("cache_dir"):
+            env.update({v: str(Path(paths["cache_dir"]) / v.lower()) for v in CACHE_VARS})
+        workspace = archived.get("workspace") or paths.get("workspace") or str(self.run_dir / "workspace")
+        config_dir = archived.get("config_dir") or paths.get("config_dir", "")
+        return {
+            "spec": self.spec, "cell": self.cell, "run_dir": self.run_dir, "workspace": Path(workspace),
+            "config_dir": config_dir, "cache_dir": paths.get("cache_dir", ""),
+            "run_token": self.state.get("run_token", ""),
+            "timeout": int(self.spec["trial"]["timeout_seconds"]),
+            "narrate_timeout": int(self.spec["trial"]["narrate_timeout_seconds"]),
+            "prompt_text": self.spec["task"]["prompt_text"], "state": self.state, "env": env,
+            "unset_env": self.auth.unset(), "runner": self.runner, "auth": self.auth,
+            "check_env": {**env, "AJX_RUN_TOKEN": self.state.get("run_token", "")},
+        }
+
+    def _shell_env(self, ctx):
+        return envcheck.command_env(ctx["env"], ctx["unset_env"], ctx["run_token"])
+
+    # ------------------------------------------------------------------ stages
+
+    def stage_prepare(self):
+        if self.runner.name == "local" and not self.harness.available():
+            raise RuntimeError(f"harness binary {self.harness.binary!r} not found on PATH")
+        root = Path(self.spec["trial"]["workspace_root"])
+        root.mkdir(parents=True, exist_ok=True)
+        # Unnamed random dirs: nothing in the path reveals an evaluation, a cell, or a sibling run.
+        paths = {"workspace": str((root / _rand()).resolve()), "config_dir": str((root / _rand()).resolve()),
+                 "cache_dir": str((root / _rand()).resolve())}
+        for p in paths.values():
+            Path(p).mkdir(parents=True, exist_ok=False)
+        self.state["paths"] = paths
+        # A retry after a failed prepare (say, a preflight) must not reuse the first attempt's archive:
+        # ctx() prefers archived paths (this worker would land inside the report dir), and a done
+        # archive stage would leave these new dirs, and any copied credentials, in workspace_root.
+        self.state.pop("archived", None)
+        self.state["stages"].pop("archive", None)
+        self.state["run_token"] = _rand()
+        self.save()
+        if self.spec["task"]["fixture_dir"]:
+            shutil.copytree(self.spec["task"]["fixture_dir"], paths["workspace"], dirs_exist_ok=True)
+        ctx = self.ctx()
+        self.auth.prepare(ctx)
+        problems = self.auth.problems()
+        if self.spec["preflight"]:  # same shell and env as verify/teardown: a run that cannot clean up never starts
+            preflight = envcheck.run_preflight(self.spec["preflight"], ctx["workspace"], self._shell_env(ctx),
+                                               stop_on_failure=True)
+            write_json(self.run_dir / "preflight.json", preflight)
+            failed = [c for c in preflight if not c["passed"]]
+            if failed:
+                raise RuntimeError(f"preflight {failed[0]['name']!r} failed ({envcheck.preflight_failure(failed[0])}); "
+                                   "the worker was not started")
+        setup_results = []
+        for cmd in self.spec["setup"]:
+            res = run_shell(cmd["run"], ctx["workspace"], timeout=cmd["timeout"], env=self._shell_env(ctx))
+            setup_results.append({k: res[k] for k in ("cmd", "exit_code", "timed_out", "started_at",
+                                                       "stopped_at", "stdout", "stderr")})
+            write_json(self.run_dir / "setup.json", setup_results)
+            if res["exit_code"] != 0:
+                raise RuntimeError(f"setup command failed: {cmd['run']!r} exit={res['exit_code']}")
+        write_json(self.run_dir / "setup.json", setup_results)
+        probes = {k: _probe(v) for k, v in DEFAULT_PROBES.items()}
+        probes["os"] = f"{platform.system()} {platform.release()} {platform.machine()}"
+        checks, view = envcheck.inspect_cell(self.spec, self.cell, self.harness, self.auth, self.runner,
+                                             ctx["workspace"], ctx, identities=True)
+        snapshot = {
+            "taken_at": now(), "probes": probes,
+            "harness": {"name": self.harness.name, "version_before": self.harness.version(),
+                        "available": self.harness.available(), "verified_live": self.harness.verified_live,
+                        "clean_supported": self.harness.clean_supported, "can_resume": self.harness.can_resume,
+                        "telemetry": self.harness.telemetry},
+            "product_version_before": self._product_version(ctx),
+            "auth": {**self.auth.describe(), "profile": self.auth.profile, "problems": problems,
+                     "identity": checks["auth_identity"],
+                     **({"provider_hint": self.auth.provider_hint(view["effective"])}
+                        if hasattr(self.auth, "provider_hint") else {})},
+            "task_identity": checks["task_identity"],
+            "default_aws_identity": checks["default_aws_identity"],
+            "env_checks": envcheck.record(checks),
+            "runner": self.runner.describe(),
+            "worker_env_names": sorted(ctx["env"]),
+            "caller_env_names": sorted(k for k in os.environ if any(h in k for h in SENSITIVE_NAME_HINTS)),
+            "cache_state": "isolated empty per-run package caches" if self.spec["trial"]["cache"] == "isolated"
+                           else "shared caller caches (may be warm)",
+            "config": self.cell["config"],
+        }
+        write_json(self.run_dir / "environment.json", snapshot)
+        if problems:
+            self.log(f"[{self.run_id}] auth warnings: {problems}")
+        for warning in envcheck.warnings(checks, self.auth, view) + [envcheck.default_identity_warning(checks)]:
+            if warning:
+                self.log(f"[{self.run_id}] env warning: {warning}")
+        if checks["task_identity"] and not checks["task_identity"]["ok"]:
+            self.log(f"[{self.run_id}] task identity check failed in the worker's tool shell: "
+                     f"{checks['task_identity']['output']}")
+
+    def _product_version(self, ctx):
+        cmd = self.spec["trial"].get("product_version_cmd")
+        if not cmd:
+            return None
+        res = run_shell(cmd, ctx["workspace"], timeout=60, env=self._shell_env(ctx))
+        text = (res["stdout"] or res["stderr"]).strip()
+        return text.splitlines()[0][:160] if res["exit_code"] == 0 and text else f"unavailable (exit {res['exit_code']})"
+
+    def stage_execute(self):
+        ctx = self.ctx()
+        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model')}")
+        # Record what we can before launching so a crash mid-run still leaves a findable session.
+        planned = self.harness.plan(ctx) or {}
+        self.state["execute"] = {**planned, "started_at": now(), "stopped_at": None, "stop_reason": "running"}
+        self.save()
+        proc = self.harness.execute(self.ctx())
+        stop = "timeout" if proc["timed_out"] else ("exit" if proc["exit_code"] == 0 else f"exit_{proc['exit_code']}")
+        self.state["execute"] = {**self.state["execute"], **proc, "stop_reason": stop}
+        self.save()
+
+    def stage_verify(self):
+        ctx = self.ctx()
+        results = []
+        started = now()
+        for check in self.spec["verify"]:
+            plugin = plugins.get("check", check["type"])()
+            try:
+                res = plugin.run(check, ctx)
+            except Exception as exc:  # noqa: BLE001
+                res = {"passed": False, "detail": f"check crashed: {type(exc).__name__}: {exc}"}
+            # A check that could not authenticate says nothing about the agent's work, pass or fail
+            # (`! aws ... | grep -q i-` passes when aws has no credentials). stderr only: stdout is
+            # often the product's own output (a 401 page, CloudTrail records, lint codes).
+            errors = [] if check.get("allow_auth_errors") else envcheck.auth_error_lines(res.get("stderr"))
+            results.append({"name": check["name"], "type": check["type"], "scope": check.get("scope"),
+                            "definition": {k: v for k, v in check.items() if k != "name"}, **res,
+                            **({"auth_errors": errors} if errors else {})})
+        passed = sum(1 for r in results if r["passed"])
+        total = len(results)
+        outcome = "not_run" if total == 0 else "succeeded" if passed == total else "partial" if passed else "failed"
+        write_json(self.run_dir / "verify.json", {
+            "window": {"start": started, "end": now()}, "passed": passed, "total": total, "outcome": outcome,
+            "note": "ajx reporter verification, run after the task agent stopped; not part of the task",
+            "checks_with_auth_errors": [r["name"] for r in results if r.get("auth_errors")],
+            "checks": results})
+
+    def stage_teardown(self):
+        ctx = self.ctx()
+        results = []
+        pid = (self.state.get("execute") or {}).get("pid")
+        if pid and self.status("execute") == "done" and not self.state["execute"].get("reaped"):
+            kill_group(int(pid))  # servers the agent left running were kept alive for verification
+            self.state["execute"]["reaped"] = True  # a redone teardown must not signal a reused pid
+            self.save()
+        ran = Path(ctx["workspace"]).exists()
+        if ran:
+            for cmd in self.spec["teardown"]:
+                res = run_shell(cmd["run"], ctx["workspace"], timeout=cmd["timeout"], env=self._shell_env(ctx))
+                results.append({**{k: res[k] for k in ("cmd", "exit_code", "timed_out", "started_at", "stopped_at",
+                                                        "stdout", "stderr")},
+                                "auth_errors": [] if cmd.get("allow_auth_errors")
+                                else envcheck.auth_error_lines(res["stdout"], res["stderr"])})
+        write_json(self.run_dir / "teardown.json", results)
+        self.state["teardown"] = envcheck.teardown_summary(results, len(self.spec["teardown"]), ran)
+        self.save()
+        if self.state["teardown"]["status"] != "ok":
+            self.log(f"[{self.run_id}] teardown {self.state['teardown']['status']}: resources the task created may "
+                     f"still exist; see teardown.json, then `ajx run <trial> --cells {self.cell['id']} --stages teardown,render`")
+        env = read_json(self.run_dir / "environment.json", {})
+        env["harness_version_after"] = self.harness.version()
+        env["product_version_after"] = self._product_version(ctx) if Path(ctx["workspace"]).exists() else None
+        write_json(self.run_dir / "environment.json", env)
+
+    def stage_normalize(self):
+        ctx = self.ctx()
+        tel = self.harness.normalize(ctx, "execute")
+        assign_ids(tel)
+        tel["isolation_flags"] = isolation_scan(tel, self.spec, self.state)
+        if self.status("execute") != "done":
+            tel["limitations"].append(f"execute stage status {self.status('execute')}: evidence may be partial")
+        write_json(self.run_dir / "telemetry.execute.json", tel)
+        with (self.run_dir / "events.jsonl").open("w", encoding="utf-8") as fh:
+            for ev in tel["events"]:
+                fh.write(json.dumps({k: v for k, v in ev.items() if k != "input_raw"}, ensure_ascii=False) + "\n")
+        verify = read_json(self.run_dir / "verify.json", {})
+        environment = read_json(self.run_dir / "environment.json", {})
+        (self.run_dir / "digest.md").write_text(
+            build_digest(self.spec, self.cell, self.state, tel, verify, environment), encoding="utf-8")
+        (self.run_dir / "digest.narrator.md").write_text(
+            build_digest(self.spec, self.cell, self.state, tel, verify, environment, include_verification=False),
+            encoding="utf-8")
+
+    def _write_journey(self, text, provenance):
+        header = f"<!-- provenance: {provenance} -->\n"
+        (self.run_dir / "journey.md").write_text(header + text.strip() + "\n", encoding="utf-8")
+        self.state["journey_provenance"] = provenance
+        self.save()
+
+    def stage_narrate(self):
+        ctx = self.ctx()
+        tel = read_json(self.run_dir / "telemetry.execute.json")
+        if self.status("execute") not in ("done", "interrupted") or tel is None:
+            self._write_journey(
+                f"# Journey unavailable\n\nThe task never ran to a recordable stopping point (execute stage status: "
+                f"{self.status('execute')}). There is no agent experience to narrate; see state.json and digest.md.",
+                JOURNEY_UNAVAILABLE)
+            return
+        narrator_digest = self.run_dir / "digest.narrator.md"
+        digest = (narrator_digest if narrator_digest.exists() else self.run_dir / "digest.md").read_text(encoding="utf-8")
+        prompt = reporter.narrate_prompt(self.spec, self.cell, self.run_id, digest)
+        (self.run_dir / "narrate.prompt.md").write_text(prompt, encoding="utf-8")
+        proc, text = None, ""
+        if self.harness.can_resume and (self.state.get("execute") or {}).get("session_id"):
+            try:
+                proc = self.harness.narrate(ctx, prompt)
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"[{self.run_id}] self-narration failed: {exc}")
+                proc = None
+            if proc:
+                self.state["narrate"] = proc
+                self.save()
+                ntel = self.harness.normalize(ctx, "narrate", exclude_message_ids=tel.get("message_ids") or [])
+                write_json(self.run_dir / "telemetry.narrate.json", ntel)
+                text = (ntel.get("final_text") or "").strip()
+        if len(text) >= 200:
+            self._write_journey(text, "self-narrated: the original task agent, resumed after the task with tools disabled")
+            return
+        if proc:
+            self.log(f"[{self.run_id}] self-narration empty or short; falling back to a labeled reconstruction")
+        try:
+            result = reporter.reconstruct(self.spec, self.run_dir)
+        except Exception as exc:  # noqa: BLE001
+            self._write_journey(f"# Journey unavailable\n\nSelf-narration was not possible and the reporter "
+                                f"reconstruction failed: {type(exc).__name__}: {exc}. The evidence digest is in digest.md.",
+                                JOURNEY_UNAVAILABLE)
+            raise
+        self.state["narrate"] = {**result["proc"], "reconstruction": True}
+        if result["text"].strip():
+            self._write_journey(result["text"],
+                                "EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "
+                                "agent could not narrate (harness cannot resume or resume failed). No recollection is claimed.")
+        else:
+            self._write_journey("# Journey unavailable\n\nThe reporter returned no text.", JOURNEY_UNAVAILABLE)
+
+    def stage_extract(self):
+        if self.state.get("journey_provenance") == JOURNEY_UNAVAILABLE:
+            reporter.write_asks_stub(self.run_dir, "skipped: no journey to extract from")
+            return
+        result = reporter.extract(self.spec, self.run_dir)
+        self.state["extract"] = result["proc"]
+        self.save()
+
+    def stage_measure(self):
+        measure_run(self.spec, self.cell, self.run_dir, self.state)
+
+    def stage_render(self):
+        render.write_run_json(self.spec, self.cell, self.rep, self.run_dir, self.state, self.harness, self.auth,
+                              self.runner)
+        render.run_report(self.run_dir)
+
+    def stage_archive(self):
+        """Move the workspace and harness config under the run dir so later workers cannot discover
+        them; purge copied credentials; drop package caches; repoint evidence paths."""
+        paths = self.state.get("paths", {})
+        moved = dict(self.state.get("archived") or {})
+        try:
+            self.auth.cleanup(self.ctx())
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"[{self.run_id}] auth cleanup failed: {exc}")
+        for key, dest in (("workspace", "workspace"), ("config_dir", "harness-config")):
+            src = paths.get(key)
+            if src and Path(src).exists():
+                target = self.run_dir / dest
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.move(src, target)
+                moved[key] = str(target)
+        config_target = Path(moved.get("config_dir", ""))
+        if moved.get("config_dir") and config_target.exists():
+            for cred in config_target.rglob("*"):
+                if cred.is_file() and cred.name in CREDENTIAL_FILES:
+                    cred.unlink()
+        if paths.get("cache_dir") and Path(paths["cache_dir"]).exists():
+            shutil.rmtree(paths["cache_dir"], ignore_errors=True)
+        self.state["archived"] = moved
+        self.save()
+        # evidence pointers recorded before the move
+        for name in ("telemetry.execute.json", "telemetry.narrate.json", "run.json"):
+            data = read_json(self.run_dir / name)
+            if not data:
+                continue
+            changed = False
+            for holder, key in ((data, "transcript_path"), (data.get("evidence") or {}, "transcript_path")):
+                old = holder.get(key)
+                if old and paths.get("config_dir") and old.startswith(paths["config_dir"]) and moved.get("config_dir"):
+                    holder[key] = moved["config_dir"] + old[len(paths["config_dir"]):]
+                    changed = True
+            if changed:
+                write_json(self.run_dir / name, data)
+
+    # ------------------------------------------------------------------ driver
+
+    def _detect_interrupted(self):
+        if self.status("execute") == "running":
+            ex = self.state.get("execute") or {}
+            self.state["execute"] = {**ex, "stop_reason": "interrupted", "interrupted": True}
+            self.mark("execute", "interrupted", note="ajx was not running when this run was resumed; the worker "
+                                                     "may have been killed or finished unobserved")
+            self.log(f"[{self.run_id}] execute was interrupted; keeping its evidence, not re-running the task")
+
+    def _ready(self, stage):
+        return all(self.status(p) in TERMINAL for p in PREREQS.get(stage, ()))
+
+    def _skip(self, stage):
+        st = self.status(stage)
+        return st in ("done", "interrupted") or (stage == "execute" and st == "error")
+
+    def go(self, stages=None, keep_workspace=False):
+        self._detect_interrupted()
+        if stages:
+            unknown = [s for s in stages if s not in STAGES]
+            if unknown:
+                raise ValueError(f"unknown stage(s) {unknown}; stages are {list(STAGES)}")
+            blocked = [s for s in stages if s in NOT_REDOABLE and self.status(s) in TERMINAL]
+            if blocked:
+                self.log(f"[{self.run_id}] refusing to redo {blocked}: a task runs once per repetition; add a "
+                         f"repetition or delete {self.run_dir}")
+                return self.state
+            if self.state.get("archived"):
+                late = [s for s in stages if s in NOT_REDOABLE_AFTER_ARCHIVE]
+                if late:
+                    self.log(f"[{self.run_id}] refusing to redo {late} after archive: the session can no longer be "
+                             f"resumed from its original workspace; the existing journey is kept")
+                    stages = [s for s in stages if s not in late]
+            for s in stages:  # explicitly requested post-processing stages are redone
+                self.state["stages"].pop(s, None)
+            self.save()
+        wanted = [s for s in STAGES if not stages or s in stages]
+        if keep_workspace and "archive" in wanted:
+            wanted.remove("archive")
+        if self.status("execute") in TERMINAL and not self.done("teardown") and "teardown" not in wanted:
+            wanted.append("teardown")  # a crash between execute and teardown must still tear down
+        for stage in STAGES:
+            if stage not in wanted or self._skip(stage):
+                continue
+            if stage == "archive" and not self.state.get("paths"):
+                continue
+            if not self._ready(stage):
+                self.log(f"[{self.run_id}] skip {stage}: prerequisites {PREREQS.get(stage)} not reached")
+                continue
+            self.mark(stage, "running")
+            try:
+                getattr(self, f"stage_{stage}")()
+                self.mark(stage, "done")
+            except Exception as exc:  # noqa: BLE001
+                self.mark(stage, "error", error=f"{type(exc).__name__}: {exc}", trace=traceback.format_exc()[-3000:])
+                self.log(f"[{self.run_id}] {stage} failed: {exc}")
+                if stage == "prepare":
+                    self._safe("archive")
+                    break
+        return self.state
+
+    def _safe(self, stage):
+        try:
+            self.mark(stage, "running")
+            getattr(self, f"stage_{stage}")()
+            self.mark(stage, "done")
+        except Exception as exc:  # noqa: BLE001
+            self.mark(stage, "error", error=str(exc))
+
+
+def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=print, dry_run=False, synthesize=True):
+    out = Path(spec["trial"]["output_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+    unknown = [s for s in (stages or []) if s not in STAGES]
+    if unknown:
+        raise specmod.SpecError(f"unknown stage(s) {unknown}; stages are {list(STAGES)}")
+    plan = specmod.run_plan(spec, only_cells)
+    parallel = int(spec["trial"]["parallel"])
+    meta = read_json(out / "matrix-plan.json", {}) or {}
+    meta.update({
+        "trial_id": spec["trial"]["id"], "product": spec["trial"]["product"], "trial_file": spec["path"],
+        "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
+        "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
+        "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
+        "wall_clock_comparable": parallel == 1, "planned_at": now(),
+    })
+    write_json(out / "matrix-plan.json", meta)
+    shutil.copy2(spec["task"]["prompt_path"], out / "task-prompt.md")
+    if dry_run:
+        return meta
+    lock = acquire_lock(out)
+    try:
+        runs = [Run(spec, c, r, log) for c, r in plan]
+        if parallel == 1:
+            for run in runs:
+                run.go(stages, keep_workspace)
+        else:
+            with ThreadPoolExecutor(max_workers=parallel) as pool:
+                list(pool.map(lambda r: r.go(stages, keep_workspace), runs))
+        render.matrix_report(spec, synthesize=synthesize, log=log)
+    finally:
+        release_lock(lock)
+    return meta

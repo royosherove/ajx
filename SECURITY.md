@@ -18,7 +18,7 @@ Workers may run with tool approvals bypassed. Context isolation does not restric
 filesystem, network, or account permissions. Review the trial and use disposable
 workspaces and credentials with limited permissions.
 
-Model credentials and task credentials can resolve differently. Run `ajx2 doctor`
+Model credentials and task credentials can resolve differently. Run `ajx doctor`
 and confirm the account the worker's tool shell will use. Teardown attempts do
 not guarantee that every resource was removed; investigate failed cleanup and
 check the account after a cloud trial.

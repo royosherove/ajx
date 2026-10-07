@@ -1,85 +1,107 @@
 # AJX
 
-AJX (Agent Journey Experience) reviews how a product serves an agent attempting a real task. This repository contains AJX v2: one skill plus a deterministic CLI (`ajx2`) that runs the task in clean-context worker agents across a matrix of harnesses, models, configurations, and repetitions, then produces a journey, a set of evidence-backed asks, and a comparison across runs.
+See where AI agents struggle with your product, what it costs them, and what to fix.
 
-```
-interview -> trial.toml + task-prompt.md -> ajx2 run -> runs/<cell>-r<n>/{journey.md, asks.md, run.json, measurements.json, report.html}
-                                                      -> index.html, matrix.md, matrix.json
-```
+AJX (Agent Journey Experience) is an open-source method and toolkit for reviewing how an AI agent uses a product to complete a real task. It turns recorded sessions into a chronological journey and a prioritized list of product changes, linked to evidence, measured costs, and ways to verify each fix.
 
-## What is different from v1
+This is **AJX v1**, the first public version.
 
-| | AJX v1 | AJXv2 |
-|---|---|---|
-| Who runs the task | the user's own agent session | a fresh worker per cell, launched by `ajx2`, that never sees AJX material, the trial file, or other runs |
-| Harnesses | whatever the caller is | `claude-code`, `kiro-cli` (verified live); `codex`, `gemini-cli`, `cursor-agent`, `copilot-cli` (documented JSON formats, marked unverified until a live run); any other CLI via a no-code `[adapters.*]` template or a Python plugin |
-| Auth targets | implicit | 18 auth profile types (Anthropic API, Bedrock, Vertex, Foundry, Claude subscription, ChatGPT/OpenAI/custom providers, Gemini API/Vertex/login, Cursor, GitHub, Kiro, generic env) with identity checks and no stored secrets |
-| Where workers run | locally | `local`, `docker`, or any `wrapper` prefix (ssh, sandbox) |
-| Telemetry | manual | normalized per harness: event timestamps, per-message output tokens reconciled against session totals, tool calls with error flags, harness cost estimates labeled as such |
-| Verification | by the reporter | deterministic `[[verify]]` checks (`shell`, `file_exists`, `http`, plugins) run in their own window after the agent stops |
-| Narration | same session | the worker's own session is resumed with tools disabled; if the harness cannot resume, a labeled editorial reconstruction |
-| Asks | extracted by hand | fresh reporter session, schema-validated JSON, event references checked, costs computed by `ajx2` |
-| Matrix | not supported | interleaved seeded order, per-cell variance, comparability notes, optional cross-run ask clustering |
+## Who it is for
 
-The v1 rules still hold: first person journey, asks as a separate pass checked against evidence, measured vs inferred vs modeled, no invented findings, stable IDs, task cost separate from reporting cost.
+AJX is for developers, open-source maintainers, and product teams building CLIs, APIs, SDKs, and documentation that agents use. Run a review when you want to understand a specific task: where the agent got stuck, what it had to work around, which outputs it relied on, and whether it reached the intended result.
+
+A command can complete successfully while leaving an agent unsure what happened next. A task can finish after expensive retries or human intervention. AJX records the path to the result so those costs remain visible.
+
+## What you get
+
+| Output | What it helps you do |
+|---|---|
+| `asks.md` | Prioritize concrete product changes. Each ask includes the observation, supporting evidence, available time/token/tool-call costs, a priority rationale, and verification steps. Modeled savings are optional and state their assumptions. |
+| `journey.md` | Follow what the agent tried, what the product returned, and how later actions followed from earlier results. The original agent narrates where supported; reconstructions are labeled. |
+| `run.json`, `measurements.json` | Inspect the outcome, configuration, measurement sources, and gaps in the evidence. |
+| `report.html` | Read a run's asks, journey, timeline, and limitations in a local browser. |
+| `index.html`, `matrix.md`, `matrix.json` | Compare repetitions or agent configurations for the same task, with comparability notes. |
+
+Start with the asks to decide what to investigate. Follow their evidence references when reproducing an observation. The report also records helpful product behavior, required human intervention, and friction attributable to the agent or environment.
+
+Measured cost describes the run that happened. A modeled saving describes a possible improvement. A comparable follow-up run is needed to measure what a fix actually changed. Missing measurements remain missing.
+
+## How a review works
+
+1. **Define a real task.** Supply the instructions and materials a user would have, success criteria, and boundaries. Keep expected defects and reporting instructions out of the task prompt.
+2. **Run the task.** AJX starts a fresh worker session for each configuration and repetition, records available evidence, and runs your verification checks after the worker stops.
+3. **Review the journey and asks.** Narration and extraction happen after task execution. Code computes measured costs from telemetry; the reporting model explains observations and proposed changes.
+4. **Fix and rerun.** Preserve the baseline, remove the workaround for the fix being tested, and run a new comparable trial. Check both the specific behavior and the complete task outcome.
+
+Read the [FAQ](docs/FAQ.md) for scope, cost, evidence limits, and comparisons.
 
 ## Install
+
+Requirements: Python 3.11+ on macOS or Linux. AJX uses the Python standard library. Live reviews also need the selected agent CLI and credentials; report generation currently uses Claude Code.
 
 ```sh
 git clone https://github.com/royosherove/ajx.git
 cd ajx
 mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/ajxv2" ~/.claude/skills/ajxv2     # Claude Code
-export PATH="$PWD/skills/ajxv2/bin:$PATH"          # current shell
+ln -s "$PWD/skills/ajx" ~/.claude/skills/ajx
+export PATH="$PWD/skills/ajx/bin:$PATH"
+ajx --version
 ```
 
-Requirements: Python 3.11+ on macOS or Linux (standard library only). Live trials need the selected worker CLI and credentials; the reporter currently uses Claude Code. `ajx2 plugins` lists adapters and installed tools. No build step or cloud account is needed for the offline test suite.
+If a skill already exists at the destination, move it aside deliberately before installing. The `PATH` change applies to the current shell; add this checkout's `skills/ajx/bin` directory to your shell configuration to keep it.
 
-If a skill already exists at the symlink destination, move it aside deliberately before installing. To make the CLI available in later shells, add this checkout's `skills/ajxv2/bin` directory to your shell's `PATH`. The skill remains named `ajxv2` and the CLI remains `ajx2`.
+## Run your first review
 
-## Use
+In Claude Code:
 
-In Claude Code: `/ajxv2 I want to test <some CLI> for agent usability`, or name the matrix directly (one cell per harness with `models = [...]`, one run per model). Use model identifiers available in your installed harness and account. The coordinator interviews you for the task and boundaries, writes the trial, shows you the account the worker will act in (checked in the worker's own tool shell, separately from the model's credentials) and the run plan, and runs the matrix after your go.
+```text
+/ajx Review my CLI by having an agent complete a real task with its public documentation.
+```
 
-Directly:
+The coordinator helps define the task, agent configuration, verification checks, and permitted actions. It shows the plan and relevant account identities before starting a live trial.
+
+To configure a trial directly:
 
 ```sh
-ajx2 init trials/my-cli --product my-cli      # scaffold
+ajx init trials/my-cli --product my-cli
 $EDITOR trials/my-cli/trial.toml trials/my-cli/task-prompt.md
-ajx2 validate trials/my-cli/trial.toml
-ajx2 doctor   trials/my-cli/trial.toml        # availability; model vs task identity; env overrides; preflight
-ajx2 run      trials/my-cli/trial.toml        # resumable
-ajx2 status   trials/my-cli/trial.toml
-open trials/my-cli/ajx-reports/my-cli/<id>/index.html
+ajx validate trials/my-cli/trial.toml
+ajx doctor trials/my-cli/trial.toml
+# Review the plan, credentials, permissions, and possible costs before running:
+ajx run trials/my-cli/trial.toml
+ajx status trials/my-cli/trial.toml
 ```
 
-See [skills/ajxv2/examples/trial.toml](skills/ajxv2/examples/trial.toml) for every option, [skills/ajxv2/examples/aws-cloud/](skills/ajxv2/examples/aws-cloud/) for a task that uses a cloud account (task identity, credential preflight, tagged teardown, model credentials kept apart), and [skills/ajxv2/SKILL.md](skills/ajxv2/SKILL.md) for the coordinator flow and honesty rules.
+Open the `index.html` path printed by the runner. Local trials belong in the ignored `trials/` directory.
 
-Workers execute commands with the permissions of their process. A clean context is not a security sandbox. Use a disposable environment and limited credentials for live trials; cloud examples create billable resources. Reports and archived workspaces can contain task content, identifiers, and command output. Keep them private and review them before sharing; see [SECURITY.md](SECURITY.md).
+The [annotated trial file](skills/ajx/examples/trial.toml) covers the available settings. The [jq example](skills/ajx/examples/jq-smoke/) provides a small local task; its live agents still consume model usage. The [cloud example](skills/ajx/examples/aws-cloud/) shows account checks and teardown for a task that creates AWS resources.
 
-## Layout
+## Supported agent CLIs
 
-| Path | Purpose |
-|---|---|
-| `skills/ajxv2/SKILL.md` | coordinator instructions |
-| `skills/ajxv2/bin/ajx2` | CLI: init, plugins, doctor, validate, run, status, report |
-| `skills/ajxv2/lib/ajx2/` | `spec` (trial file), `plugins` (registry), `base` (contracts), `builtin/` (harness/auth/runner/check plugins), `runner` (lifecycle), `envcheck` (what the worker's harness and tool shell really see, task identity, preflight, credential errors in teardown/verify output), `evidence` (ids, digest, isolation scan, per-ask costs, v1 measurement), `reporter` (narrate/reconstruct/extract calls), `render` (asks.md, run.json, HTML, matrix), `mdlite` (markdown to HTML), `measure_v1.py` (unchanged v1 calculator) |
-| `skills/ajxv2/prompts/` | narrate, reconstruct, extract, synthesize prompts |
-| `skills/ajxv2/schemas/` | JSON schemas for structured reporter output |
-| `skills/ajxv2/references/` | v1 reporting and measurement references, annotation vocabulary |
-| `skills/ajxv2/tests/` | offline tests with synthetic harness fixtures and a fake harness |
-| `docs/` | design review and code review history |
-
-## Tests
+The bundled adapters cover Claude Code, Kiro CLI, Codex CLI, Gemini CLI, Cursor Agent, and GitHub Copilot CLI. Claude Code and Kiro CLI have been exercised in live development runs. The other adapters are marked unverified until their formats and behavior are confirmed in a live run.
 
 ```sh
-python3 -I skills/ajxv2/tests/test_ajx2.py
+ajx plugins
 ```
 
-The suite is offline and uses a fake `aws` command. It covers adapter parsing with synthetic Claude Code and Kiro streams, trial validation, evidence arithmetic, rendering, argv redaction, full lifecycles with a fake harness, interruption and resume, concurrency, credential cleanup, identity checks, and the example trials. It does not establish live compatibility with every installed harness version.
+This lists available adapters, installed tools, and verification status. Token coverage, session resumption, and configuration isolation differ by CLI. Use model identifiers supported by your installed CLI and account. See the [FAQ](docs/FAQ.md) and [architecture](docs/ARCHITECTURE.md) for details.
 
-## Contributing and license
+## Running safely
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and local security checks, and [the release checklist](docs/releasing.md) before publishing a release or changing repository visibility.
+Workers execute commands with the permissions of their process and may bypass interactive tool approvals. A fresh context is not a security sandbox. Use disposable environments and limited credentials, review setup and teardown commands, and investigate cleanup failures.
+
+Reports and archived workspaces may contain task content, account identifiers, or command output. Keep them private and review them before sharing. See [SECURITY.md](SECURITY.md).
+
+## Develop and contribute
+
+The offline suite uses synthetic fixtures and fake agents; it needs no model credentials or cloud account:
+
+```sh
+python3 -I skills/ajx/tests/test_ajx.py
+```
+
+The [coordinator skill](skills/ajx/SKILL.md), [reporting method](skills/ajx/references/reporting.md), and [measurement protocol](skills/ajx/references/measurement.md) describe how reviews work. Implementation and extension points are in [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and security checks, and [the release checklist](docs/releasing.md) before publishing a release.
 
 Licensed under the [MIT license](LICENSE).
