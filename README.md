@@ -122,6 +122,10 @@ python3 -I skills/ajx/tests/test_ajx.py
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [ARCHITECTURE.md](docs/ARCHITECTURE.md), the [coordinator skill](skills/ajx/SKILL.md), and the [reporting method](skills/ajx/references/reporting.md). The [release checklist](docs/releasing.md) covers later publication.
 
-For future work, the [execution environments proposal](docs/design/execution-environments.md) explores disposable AWS developer machines, explicit permissions, per-test skills/plugins/hooks, and reproducible scenario comparisons. These capabilities are not implemented.
+Proposed future work, not implemented:
+
+- [Agent environments](docs/design/execution-environments.md): configurable local, container, or remote execution, optional AWS hosting, permissions, and per-test skills/plugins/hooks.
+- [Live dashboard](docs/design/live-dashboard.md): local or remote viewing of each matrix item's status, trace, and artifacts while a trial is running.
+- [CI/CD and improvement loops](docs/design/ci-and-improvement-loops.md): headless pipeline evaluation, acceptance gates, and bounded product improvement with fresh retests.
 
 Licensed under [MIT](LICENSE).

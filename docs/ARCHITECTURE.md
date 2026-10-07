@@ -74,7 +74,17 @@ A cell may list `models = [...]`: it becomes one cell per model (`<id>-<model>`,
 
 ## Proposed extensions
 
-[Reproducible execution environments](design/execution-environments.md) describes
-a future scenario and permissions contract, disposable AWS developer machines,
-per-test skills/plugins/hooks, and independent completion checks. It is a design
-proposal, not implemented provisioning, extension controls, or sandbox enforcement.
+[Configurable agent environments](design/execution-environments.md) describes
+future local, container, or remote execution profiles, optional AWS hosting,
+permissions, per-test skills/plugins/hooks, and independent completion checks.
+Environment profiles, extension controls, and sandbox enforcement are proposed.
+
+[Live run dashboard](design/live-dashboard.md) describes a future local or remote
+view of matrix progress, incremental traces, and artifacts before completion,
+including partial-result labels and connection recovery. It can be developed
+independently of environment management.
+
+[CI/CD evaluation and improvement loops](design/ci-and-improvement-loops.md)
+describes proposed headless evaluation, acceptance policies, pipeline results,
+and bounded product changes followed by fresh matrix tests. The current CLI's
+process exit status is not the proposed usability acceptance gate.

@@ -1,4 +1,4 @@
-# Proposal: reproducible execution environments
+# Proposal: configurable agent environments
 
 **Status: proposed; not implemented.** Reviewed on 2026-10-07.
 
@@ -7,43 +7,37 @@ successfully across the environments and agent configurations our users have?**
 The machine, its permissions, and the agent's skills, plugins, and hooks should
 be explicit inputs alongside the harness, model, and product version.
 
-The first implementation should provision a disposable EC2 developer machine,
-with an isolated workspace, a declared permission profile, and a verified cleanup
-deadline. AgentCore is a candidate for a later managed backend. Provisioning is
-optional: local product reviews must continue to work without an AWS account.
+An **agent environment** is the execution context for the worker and its tools:
+operating system, installed software, files, permissions, network access, and
+resource limits. A profile describes that context; a backend determines where
+and how it runs. The same contract can apply to a local process, container,
+remote machine, or an environment hosted on AWS.
+
+Start with configurable local and container environments, then qualify remote
+backends. AWS is an optional hosting choice. A profile can attach to an existing
+environment or request a temporary one, with explicit ownership and cleanup.
+The purpose is to compare product usability under declared agent conditions.
 
 Today AJX has local, Docker, and wrapper runners, setup/verification/teardown
 checks, and recorded evidence. It does not provision these proposed environments
 or enforce the policies below. An isolated harness configuration is not a
 filesystem sandbox.
 
-## What to bring over from aws-bench
+## Environment profile and execution backend
 
-This review uses aws-bench commit
-[`542037a`](https://github.com/aws-bench/aws-bench/tree/542037acd5a63287cd0ba8182d864952cc0a1841).
-The following are design adaptations; no aws-bench implementation is copied.
+Keep the portable profile separate from backend-specific connection and hosting
+settings. A profile should declare its OS/architecture, initial tool inventory,
+workspace and directory access, installation privileges, sandbox, network policy,
+agent extensions, resource limits, and starting state.
 
-| Observed in aws-bench | Proposed use in AJX |
-|---|---|
-| Separate scenario infrastructure, task instructions, agent container, and verifier [1] | Separate the **worker machine** from the **product environment**. A CLI review may need only a machine; a deployment review also needs a disposable cloud target. |
-| Versioned datasets and a hash covering scenario definitions and scripts [1, 2] | Version task prompts, fixtures, environment recipes, permissions, and checks. Save their resolved hashes with every attempt so a comparison can be reproduced. |
-| Programmatic checks for mutation tasks, reference answers for diagnosis, and an optional reference solution [1] | Define success independently of the agent's claim. Use a reference solution to validate that a positive scenario is achievable; keep it outside the worker's view. |
-| Distinct role configuration and credential handling for agent, verifier, and lifecycle phases [3] | Separate provisioning, task, model-provider, and verifier/cleanup access. Give each phase only the access it needs and record identity provenance without credential values. |
-| Admission control permits shared read-only trials and holds mutating trials exclusively through reset [4] | Allocate a fresh environment per attempt initially. If targets are shared later, hold an exclusive lease across preparation, execution, verification, and reset. |
-| Post-trial reset and checks that refuse contaminated accounts [3] | Require evidence that the baseline was restored before reuse. Preserve cleanup failures as visible results and quarantine the affected environment. |
-| Reward, error, duration, token, and tool metrics [5] | Retain outcome and cost measurements, then connect them to product asks, gates, and journey events. The product team needs an explanation and a fix it can test. |
+The backend resolves that profile, reports which requirements it can enforce,
+and records the actual environment used. Selecting an AWS backend changes the
+hosting configuration; it does not change the task, acceptance checks, or
+definition of product usability.
 
-Two details need particular care. aws-bench's concurrency declaration is
-explicitly a scheduling choice, not an enforced IAM policy [6]. AJX must report
-declared, enforced, and observed permissions separately. Also, the reviewed
-aws-bench implementation uses a shared verifier environment [6]. Running trusted
-AJX verification outside a worker-controlled machine would be an additional
-design choice, not a capability inherited from aws-bench.
-
-The account machinery can remain optional. aws-bench also documents an
-experimental backend for existing accounts [7]. AJX's first cloud backend can
-use a dedicated test account supplied by the operator; automatically creating an
-Organization or an account fleet need not be a prerequisite.
+The product's external services, if a task uses them, remain part of its explicit
+setup, permissions, verification, and teardown contract. The environment feature
+manages the agent's execution context.
 
 ## The scenario is a contract
 
@@ -52,7 +46,7 @@ A scenario should answer these questions before a worker starts:
 | Contract | Required information |
 |---|---|
 | User goal | The task, intended user context, public materials supplied, and whether a human can answer questions. |
-| Starting state | Product absent or installed; fixtures; existing cloud resources; OS and architecture; tools already present; empty or warm caches. |
+| Starting state | Product absent or installed; fixtures and declared external dependencies; OS and architecture; tools already present; empty or warm caches. |
 | Environment needs | Shell, native binaries, package installation, outbound network, writable paths, background processes, local ports, and optional PTY/SSH requirements. |
 | Permissions | Filesystem grants, access to adjacent directories, privilege escalation, tool approval behavior, network destinations, and task account permissions. |
 | Agent configuration | Skills, plugins, and hooks enabled or disabled for the worker; their resolved versions, configuration, discovery scopes, and bundled dependencies. |
@@ -117,7 +111,7 @@ not proof that every possible escape path is absent.
 | Privilege | Effective user, allowed package installation locations, whether sudo/root is available, and the boundary outside which guest administration grants no access. |
 | Harness tools | Shell/file tools, approval mode, headless behavior, and harness sandbox settings. Auto-approval is distinct from OS or IAM access. |
 | Network | Registry, documentation, model-provider and product endpoints; offline/public/allowlisted mode; inbound ports; metadata access; enforcement mechanism. |
-| Cloud identity | Task role and allowed resources/regions, separate from credentials used for model inference, provisioning, and verification. |
+| External-service identity | Task identity and allowed resources, separate from credentials used for model inference, environment management, and verification. |
 | Runtime | CPU, memory, disk, process/command limits, background process and PTY support, and lifetime limits. |
 
 Start with three profiles:
@@ -132,17 +126,17 @@ Start with three profiles:
    installation and network access. Useful for testing offline, locked-down, or
    noninteractive onboarding.
 
-A read-only *cloud task* may still need local write access for configuration and
-results. Filesystem policy and cloud mutation policy are separate dimensions.
-SSH is an execution or debugging transport, not a permission profile.
+A read-only task against an external service may still need local write access
+for configuration and results. Filesystem and service permissions are separate
+dimensions. SSH is an execution or debugging transport, not a permission profile.
 
 Every policy item needs an enforcement state: `enforced`, `observed-only`,
 `unsupported`, or `unknown`. A backend that cannot enforce a required restriction
 must reject that configuration before execution. An explicitly observational run
 can proceed under a different, honestly labeled contract.
 
-Provider management credentials must remain outside the worker. Do not expose a
-privileged instance profile through metadata, a container-engine socket, or host
+Environment-management credentials must remain outside the worker. Do not expose
+host privileges through management endpoints, container-engine sockets, or host
 mounts. A network allowlist needs actual enforcement; a list in TOML or a prompt
 is not a network boundary.
 
@@ -187,11 +181,12 @@ disable that plugin's hooks. Reject an impossible combination or create a
 different, explicitly named comparison profile. Resolve name collisions and
 dependency conflicts before starting the worker.
 
-The agent's configuration lives inside the disposable environment. Do not toggle
-or remove the user's installed skills, plugins, or global hook configuration.
-Pin resolved content and record any configuration changes during an attempt.
-Default to keeping the profile fixed; a scenario that tests extension installation
-or configuration changes must declare those changes as part of the task.
+Give each attempt isolated agent configuration in its selected environment,
+including when it attaches to an existing machine. Do not toggle or remove the
+user's installed skills, plugins, or global hook configuration. Pin resolved
+content and record any configuration changes during an attempt. Default to
+keeping the profile fixed; a scenario that tests extension installation or
+configuration changes must declare those changes as part of the task.
 
 If a hook executes with a different identity or outside the worker's sandbox,
 verify and record its permissions separately. A workspace-only claim must cover
@@ -230,26 +225,26 @@ occurred with the product skill enabled, a particular plugin loaded, or a hook
 blocking the command. Improvements attributed to an extension require comparable
 follow-up evidence.
 
-This profile model is proposed AJX behavior. It is separate from the aws-bench
-features reviewed above and does not claim that every harness already exposes
-equivalent extension controls.
+This profile model is proposed AJX behavior. Adapters must declare which controls
+they support; equivalent extension controls cannot be assumed across harnesses.
 
 ## Choose a backend by capabilities
 
-Service details below were checked against AWS documentation on 2026-10-07.
-Backend qualification still requires actual integration trials.
+| Backend option | Proposed use of the environment profile |
+|---|---|
+| **Local process** | Use an isolated workspace and configuration on the current machine. Report limits that the process cannot enforce; select a stronger boundary when required. |
+| **Container** | Resolve a pinned image, mounts, user, network, and resource settings into a temporary developer environment. |
+| **Remote machine** | Attach through an authenticated execution transport to an explicitly selected machine, with isolated per-attempt state and declared access. |
+| **AWS-hosted environment** | An optional adapter can attach to or create a machine or managed execution environment that satisfies the same profile. Verify its capabilities before declaring support. |
 
-| Candidate | Fit for an AJX developer machine | Constraints and proposed role |
-|---|---|---|
-| **EC2 with SSM, with optional SSH** | Closest match for ordinary CLI harnesses, native packages, shell sessions, and an explicitly administered guest. | First backend. Pin the image and architecture, create one machine per attempt, and implement external lifetime enforcement. SSM supports shell access without opening inbound ports [8]. |
-| **AgentCore Runtime microVMs** | Custom container with a worker adapter; isolated sessions and asynchronous execution. | Managed candidate after EC2. The documented HTTP contract requires ARM64 and invocation/health endpoints. MicroVM lifetime is at most eight hours; export evidence before termination [9, 10]. |
-| **AgentCore Code Interpreter** | Stateful managed shell/code/file operations through a tool API. Sessions can last up to eight hours [11, 12]. | Candidate for suitable shell workloads. It includes preinstalled packages [13]; test native installations, PTY needs, background processes, and filesystem controls. Do not assume it is a blank VM or a drop-in host for every CLI. |
-| **AgentCore Runtime Instances** | Managed EC2-backed sessions, including x86_64/ARM64 and persistent storage [14]. | Additional candidate for longer or specialized workloads. Explicitly delete session storage between independent attempts; resuming a session preserves state. |
-| **Lambda** | Short verification or control-plane jobs. | Ordinary functions have a 900-second maximum. The current timeout documentation separately permits up to 5,400 seconds for certain asynchronous and event-source invocations on Lambda Managed Instances [15]. Neither is an eight-hour interactive developer-machine contract. |
+Backend-specific details belong in adapter configuration. Validate package
+installation, native binaries, writable paths, process behavior, and supported
+harnesses through integration trials. No hosting platform is the required
+default for AJX.
 
-The eight-hour option in this proposal refers to AgentCore microVM sessions.
-Session lifetime, individual command timeout, worker deadline, and cleanup
-deadline are different limits and must all be recorded.
+Environment lifetime, individual command timeout, worker deadline, and cleanup
+deadline are separate limits. Existing machines are borrowed resources: release
+the trial's session and owned files without terminating or resetting the host.
 
 Hosting a harness inside the environment and giving a local harness a remote
 shell tool are also different test configurations. The latter changes the tool
@@ -280,7 +275,7 @@ aliases. Interleave repeated cells with a recorded ordering seed. Model output
 can still vary. Share neither writable caches nor solved-task state across
 attempts; a warm-cache scenario must explicitly define what is warmed.
 
-Measure infrastructure provisioning and harness bootstrap separately from the
+Measure environment preparation and harness bootstrap separately from the
 task. If installation is part of the user's product journey, its downloads,
 dependency setup, and failures belong inside task time. Report verification,
 narration, extraction, and cleanup overhead separately too.
@@ -303,7 +298,7 @@ Allow multiple contributing causes and an `unknown` explanation:
 | The harness refuses a command before the product runs | Harness approval or tool restriction; preserve the gate and its impact. |
 | A hook blocks a command or a plugin changes its behavior | Agent configuration may contribute to the result; cite the extension manifest and observed events, and compare with the relevant extension disabled when supported. |
 | The CLI emits an unhelpful permission error for a declared unsupported operation | The restriction may be correct while the diagnostic still deserves a product ask. |
-| EC2 bootstrap fails or the verifier's credentials expire | Infrastructure or verification failure; do not infer product quality from it. |
+| Environment preparation fails or the verifier's credentials expire | Environment or verification failure; do not infer product quality from it. |
 
 The HTML reports should continue to put asks first for every configuration.
 Add environment, permission, and extension-profile summaries beside the existing
@@ -314,47 +309,57 @@ specific observed operation and applicable policy. Separate lifecycle events
 from the agent's product journey. A blocked call is not automatically a security
 violation, and a matrix difference is not automatically a measured product fix.
 
+The separate [live dashboard proposal](live-dashboard.md) extends this view to
+active runs: per-attempt status and traces, environment and extension profiles,
+and browsable artifact versions before the trial finishes. It keeps partial
+results and connection failures distinct from final task outcomes.
+
+The [CI/CD and improvement-loop proposal](ci-and-improvement-loops.md) reuses these
+contracts for unattended evaluations and fresh candidate retests. Acceptance
+criteria, permissions, and comparison conditions stay fixed during each campaign.
+
 ## Lifecycle and integration
 
 ```mermaid
 flowchart LR
-    A["Resolve scenario and matrix"] --> B["Provision fresh worker environment"]
+    A["Resolve scenario and matrix"] --> B["Prepare or attach agent environment"]
     B --> C["Probe baseline and permissions"]
     C --> D["Run harness and capture evidence"]
-    D --> E["Stop worker and verify outputs"]
-    E --> F["Export evidence and destroy environment"]
+    D --> E["Finish task and verify outputs"]
+    E --> F["Export evidence and release owned resources"]
     F --> G["Render asks and journey"]
     C -->|Invalid setup| F
     D -->|Timeout or failure| E
     E -->|Verification failure| F
-    H["Independent expiry controller"] --> F
+    H["Expiry handler for owned environments"] --> F
 ```
 
-A proposed environment provider should support plan, provision, inspect,
-execute, collect, and destroy operations, with durable attempt handles.
+A proposed environment adapter should support resolve, prepare/attach, inspect,
+execute, collect, and release operations, with durable attempt handles and
+explicit ownership of any resources it creates.
 Keep the existing harness adapters responsible for their CLI, transcript format,
 and resumption semantics.
 
-`Runner.wrap()` alone is insufficient for a cloud backend: fixture transfer,
-setup and teardown location, transcript collection, remote paths, process
-cancellation, verification access, and narrator resumption also need explicit
-contracts. Run any same-session narration before destroying its environment;
+`Runner.wrap()` alone is insufficient for a managed or remote environment:
+fixture transfer, setup and teardown location, transcript collection, remote
+paths, process cancellation, verification access, and narrator resumption also
+need explicit contracts. Run any same-session narration before releasing its environment;
 if that cannot be done, retain the existing labeled reconstruction behavior.
 Reporter calls can use exported evidence after the worker is gone.
 
-Persist lifecycle intent and resource identifiers before launching resources,
-and persist execution intent before starting the worker. Recovery should collect
-or terminate an existing attempt, never silently run the task again. Use
-idempotent cleanup and a controller outside the worker that expires leases even
-if the local coordinator crashes. A failed destroy operation stays actionable;
-successful task verification does not erase it.
+Persist lifecycle intent, ownership, and environment identifiers before creating
+resources, and execution intent before starting the worker. Recovery should
+collect or stop an existing attempt, never silently run the task again. Use
+idempotent cleanup and lifetime enforcement outside the worker for temporary
+environments. A failed release stays actionable; successful task verification
+does not erase it.
 
 Track compute, storage, logs, network, and model charges separately where
 available. A deadline can be enforced without claiming an exact spend cap.
 Provider billing can arrive late, so label estimates and enforcement limits.
-Cleanup must cover resources created by the task as well as its worker machine,
-within the declared account/resource boundary; do not delete unrelated resources.
-Budget for evidence export and cleanup before the environment's hard lifetime.
+Release only sessions, files, and environments owned by the trial. Task-specific
+external effects use the task's declared teardown checks. Budget for evidence
+export and cleanup before a temporary environment's hard lifetime.
 
 ## Illustrative contract
 
@@ -370,10 +375,12 @@ human = "unavailable"
 start_state = "product-absent"
 
 [environment]
-backend = "ec2"
+id = "linux-cli"
+backend = "container"
 image = "resolved-pinned-linux-image"
 architecture = "x86_64"
 fresh_per_attempt = true
+ownership = "created"
 
 [environment.permissions]
 profile = "workspace-only"
@@ -383,7 +390,7 @@ other_directories = "absent"
 package_install = "user-level"
 sudo = false
 network = "declared-endpoints-only"
-task_cloud_access = "none"
+external_service_access = "none"
 
 [agent_configuration]
 id = "product-skill-only"
@@ -427,21 +434,23 @@ been enforced.
    fake-harness tests, and synthetic report examples. Test extension selection,
    plugin dependency expansion, and unsupported combinations. Keep current local
    workflows compatible.
-2. **EC2 pilot:** one supported Linux image, one fresh machine per attempt, SSM
-   transport, workspace-only and guest-administrator profiles, an independent
-   expiry controller, and evidence collection on failure.
+2. **Local/container pilot:** configurable tool inventory, workspace and directory
+   access, installation privileges, sandbox settings, and evidence collection on
+   failure. Preserve the host and the user's installed agent configuration.
 3. **Reproducible comparisons:** pinned images and extension manifests, policy
    probes, repeated matrices, lifecycle and extension cost/coverage reporting,
    and before/after product comparisons.
-4. **Managed backend qualification:** evaluate AgentCore Runtime, Code
-   Interpreter, and Runtime Instances against the same capability contract.
-   Expose only the combinations that have passed integration trials.
+4. **Remote backend qualification:** support selected remote machines and optional
+   hosted environments, including AWS, through the same capability contract.
+   Test attachment, resource ownership, transport failure, and release behavior.
 
 The pilot is complete only when an authorized live trial demonstrates:
 
 - A target CLI can be installed from a declared empty starting state.
 - Permitted writes succeed and denied synthetic directory access fails.
 - Two fresh attempts cannot read each other's files or configuration.
+- Releasing an attached environment leaves the existing host intact; releasing
+  a temporary environment cleans up only the trial's owned resources.
 - Independent checks distinguish task completion from an agent's claim.
 - Worker timeout and coordinator termination both preserve evidence and trigger
   cleanup; failed cleanup prevents reuse.
@@ -452,22 +461,4 @@ The pilot is complete only when an authorized live trial demonstrates:
   qualified per adapter, with enabled/disabled behavior, dependency resolution,
   and actual-use telemetry checked where available.
 
-No cloud resources are provisioned by this proposal.
-
-## Sources
-
-1. [aws-bench dataset and task authoring](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/docs/datasets-development.md) and [overview](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/README.md).
-2. [Scenario hashing](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/aws_bench/scenario/hashing.py).
-3. [Trial lifecycle and staged credentials](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/aws_bench/task/aws_trial.py).
-4. [Scenario admission control](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/aws_bench/task/queue.py).
-5. [Metric aggregation](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/aws_bench/metrics/aggregation.py).
-6. [Task configuration and verifier environment constraints](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/aws_bench/dataset/task_config.py).
-7. [Existing-account backend and its limitations](https://github.com/aws-bench/aws-bench/blob/542037acd5a63287cd0ba8182d864952cc0a1841/docs/preexisting-accounts.md).
-8. [AWS Systems Manager Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html).
-9. [AgentCore Runtime microVMs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html) and [HTTP container contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html).
-10. [AgentCore lifecycle settings](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html).
-11. [Code Interpreter sessions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-session-characteristics.html).
-12. [Code Interpreter terminal commands](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-s3-integration.html).
-13. [Code Interpreter preinstalled libraries](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-preinstalled-libraries.html).
-14. [AgentCore Runtime Instances](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-instances-how-it-works.html).
-15. [Lambda timeout configuration](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html).
+This is a design proposal; it does not create or modify an execution environment.
