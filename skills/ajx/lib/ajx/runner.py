@@ -358,7 +358,9 @@ class Run:
                 write_json(self.run_dir / "telemetry.narrate.json", ntel)
                 text = (ntel.get("final_text") or "").strip()
         if len(text) >= 200:
-            self._write_journey(text, "self-narrated: the original task agent, resumed after the task with tools disabled")
+            restriction = proc.get("tools_disabled") if proc else None
+            restriction = "tools disabled" if restriction is True else restriction or "tool restrictions unrecorded"
+            self._write_journey(text, f"self-narrated: the original task agent, resumed after the task; {restriction}")
             return
         if proc:
             self.log(f"[{self.run_id}] self-narration empty or short; falling back to a labeled reconstruction")

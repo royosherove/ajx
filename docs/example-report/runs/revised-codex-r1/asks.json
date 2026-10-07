@@ -1,0 +1,58 @@
+{
+  "asks": [
+    {
+      "title": "Expose progress while a CSV export is running",
+      "requested_behavior": "Emit bounded progress on stderr and a final structured completion result.",
+      "evidence_status": "observed_friction",
+      "how_observed": "Only start and completion messages appeared during the 20-second export.",
+      "consequence": "The agent could not observe intermediate progress.",
+      "event_refs": [
+        "E-002",
+        "E-003"
+      ],
+      "journey_anchors": [],
+      "labels": [
+        "Wait"
+      ],
+      "priority_rationale": "The remaining observed friction is visibility during execution.",
+      "verification": "Run a delayed export; progress must remain separate from CSV stdout.",
+      "workaround": null,
+      "modeled_saving": null,
+      "id": "ASK-001",
+      "invalid_refs": [],
+      "measured": {
+        "events": 2,
+        "tool_calls": 1,
+        "failed_tool_calls": 0,
+        "tool_seconds": 20.0,
+        "span_seconds": 20.0,
+        "output_tokens": 401,
+        "shared_events": [],
+        "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+      }
+    }
+  ],
+  "strengths": [
+    {
+      "title": "The help identifies the CSV path",
+      "how_observed": "Top-level help explains export versus dump.",
+      "event_refs": [
+        "E-001"
+      ]
+    },
+    {
+      "title": "A verifiable row count",
+      "how_observed": "Inspect confirms the requested output.",
+      "event_refs": [
+        "E-004"
+      ]
+    }
+  ],
+  "gates": [],
+  "journey_errata": [],
+  "extraction_status": "ok",
+  "no_obstacles_observed": false,
+  "extractor": {
+    "model_ids": "fictional reporter"
+  }
+}

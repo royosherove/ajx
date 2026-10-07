@@ -27,6 +27,7 @@ class ClaudeCode(Harness):
     binary = "claude"
     version_argv = ["claude", "--version"]
     can_resume = True
+    can_report = True
     clean_supported = True
     verified_live = True
     telemetry = "per-message output tokens (reconciled), tool calls (reconciled), event timestamps"
@@ -111,6 +112,24 @@ class ClaudeCode(Harness):
             if ev and ev.get("type") == "system" and ev.get("subtype") == "init":
                 proc["session_id"] = ev.get("session_id")
         return proc
+
+    def report(self, ctx, prompt, schema=None):
+        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose",
+                "--tools", "", "--session-id", str(uuid.uuid4())] + self._common(ctx)
+        if schema:
+            argv += ["--json-schema", json.dumps(schema)]
+        proc = self.run(ctx, argv, ctx["stage_name"], stdin_data=prompt,
+                        extra_env=self.clean_env(ctx))
+        text, structured = "", None
+        proc.update(is_error=True, result_subtype="missing result", tools_policy="tools disabled")
+        for _, ev, _ in stream_records(ctx["run_dir"] / f"{ctx['stage_name']}.raw.jsonl"):
+            if ev and ev.get("type") == "result":
+                text, structured = ev.get("result") or "", ev.get("structured_output")
+                proc.update(output_tokens=(ev.get("usage") or {}).get("output_tokens"),
+                            model_ids=",".join((ev.get("modelUsage") or {}).keys()) or None,
+                            cost_estimate_usd=ev.get("total_cost_usd"),
+                            is_error=bool(ev.get("is_error")), result_subtype=ev.get("subtype"))
+        return {"proc": proc, "text": text, "structured": structured}
 
     def _projects_dir(self, ctx):
         isolated = self.stage_state(ctx, "execute").get("config_isolated")

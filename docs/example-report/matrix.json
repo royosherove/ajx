@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "trial": {
+    "id": "csv-export-example",
+    "product": "Demo Export CLI",
+    "repetitions": 1,
+    "parallel": 1,
+    "order_seed": 0
+  },
+  "plan": {
+    "wall_clock_comparable": true,
+    "note": "Synthetic, sequential examples."
+  },
+  "consistency": {
+    "prompt_sha256": "b10b4173c2cc01852b1db682fbfbb91ce20ceedc033cf0633f7686e38630ee76",
+    "product_versions": [
+      "1.2.0",
+      "1.3.0"
+    ],
+    "harness_versions": [
+      "codex synthetic fixture",
+      "kiro-cli synthetic fixture"
+    ],
+    "wall_clock_comparable": true,
+    "token_note": "output tokens use each model's tokenizer; compare across models as resource usage, not reasoning; per-cell token variance includes only runs with complete (reconciled) usage",
+    "cost_note": "cost_estimate_usd (Claude Code) and credits (Kiro) are harness estimates in different units; never summed or sorted across harnesses"
+  },
+  "runs": [
+    {
+      "run_id": "baseline-codex-r1",
+      "dir": "baseline-codex-r1",
+      "harness": "codex",
+      "harness_version": "synthetic fixture",
+      "model_requested": "example-model",
+      "model_id": "example-model",
+      "config": "clean",
+      "auth": "synthetic; no credentials",
+      "product_version": "1.2.0",
+      "declared": "I exported the records and verified that the CSV contains 100 data rows.",
+      "verified": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 108.0,
+      "tool_calls": 5,
+      "tool_status": "partial",
+      "failed_tool_calls": 1,
+      "retries": 1,
+      "output_tokens": 2862,
+      "usage_status": "partial",
+      "cost_estimate_usd": null,
+      "credits": null,
+      "asks": 3,
+      "gates": 0,
+      "ask_register": [
+        {
+          "title": "Make the quick-start export command executable",
+          "requested_behavior": "Use the supported --output flag in the quick start, with a copyable CSV example.",
+          "evidence_status": "observed_friction",
+          "how_observed": "The documented --out flag failed. Command help showed --output, which worked.",
+          "consequence": "The first attempt failed and required a help lookup before retrying.",
+          "event_refs": [
+            "E-003",
+            "E-004",
+            "E-005"
+          ],
+          "journey_anchors": [],
+          "labels": [
+            "Roadblock",
+            "Misdirection"
+          ],
+          "priority_rationale": "Fix the broken first attempt before reducing optional friction.",
+          "verification": "Run the documented command in a fresh workspace; it must produce a 100-row CSV.",
+          "workaround": "Replace --out with --output.",
+          "modeled_saving": null,
+          "id": "ASK-001",
+          "invalid_refs": [],
+          "measured": {
+            "events": 3,
+            "tool_calls": 3,
+            "failed_tool_calls": 1,
+            "tool_seconds": 51.0,
+            "span_seconds": 69.0,
+            "output_tokens": 813,
+            "shared_events": [
+              "E-005"
+            ],
+            "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+          }
+        },
+        {
+          "title": "Expose progress while a CSV export is running",
+          "requested_behavior": "Emit bounded progress on stderr and a final structured completion result.",
+          "evidence_status": "observed_friction",
+          "how_observed": "Only start and completion messages appeared during the 47-second export.",
+          "consequence": "The agent could not distinguish productive work from a stalled command.",
+          "event_refs": [
+            "E-005",
+            "E-006"
+          ],
+          "journey_anchors": [],
+          "labels": [
+            "Wait",
+            "Blind Spot"
+          ],
+          "priority_rationale": "Make long-running work observable without extra polling.",
+          "verification": "Run a delayed export; progress must remain separate from CSV stdout.",
+          "workaround": null,
+          "modeled_saving": null,
+          "id": "ASK-002",
+          "invalid_refs": [],
+          "measured": {
+            "events": 2,
+            "tool_calls": 1,
+            "failed_tool_calls": 0,
+            "tool_seconds": 47.0,
+            "span_seconds": 47.0,
+            "output_tokens": 683,
+            "shared_events": [
+              "E-005"
+            ],
+            "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+          }
+        },
+        {
+          "title": "Explain when to choose export instead of dump",
+          "requested_behavior": "State the output formats and intended use of both commands in top-level help.",
+          "evidence_status": "observed_friction",
+          "how_observed": "Both commands were described as writing records; the required CSV path was unclear.",
+          "consequence": "The agent had to choose without a selection signal.",
+          "event_refs": [
+            "E-001",
+            "E-002"
+          ],
+          "journey_anchors": [],
+          "labels": [
+            "Fork"
+          ],
+          "priority_rationale": "Remove the ambiguous choice at the start of the task.",
+          "verification": "A user reading only top-level help can identify the CSV command.",
+          "workaround": null,
+          "modeled_saving": null,
+          "id": "ASK-003",
+          "invalid_refs": [],
+          "measured": {
+            "events": 2,
+            "tool_calls": 1,
+            "failed_tool_calls": 0,
+            "tool_seconds": 2.0,
+            "span_seconds": 8.0,
+            "output_tokens": 307,
+            "shared_events": [],
+            "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+          }
+        }
+      ],
+      "no_obstacles_observed": false,
+      "defects": 0,
+      "journey_provenance": "reconstruction",
+      "extraction_status": "ok",
+      "review_status": "ready",
+      "stages": {
+        "execute": "done",
+        "verify": "done",
+        "narrate": "done",
+        "extract": "done",
+        "measure": "done",
+        "render": "done"
+      },
+      "errors": [],
+      "teardown": "none defined",
+      "verify_auth_errors": 0,
+      "limitations": 3
+    },
+    {
+      "run_id": "headless-kiro-cli-r1",
+      "dir": "headless-kiro-cli-r1",
+      "harness": "kiro-cli",
+      "harness_version": "synthetic fixture",
+      "model_requested": "example-model",
+      "model_id": "example-model",
+      "config": "clean",
+      "auth": "synthetic; no credentials",
+      "product_version": "1.3.0",
+      "declared": "The export is blocked by required approval. I did not create the CSV.",
+      "verified": "failed",
+      "stop_reason": "completed",
+      "elapsed_seconds": 25.0,
+      "tool_calls": 2,
+      "tool_status": "partial",
+      "failed_tool_calls": 1,
+      "retries": 0,
+      "output_tokens": null,
+      "usage_status": "unavailable",
+      "cost_estimate_usd": null,
+      "credits": null,
+      "asks": 1,
+      "gates": 1,
+      "ask_register": [
+        {
+          "title": "Check headless authorization before starting an export",
+          "requested_behavior": "Provide a non-interactive authorization preflight and document the required human approval.",
+          "evidence_status": "observed_friction",
+          "how_observed": "The command requested browser approval after the agent had started the task.",
+          "consequence": "The unattended task stopped without an output file.",
+          "event_refs": [
+            "E-002",
+            "E-003",
+            "E-004"
+          ],
+          "journey_anchors": [],
+          "labels": [
+            "Gate",
+            "Wall"
+          ],
+          "priority_rationale": "Expose the prerequisite early so teams can prepare an authorized run.",
+          "verification": "In headless mode, preflight reports the missing approval before an export begins.",
+          "workaround": null,
+          "modeled_saving": null,
+          "id": "ASK-001",
+          "invalid_refs": [],
+          "measured": {
+            "events": 3,
+            "tool_calls": 1,
+            "failed_tool_calls": 1,
+            "tool_seconds": 3.0,
+            "span_seconds": 16.0,
+            "output_tokens": null,
+            "shared_events": [],
+            "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+          }
+        }
+      ],
+      "no_obstacles_observed": false,
+      "defects": 0,
+      "journey_provenance": "reconstruction",
+      "extraction_status": "ok",
+      "review_status": "ready",
+      "stages": {
+        "execute": "done",
+        "verify": "done",
+        "narrate": "done",
+        "extract": "done",
+        "measure": "done",
+        "render": "done"
+      },
+      "errors": [],
+      "teardown": "none defined",
+      "verify_auth_errors": 0,
+      "limitations": 3
+    },
+    {
+      "run_id": "revised-codex-r1",
+      "dir": "revised-codex-r1",
+      "harness": "codex",
+      "harness_version": "synthetic fixture",
+      "model_requested": "example-model",
+      "model_id": "example-model",
+      "config": "clean",
+      "auth": "synthetic; no credentials",
+      "product_version": "1.3.0",
+      "declared": "I created the CSV and verified all 100 data rows.",
+      "verified": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 34.0,
+      "tool_calls": 3,
+      "tool_status": "partial",
+      "failed_tool_calls": 0,
+      "retries": 0,
+      "output_tokens": 1120,
+      "usage_status": "partial",
+      "cost_estimate_usd": null,
+      "credits": null,
+      "asks": 1,
+      "gates": 0,
+      "ask_register": [
+        {
+          "title": "Expose progress while a CSV export is running",
+          "requested_behavior": "Emit bounded progress on stderr and a final structured completion result.",
+          "evidence_status": "observed_friction",
+          "how_observed": "Only start and completion messages appeared during the 20-second export.",
+          "consequence": "The agent could not observe intermediate progress.",
+          "event_refs": [
+            "E-002",
+            "E-003"
+          ],
+          "journey_anchors": [],
+          "labels": [
+            "Wait"
+          ],
+          "priority_rationale": "The remaining observed friction is visibility during execution.",
+          "verification": "Run a delayed export; progress must remain separate from CSV stdout.",
+          "workaround": null,
+          "modeled_saving": null,
+          "id": "ASK-001",
+          "invalid_refs": [],
+          "measured": {
+            "events": 2,
+            "tool_calls": 1,
+            "failed_tool_calls": 0,
+            "tool_seconds": 20.0,
+            "span_seconds": 20.0,
+            "output_tokens": 401,
+            "shared_events": [],
+            "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+          }
+        }
+      ],
+      "no_obstacles_observed": false,
+      "defects": 0,
+      "journey_provenance": "reconstruction",
+      "extraction_status": "ok",
+      "review_status": "ready",
+      "stages": {
+        "execute": "done",
+        "verify": "done",
+        "narrate": "done",
+        "extract": "done",
+        "measure": "done",
+        "render": "done"
+      },
+      "errors": [],
+      "teardown": "none defined",
+      "verify_auth_errors": 0,
+      "limitations": 3
+    }
+  ],
+  "cells": [
+    {
+      "cell": "baseline-codex",
+      "runs": 1,
+      "harness": "codex",
+      "model_requested": "example-model",
+      "model_ids": [
+        "example-model"
+      ],
+      "config": "clean",
+      "verified": [
+        "succeeded"
+      ],
+      "elapsed_seconds": {
+        "n": 1,
+        "min": 108.0,
+        "median": 108.0,
+        "max": 108.0
+      },
+      "tool_calls": {
+        "n": 1,
+        "min": 5,
+        "median": 5,
+        "max": 5
+      },
+      "failed_tool_calls": {
+        "n": 1,
+        "min": 1,
+        "median": 1,
+        "max": 1
+      },
+      "output_tokens": null,
+      "asks": {
+        "n": 1,
+        "min": 3,
+        "median": 3,
+        "max": 3
+      }
+    },
+    {
+      "cell": "headless-kiro-cli",
+      "runs": 1,
+      "harness": "kiro-cli",
+      "model_requested": "example-model",
+      "model_ids": [
+        "example-model"
+      ],
+      "config": "clean",
+      "verified": [
+        "failed"
+      ],
+      "elapsed_seconds": {
+        "n": 1,
+        "min": 25.0,
+        "median": 25.0,
+        "max": 25.0
+      },
+      "tool_calls": {
+        "n": 1,
+        "min": 2,
+        "median": 2,
+        "max": 2
+      },
+      "failed_tool_calls": {
+        "n": 1,
+        "min": 1,
+        "median": 1,
+        "max": 1
+      },
+      "output_tokens": null,
+      "asks": {
+        "n": 1,
+        "min": 1,
+        "median": 1,
+        "max": 1
+      }
+    },
+    {
+      "cell": "revised-codex",
+      "runs": 1,
+      "harness": "codex",
+      "model_requested": "example-model",
+      "model_ids": [
+        "example-model"
+      ],
+      "config": "clean",
+      "verified": [
+        "succeeded"
+      ],
+      "elapsed_seconds": {
+        "n": 1,
+        "min": 34.0,
+        "median": 34.0,
+        "max": 34.0
+      },
+      "tool_calls": {
+        "n": 1,
+        "min": 3,
+        "median": 3,
+        "max": 3
+      },
+      "failed_tool_calls": {
+        "n": 1,
+        "min": 0,
+        "median": 0,
+        "max": 0
+      },
+      "output_tokens": null,
+      "asks": {
+        "n": 1,
+        "min": 1,
+        "median": 1,
+        "max": 1
+      }
+    }
+  ],
+  "clusters": null,
+  "generated_at": "2026-10-07T10:28:00.238Z"
+}

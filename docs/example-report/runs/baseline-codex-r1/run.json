@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "ajx_version": "1.0.0",
+  "example": true,
+  "run_id": "baseline-codex-r1",
+  "product": {
+    "name": "Demo Export CLI",
+    "version": "1.2.0"
+  },
+  "agent": {
+    "harness_name": "codex",
+    "harness_version": "synthetic fixture",
+    "model_id": "example-model",
+    "model_requested": "example-model",
+    "settings": {
+      "config": "clean"
+    }
+  },
+  "auth": {
+    "type": "synthetic; no credentials"
+  },
+  "runner": {
+    "type": "offline example"
+  },
+  "task_prompt": {
+    "path": "task-prompt.md",
+    "sha256": "b10b4173c2cc01852b1db682fbfbb91ce20ceedc033cf0633f7686e38630ee76"
+  },
+  "evaluation_wrapper_sha256": "f79aa152314efdea682df80c5f33a2a7d3dcece5b8220824c99b8b8fac4a2b8d",
+  "ajx_skill_revision": "example",
+  "task_outcome_verified": "succeeded",
+  "task_outcome_declared": "I exported the records and verified that the CSV contains 100 data rows.",
+  "verification_scope": "2/2 fictional checks passed",
+  "task_stop_reason": "completed",
+  "task_started_at": "2026-01-01T10:00:00Z",
+  "task_stopped_at": "2026-01-01T10:01:48Z",
+  "journey_provenance": "FICTIONAL FIRST-PERSON ACCOUNT: hand-authored demonstration, not a real agent recollection.",
+  "review_status": "ready",
+  "teardown": {
+    "status": "none defined"
+  },
+  "evidence": {
+    "usage_coverage": "partial",
+    "tool_call_coverage": "partial",
+    "timestamp_coverage": "synthetic timestamps"
+  },
+  "limitations": [
+    "All content and metrics are invented for this example.",
+    "A change across these fictional runs demonstrates the report, not a measured improvement.",
+    "Token subtotals are partial; the headless example intentionally has no usage telemetry."
+  ],
+  "artifacts": {
+    "pretty_journey": "pretty-journey.html"
+  }
+}

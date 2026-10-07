@@ -7,6 +7,7 @@ Item types: agent_message{text}, reasoning, command_execution{command,aggregated
 exit_code,status}, file_change{changes}, mcp_tool_call{server,tool,status}, web_search{query}.
 """
 
+import json
 import shutil
 from pathlib import Path
 
@@ -21,6 +22,7 @@ class Codex(Harness):
     binary = "codex"
     version_argv = ["codex", "--version"]
     can_resume = True
+    can_report = True
     clean_supported = True        # per-run CODEX_HOME (no user AGENTS.md / config / MCP)
     default_auth = "codex-chatgpt"
     telemetry = "per-turn output tokens (turn.completed), command/file/mcp items; arrival timestamps"
@@ -64,6 +66,25 @@ class Codex(Harness):
         proc = self.run(ctx, argv, "narrate", stdin_data=prompt, extra_env=self.clean_env(ctx))
         proc.update(session_id=sid, tools_disabled="read-only sandbox (commands may still run read-only)")
         return proc
+
+    def report(self, ctx, prompt, schema=None):
+        stage = ctx["stage_name"]
+        response = ctx["run_dir"] / f"{stage}.response.txt"
+        response.unlink(missing_ok=True)
+        argv = ["codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral",
+                "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
+                "-c", 'approval_policy="never"', "--cd", str(ctx["workspace"]),
+                "--output-last-message", str(response)] + self._common(ctx)
+        if schema:
+            schema_path = ctx["run_dir"] / f"{stage}.schema.json"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            argv += ["--output-schema", str(schema_path)]
+        proc = self.run(ctx, argv + ["-"], stage, stdin_data=prompt, extra_env=self.clean_env(ctx))
+        proc["tools_policy"] = "read-only sandbox; read-only commands may still run"
+        result = self.report_result(ctx, proc)
+        if response.exists():
+            result["text"] = response.read_text(encoding="utf-8")
+        return result
 
     def normalize(self, ctx, stage, exclude_message_ids=()):
         out = empty_telemetry(model_ids=[ctx["cell"].get("model") or "codex default (unrecorded)"],

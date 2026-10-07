@@ -5,6 +5,11 @@ description: Orchestrate an Agent Journey Experience (AJX) trial end to end. Int
 
 # AJX: orchestrated agent journey trials
 
+AJX uses the common Agent Skills format. Coordinate it from Codex, Claude Code,
+Kiro CLI, or another compatible harness with file access and shell execution.
+Use the host's available tools for reading files, asking questions, running
+commands, and showing reports; no vendor-specific tool name is required.
+
 You are the coordinator. `bin/ajx` (Python 3.11+, stdlib only) does the deterministic work: fresh unnamed workspaces, worker launches, telemetry normalization, verification, measurement, rendering. It gives workers only the task prompt; configuration isolation depends on the adapter and auth profile, and possible exposure to AJX material is recorded. The method produces a first-person journey by the agent that did the task where supported, asks extracted in a separate pass and checked against evidence, measured costs kept apart from modeled savings, and explicit gaps where evidence is unavailable.
 
 Paths below are relative to this skill directory. Run the CLI as `python3 <skill-dir>/bin/ajx ...`.
@@ -13,7 +18,7 @@ Paths below are relative to this skill directory. Run the CLI as `python3 <skill
 
 ### 1. Interview (do not research the product first)
 
-Reuse answers already in the conversation. Ask only what changes the trial, with `AskUserQuestion` when a choice is the user's:
+Reuse answers already in the conversation. Ask only what changes the trial, using the host's question tool or a concise chat question when a choice is the user's:
 
 - **Product and version source**: name, how a version is printed (for `product_version_cmd`).
 - **Task**: propose 2 or 3 candidate outcomes at different depths (local-only, with a real deploy, end to end with cleanup). Each must have an observable result a script can check. The user picks or edits. Do not add defect hunting, AJX words, or hints to the prompt.
@@ -21,14 +26,15 @@ Reuse answers already in the conversation. Ask only what changes the trial, with
 - **Boundaries**: spend cap, timeout, what must be cleaned up, whether a human can answer questions (default: no, headless).
 - **Account the worker acts in** (when the task touches a cloud or SaaS account): profile/project/subscription and region. Before offering a profile as an option, check that it authenticates with the CLI the task uses (`aws sts get-caller-identity --profile <name>`, `gcloud auth list`, `az account show`), and offer only profiles that do, each with the account it resolves to. Never offer an unchecked profile.
 - **Model credentials**, asked separately from the account above: which provider each harness uses for its model (`ajx plugins` lists auth types; trial `[auth.*]` profiles reference env vars as `${VAR}`; nothing secret is stored). When the task and the model use the same cloud (Claude Code on Bedrock testing an AWS product), give the model its own explicit profile (`claude-bedrock` with its own `AWS_PROFILE`) and keep the task account out of `[env]`: name it in the prompt and in `--profile` flags.
-- **Matrix**: which harnesses and, per harness, which models; configs (`clean` vs `user`); repetitions. "Claude Code with sonnet and opus, codex with example-model-a and example-model-b" is two `[[cells]]`, one with `models = ["sonnet", "opus"]` and one with `models = ["example-model-a", "example-model-b"]`: one cell per model, ids `<cell>-<model>`, and `--cells <cell>` selects the group. Pass model names exactly as the user says them; the harness resolves them and fails at run time on an unknown one. A cell without a model runs the harness default, which with `config = "user"` or `auth = "inherit"` can come from the user's own harness settings; say so. Run `ajx plugins` to show what is installed and which adapters are verified live. Default: one `claude-code` clean cell, repetitions 1.
+- **Matrix**: which harnesses and, per harness, which models; configs (`clean` vs `user`); repetitions. "Claude Code with sonnet and opus, codex with example-model-a and example-model-b" is two `[[cells]]`, one with `models = ["sonnet", "opus"]` and one with `models = ["example-model-a", "example-model-b"]`: one cell per model, ids `<cell>-<model>`, and `--cells <cell>` selects the group. Pass model names exactly as the user says them; the harness resolves them and fails at run time on an unknown one. A cell without a model runs the harness default, which with `config = "user"` or `auth = "inherit"` can come from the user's own harness settings; say so. Run `ajx plugins` to show what is installed and which adapters are verified live. Prefer one clean cell using the current host's CLI when an adapter is available, with repetitions 1; otherwise choose an installed adapter with the user.
+- **Reporter**: keep one reporter harness/model fixed across the matrix. Claude Code, Codex, and Kiro CLI have restricted reporter adapters. Set `[reporter]` explicitly when needed; otherwise the first report-capable worker harness is used. Other coordinator hosts can use those reporters or a custom reporter plugin. State tool and configuration restrictions honestly.
 - **Output dir**: default `ajx-reports/<product>/<trial-id>/` next to the trial file.
 
 Do not look up the product's docs, issues, or defects before the run; that knowledge would leak into the prompt or the verify checks.
 
 ### 2. Write the trial
 
-`ajx init <trial-dir> --product <name>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the interview (see `examples/trial.toml` for every option). Keep the prompt exactly as the user approved it; its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources.
+`ajx init <trial-dir> --product <name> --harness <chosen-cli>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the interview (see `examples/trial.toml` for every option). Keep the prompt exactly as the user approved it; its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources.
 
 For a task that uses an account (see `examples/aws-cloud/`): set `[task] identity_cmd` to show the account the way the agent is told to use it (`aws sts get-caller-identity --profile <task profile>`); add a `[[preflight]]` that authenticates with the credentials verify and teardown use (no worker starts until every preflight passes); have the prompt ask for a tag and tear down by that tag; let teardown commands fail instead of `set +e ... true`. A preflight, verify check or teardown that is meant to hit a denial ("the bucket is private") sets `allow_auth_errors = true` so its credential errors are not counted.
 
@@ -36,7 +42,7 @@ Run `ajx validate trial.toml` then `ajx doctor trial.toml`. Doctor prints, per c
 
 ### 3. Run
 
-`ajx run trial.toml` in the background (`run_in_background`), then report progress from `ajx status trial.toml`. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` after editing a prompt; `prepare`/`execute` cannot be redone, add a repetition instead), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
+`ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` after editing a prompt; `prepare`/`execute` cannot be redone, add a repetition instead), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
 
 A teardown that ran is not a teardown that cleaned up: `ajx status` marks one that failed `FAIL`, printed credential or permission errors `AUTH` (even with exit 0), or never ran `SKIP`, and `run`/`status` then exit 1. Tell the user at once that resources may still exist, and after the credentials are fixed rerun it with `ajx run trial.toml --cells <cell> --stages teardown,render` (render refreshes `run.json` and the reports).
 
@@ -46,13 +52,14 @@ One `ajx run` per matrix directory: a `.lock` file refuses a second concurrent r
 
 ### 4. Deliver
 
-Open `<output>/index.html` (matrix) and `runs/<run>/report.html`. Summarize for the user: verified vs declared outcome per run, wall clock, tool calls, failed calls, tokens (with their coverage status), gates, teardown status, and the top asks with their IDs and evidence anchors. A verify check that printed credential errors measured ajx's credentials, not the agent's work; say so next to its result. Quote the comparability notes (prompt hash, versions, concurrency, tokenizers). State what was not measured. Point to `journey.md`, `asks.md`, `run.json`, `measurements.json` per run and `matrix.md`/`matrix.json`.
+Open `<output>/index.html` (asks by matrix configuration), `runs/<run>/report.html` (asks and verification), and `runs/<run>/pretty-journey.html` (event map, happenings table, and first-person account). Summarize for the user: verified vs declared outcome per run, wall clock, tool calls, failed calls, tokens (with their coverage status), gates, teardown status, and the top asks with their IDs and evidence anchors. A verify check that printed credential errors measured ajx's credentials, not the agent's work; say so next to its result. Quote the comparability notes (prompt hash, versions, concurrency, tokenizers). State what was not measured. Point to `pretty-journey.html`, `journey.md`, `asks.md`, `run.json`, `measurements.json` per run and `matrix.md`/`matrix.json`.
 
 Deliver files locally only. Filing tickets, publishing, or re-running paid trials needs the user's scope.
 
 ## Extending
 
 - **New harness**: drop `plugins/<name>.py` with a `@register("harness", "<name>")` subclass of `ajx.base.Harness` (execute/narrate/normalize), or declare `[adapters.<name>]` in the trial file for a no-code argv template. Plugin dirs: `<skill>/plugins/`, `~/.config/ajx/plugins/`, `<trial-dir>/plugins/`.
+- **Reporter adapter**: implement `Harness.report(ctx, prompt, schema)` and set `can_report = True`. It must start a fresh session with restricted tools and return `{proc, text, structured}`. AJX validates the bundled response schemas and cleans up copied reporter credentials.
 - **New auth target**: `@register("auth", "<name>")` subclass of `Auth` (env/unset/args/identity, plus `model_env` for the variables its provider reads so doctor can flag collisions), or use `type = "env"` in a `[auth.*]` profile. Secrets are referenced as `${VAR}`; recorded argv and environment snapshots carry names only.
 - Plugin files are ordinary Python executed by `ajx` (including `<trial-dir>/plugins/`); treat a trial directory from someone else like any other code you run.
 - **New execution environment**: `@register("runner", ...)` (local, docker, wrapper exist).

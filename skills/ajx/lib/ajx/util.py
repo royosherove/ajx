@@ -13,7 +13,7 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 # Only these parts of the skill define its behavior; examples, tests and generated reports do not.
-FINGERPRINT_PARTS = ("SKILL.md", "bin", "lib", "prompts", "schemas", "references")
+FINGERPRINT_PARTS = ("SKILL.md", "bin", "lib", "prompts", "schemas", "references", "assets")
 
 
 def now():

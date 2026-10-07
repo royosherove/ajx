@@ -110,12 +110,10 @@ def load(path):
     runner = dict(raw.get("runner") or {"type": "local"})
 
     reporter = dict(raw.get("reporter") or {})
-    reporter.setdefault("harness", "claude-code")
+    reporter.setdefault("harness", None)
     reporter.setdefault("model", None)
     reporter.setdefault("effort", None)
     reporter.setdefault("auth", None)
-    _need(reporter["harness"] == "claude-code",
-          "reporter.harness must be claude-code (structured JSON output is required for extraction)")
 
     spec = {
         "path": str(path), "sha256": sha256_file(path), "trial": trial, "task": task,
@@ -141,6 +139,16 @@ def load(path):
             seen.add(one["id"])
             spec["cells"].append(one)
     _need(spec["cells"], "at least one [[cells]] entry is required")
+    if not reporter["harness"]:
+        candidate = next((c for c in spec["cells"] if harness_for(spec, c["harness"]).can_report), None)
+        reporter["harness"] = candidate["harness"] if candidate else "claude-code"
+        if candidate and not reporter.get("auth"):
+            reporter["auth"] = candidate.get("auth")
+    _need(reporter["harness"] in harness_names(spec),
+          f"unknown reporter.harness {reporter['harness']!r}")
+    _need(harness_for(spec, reporter["harness"]).can_report,
+          f"reporter.harness {reporter['harness']!r} has no restricted reporter adapter; "
+          "choose claude-code, codex, kiro-cli, or a plugin implementing report()")
     for cell in spec["cells"]:
         auth_for(spec, cell)  # validates
     auth_for(spec, {"id": "reporter", "harness": reporter["harness"], "auth": reporter.get("auth")})

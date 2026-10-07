@@ -1,0 +1,18 @@
+{
+  "passed": 0,
+  "total": 2,
+  "outcome": "failed",
+  "checks_with_auth_errors": [],
+  "checks": [
+    {
+      "name": "CSV exists",
+      "passed": false,
+      "type": "synthetic"
+    },
+    {
+      "name": "CSV contains 100 data rows",
+      "passed": false,
+      "type": "synthetic"
+    }
+  ]
+}

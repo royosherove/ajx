@@ -9,6 +9,7 @@ class KiroCli(Harness):
     binary = "kiro-cli"
     version_argv = ["kiro-cli", "--version"]
     can_resume = True
+    can_report = True
     clean_supported = False
     verified_live = True
     default_auth = "kiro-login"
@@ -46,6 +47,19 @@ class KiroCli(Harness):
         proc.update(argv=self.safe_argv(ctx, argv + [prompt], hide=(prompt,)), session_id=sid,
                     tools_disabled="untrusted (--trust-tools=); headless tool requests are denied")
         return proc
+
+    def report(self, ctx, prompt, schema=None):
+        argv = ["kiro-cli", "chat", "--no-interactive", "--output-format", "stream-json",
+                "--trust-tools="]
+        if ctx["cell"].get("model"):
+            argv += ["--model", ctx["cell"]["model"]]
+        if ctx["cell"].get("effort"):
+            argv += ["--effort", ctx["cell"]["effort"]]
+        argv += ctx["auth"].extra_args()
+        proc = self.run(ctx, argv + [prompt], ctx["stage_name"])
+        proc.update(argv=self.safe_argv(ctx, argv + [prompt], hide=(prompt,)),
+                    tools_policy="no trusted tools; headless tool requests are denied")
+        return self.report_result(ctx, proc)
 
     def normalize(self, ctx, stage, exclude_message_ids=()):
         out = empty_telemetry(

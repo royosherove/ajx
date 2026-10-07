@@ -7,9 +7,11 @@ product through an agent's attempt to complete a real task. The result is a
 chronological journey and a prioritized set of product asks with supporting
 evidence and available costs.
 
-AJX v1 is the first public version. It includes a coordinator skill, a command-line
-runner, agent adapters, reporting prompts, measurement code, and local HTML and
-Markdown reports.
+AJX v1 is the first public version. It includes a portable Agent Skill,
+a command-line runner, agent adapters, reporting prompts, measurement code,
+and local HTML and Markdown reports. The HTML views include an ask register,
+a visual journey with an event map and happenings table, and a matrix with
+each run's asks shown side by side.
 
 ## Who should use it?
 
@@ -83,7 +85,7 @@ AJX needs task evidence; reading documentation alone is not a journey review.
 ## Who writes the reports?
 
 The coordinator sets up the trial. A worker attempts the task. After the task
-stops, AJX tries to resume that worker's session for narration with tools disabled.
+stops, AJX tries to resume that worker's session for narration with restricted tools.
 If resumption is unavailable, a reporter creates an explicitly labeled
 reconstruction from the recorded evidence.
 
@@ -93,6 +95,13 @@ costs. Narrative claims can still be wrong and require review. A first-person
 account does not provide access to hidden model reasoning.
 
 ## Which agents work with AJX v1?
+
+The coordinator skill works in Codex, Claude Code, Kiro CLI, and other Agent
+Skills hosts with file and shell access. The host can read `SKILL.md` and use
+its own tools to coordinate the trial. See [harness setup](HARNESS-SUPPORT.md)
+for installation and invocation.
+
+The automated worker adapters have these capabilities:
 
 | Agent CLI | Adapter status and main limits |
 |---|---|
@@ -105,8 +114,9 @@ calls an agent CLI a `harness`. Custom command templates and Python plugins can
 add adapters; see [the architecture](ARCHITECTURE.md).
 
 Live development checks and synthetic regression tests do not guarantee
-compatibility with every future CLI version. Report generation currently uses
-Claude Code.
+compatibility with every future CLI version. Report generation supports
+Claude Code, Codex, Kiro CLI, and custom reporter plugins. One reporter is kept
+fixed across the matrix. AJX validates its structured output locally.
 
 ## Can I compare models or products?
 

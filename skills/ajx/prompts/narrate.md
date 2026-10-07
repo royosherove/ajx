@@ -1,4 +1,4 @@
-The task you were working on is over. Nothing more will be executed in this session; your tools are disabled. Do not try to continue, fix, or re-run anything.
+The task you were working on is over. This session is for reporting under the adapter's tool restrictions. Do not call tools or try to continue, fix, or re-run anything.
 
 I am an evaluator studying how the product `{{product}}` served you, an agent, while you did that task. Please write a first-person account of your experience for product engineers. This is run `{{run_id}}`.
 

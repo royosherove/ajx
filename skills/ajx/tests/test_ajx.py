@@ -1154,5 +1154,166 @@ class ReviewFindingsTest(unittest.TestCase):
         self.assertIn("sts get-caller-identity", calls.read_text()[len(before):])
 
 
+class PortableReporterTest(unittest.TestCase):
+    @staticmethod
+    def register():
+        return {"asks": [], "journey_errata": [], "strengths": [], "gates": [], "no_obstacles_observed": True}
+
+    def test_init_selects_each_common_harness_for_worker_and_reporter(self):
+        for harness in ("claude-code", "codex", "kiro-cli"):
+            with self.subTest(harness=harness), tempfile.TemporaryDirectory() as tmp:
+                code, _ = _run_cli(["init", tmp, "--product", "example", "--harness", harness])
+                self.assertEqual(code, 0)
+                spec = specmod.load(Path(tmp) / "trial.toml")
+                self.assertEqual(spec["cells"][0]["harness"], harness)
+                self.assertEqual(spec["reporter"]["harness"], harness)
+
+    def test_default_reporter_follows_first_capable_cell_and_auth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = specmod.load(_trial(tmp, '[auth.model]\ntype = "openai-api"\n',
+                                      '[[cells]]\nid = "a"\nharness = "codex"\nauth = "model"\n'))
+            self.assertEqual(spec["reporter"]["harness"], "codex")
+            self.assertEqual(spec["reporter"]["auth"], "model")
+
+    def test_reporter_adapters_use_restricted_commands_and_parse_responses(self):
+        from ajx import reporter
+        schema = json.loads((HERE.parent / "schemas" / "asks.schema.json").read_text())
+        data = self.register()
+        for name in ("claude-code", "codex", "kiro-cli"):
+            with self.subTest(harness=name), tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                spec = specmod.load(_trial(tmp, f'[reporter]\nharness = "{name}"\nauth = "inherit"\n'))
+                commands = []
+
+                def fake_run(ctx, argv, stage, **kwargs):
+                    commands.append(argv)
+                    text = json.dumps(data)
+                    if name == "claude-code":
+                        events = [{"type": "result", "result": text, "structured_output": data, "is_error": False,
+                                   "subtype": "success", "usage": {"output_tokens": 12}, "modelUsage": {"fake": {}}}]
+                    elif name == "codex":
+                        events = [{"type": "item.completed", "item": {"id": "fake", "type": "agent_message", "text": text}},
+                                  {"type": "turn.completed", "usage": {"output_tokens": 12}}]
+                        Path(argv[argv.index("--output-last-message") + 1]).write_text(text)
+                    else:
+                        events = [{"type": "runFinished", "data": {"finalText": text, "stopReason": "end_turn"}}]
+                    (ctx["run_dir"] / f"{stage}.raw.jsonl").write_text(
+                        "".join(json.dumps({"at": "2026-01-01T00:00:00Z", "line": json.dumps(event)}) + "\n" for event in events))
+                    return {"exit_code": 0, "timed_out": False}
+
+                with mock.patch.object(plugins.get("harness", name), "run", side_effect=fake_run):
+                    result = reporter._reporter_call(spec, tmp, "extract", "Synthetic evidence only.", schema)
+                self.assertEqual(result["structured"], data)
+                self.assertFalse(result["proc"]["is_error"])
+                argv = commands[0]
+                self.assertNotIn("--trust-all-tools", argv)
+                self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
+                if name == "claude-code":
+                    self.assertEqual(argv[argv.index("--tools") + 1], "")
+                elif name == "codex":
+                    self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
+                    self.assertIn("--output-schema", argv)
+                else:
+                    self.assertIn("--trust-tools=", argv)
+                    self.assertNotIn("Synthetic evidence only.", str(result["proc"].get("argv")))
+
+    def test_reporter_cleans_up_on_exception_and_rejects_bad_schema(self):
+        from ajx import reporter
+        schema = json.loads((HERE.parent / "schemas" / "asks.schema.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = specmod.load(_trial(tmp, ""))
+            auth = specmod.auth_for(spec, {"id": "reporter", "harness": "claude-code"})
+            with mock.patch.object(specmod, "auth_for", return_value=auth), \
+                 mock.patch.object(auth, "prepare") as prepare, mock.patch.object(auth, "cleanup") as cleanup, \
+                 mock.patch.object(plugins.get("harness", "claude-code"), "report", side_effect=RuntimeError("fake failure")):
+                with self.assertRaises(RuntimeError):
+                    reporter._reporter_call(spec, tmp, "extract", "x", schema)
+                prepare.assert_called_once()
+                cleanup.assert_called_once()
+            bad = {**self.register(), "gates": [{"trigger": "fake", "resolved": "yes"}]}
+            with mock.patch.object(plugins.get("harness", "claude-code"), "report", return_value={
+                "proc": {"exit_code": 0}, "structured": bad, "text": json.dumps(bad)}):
+                result = reporter._reporter_call(spec, tmp, "extract", "x", schema)
+                self.assertTrue(result["proc"]["is_error"])
+                self.assertIsNone(result["structured"])
+
+    def test_failed_reextraction_invalidates_previous_register(self):
+        from ajx import reporter
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            spec = specmod.load(_trial(tmp, ""))
+            (tmp / "journey.md").write_text("# Synthetic journey")
+            (tmp / "digest.md").write_text("Synthetic evidence")
+            write_json(tmp / "asks.json", {**self.register(), "extraction_status": "ok"})
+            with mock.patch.object(reporter, "_reporter_call", side_effect=RuntimeError("fake failure")):
+                with self.assertRaises(RuntimeError):
+                    reporter.extract(spec, tmp)
+            self.assertIn("failed:", read_json(tmp / "asks.json")["extraction_status"])
+            self.assertEqual(render.review_status(tmp, {"journey_provenance": "self"}), "incomplete")
+
+
+class PublicReportViewTest(unittest.TestCase):
+    def test_example_generates_complete_linked_views_without_an_agent(self):
+        from ajx import demo, report_ui
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(Harness, "run", side_effect=AssertionError("No agent may run")):
+            out = demo.generate(Path(tmp) / "example")
+            run = out / "runs" / "baseline-codex-r1"
+            report = (run / "report.html").read_text()
+            journey = (run / "pretty-journey.html").read_text()
+            matrix = (out / "index.html").read_text()
+            self.assertLess(report.index('id="asks"'), report.index('id="verification"'))
+            self.assertIn('id="ASK-001"', report)
+            self.assertIn('href="pretty-journey.html#E-003"', report)
+            self.assertIn('id="E-003"', journey)
+            self.assertIn("<svg", journey)
+            self.assertIn("Table of happenings", journey)
+            for name, (icon, _) in report_ui.LABELS.items():
+                self.assertIn(icon + " " + name, journey)
+            for row in read_json(out / "matrix.json")["runs"]:
+                self.assertIn(row["run_id"], matrix)
+                self.assertEqual(row["asks"], len(row["ask_register"]))
+                for ask in row["ask_register"]:
+                    self.assertIn(ask["title"], matrix)
+            self.assertIn("Fictional example.", report)
+            self.assertNotRegex(report + journey + matrix, r'<(?:script|link)[^>]+(?:src|href)="https?://')
+            self.assertEqual(demo.generate(out), out)  # refresh only its own example
+
+    def test_example_refuses_an_existing_unrelated_directory(self):
+        from ajx.demo import generate
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "keep.txt"
+            path.write_text("existing work")
+            with self.assertRaises(ValueError):
+                generate(tmp)
+            self.assertEqual(path.read_text(), "existing work")
+
+    def test_annotations_are_cited_and_narrative_takes_precedence(self):
+        from ajx import report_ui
+        events = [{"eid": "E-001"}, {"eid": "E-002"}, {"eid": "E-003"}]
+        markdown = "# J\n\n## Chronological account\n\n1. 🔀 Fork. I chose a path [E-001].\n\n2. I continued [E-002].\n"
+        data = {"asks": [{"id": "ASK-001", "event_refs": ["E-001", "E-002", "E-999"], "labels": ["Wait"]}],
+                "strengths": [{"event_refs": ["E-003"]}]}
+        marks = report_ui.annotations(markdown, data, events)
+        self.assertEqual(marks["E-001"]["labels"], ["Fork"])
+        self.assertEqual(marks["E-002"]["labels"], ["Wait"])
+        self.assertEqual(marks["E-003"]["labels"], ["Delight"])
+        self.assertNotIn("E-999", marks)
+
+    def test_untrusted_content_and_missing_evidence_stay_safe_and_explicit(self):
+        from ajx import report_ui
+        attack = '<script>alert("fake")</script>'
+        ask = {"id": "ASK-001", "title": attack, "event_refs": ['E-001" onclick="x'], "measured": {"span_seconds": None}}
+        rendered = report_ui.ask_card(ask, 0)
+        self.assertNotIn("<script>", rendered)
+        self.assertNotIn('onclick="x"', rendered)
+        self.assertIn("&lt;script&gt;", rendered)
+        self.assertIn("Unavailable", rendered)
+        self.assertEqual(report_ui.number(0.003), "0.003")
+        self.assertIn("incomplete", report_ui.empty_register({"extraction_status": "failed"}))
+        for url in ("javascript:alert", "data:text/html,x", "vbscript:fake", "http://[bad"):
+            self.assertIn('href="#"', mdlite.inline(f"[unsafe]({url})"))
+
+
 if __name__ == "__main__":
     unittest.main()

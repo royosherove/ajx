@@ -1,0 +1,55 @@
+{
+  "asks": [
+    {
+      "title": "Check headless authorization before starting an export",
+      "requested_behavior": "Provide a non-interactive authorization preflight and document the required human approval.",
+      "evidence_status": "observed_friction",
+      "how_observed": "The command requested browser approval after the agent had started the task.",
+      "consequence": "The unattended task stopped without an output file.",
+      "event_refs": [
+        "E-002",
+        "E-003",
+        "E-004"
+      ],
+      "journey_anchors": [],
+      "labels": [
+        "Gate",
+        "Wall"
+      ],
+      "priority_rationale": "Expose the prerequisite early so teams can prepare an authorized run.",
+      "verification": "In headless mode, preflight reports the missing approval before an export begins.",
+      "workaround": null,
+      "modeled_saving": null,
+      "id": "ASK-001",
+      "invalid_refs": [],
+      "measured": {
+        "events": 3,
+        "tool_calls": 1,
+        "failed_tool_calls": 1,
+        "tool_seconds": 3.0,
+        "span_seconds": 16.0,
+        "output_tokens": null,
+        "shared_events": [],
+        "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+      }
+    }
+  ],
+  "strengths": [],
+  "gates": [
+    {
+      "trigger": "Workspace approval requires a human",
+      "agent_action": "Stopped and reported the prerequisite.",
+      "resolved": false,
+      "event_refs": [
+        "E-002",
+        "E-003"
+      ]
+    }
+  ],
+  "journey_errata": [],
+  "extraction_status": "ok",
+  "no_obstacles_observed": false,
+  "extractor": {
+    "model_ids": "fictional reporter"
+  }
+}

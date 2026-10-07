@@ -47,6 +47,7 @@ scope = "proves a non-empty response containing 'hello' was written; does not pr
 run = "true"                      # for cloud tasks: find and delete resources tagged with $AJX_RUN_TOKEN
 
 [reporter]
+## The reporter stays fixed across the matrix. Also supports codex, kiro-cli, and reporter plugins.
 harness = "claude-code"
 model = "opus"
 auth = "inherit"

@@ -1,0 +1,120 @@
+{
+  "asks": [
+    {
+      "title": "Make the quick-start export command executable",
+      "requested_behavior": "Use the supported --output flag in the quick start, with a copyable CSV example.",
+      "evidence_status": "observed_friction",
+      "how_observed": "The documented --out flag failed. Command help showed --output, which worked.",
+      "consequence": "The first attempt failed and required a help lookup before retrying.",
+      "event_refs": [
+        "E-003",
+        "E-004",
+        "E-005"
+      ],
+      "journey_anchors": [],
+      "labels": [
+        "Roadblock",
+        "Misdirection"
+      ],
+      "priority_rationale": "Fix the broken first attempt before reducing optional friction.",
+      "verification": "Run the documented command in a fresh workspace; it must produce a 100-row CSV.",
+      "workaround": "Replace --out with --output.",
+      "modeled_saving": null,
+      "id": "ASK-001",
+      "invalid_refs": [],
+      "measured": {
+        "events": 3,
+        "tool_calls": 3,
+        "failed_tool_calls": 1,
+        "tool_seconds": 51.0,
+        "span_seconds": 69.0,
+        "output_tokens": 813,
+        "shared_events": [
+          "E-005"
+        ],
+        "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+      }
+    },
+    {
+      "title": "Expose progress while a CSV export is running",
+      "requested_behavior": "Emit bounded progress on stderr and a final structured completion result.",
+      "evidence_status": "observed_friction",
+      "how_observed": "Only start and completion messages appeared during the 47-second export.",
+      "consequence": "The agent could not distinguish productive work from a stalled command.",
+      "event_refs": [
+        "E-005",
+        "E-006"
+      ],
+      "journey_anchors": [],
+      "labels": [
+        "Wait",
+        "Blind Spot"
+      ],
+      "priority_rationale": "Make long-running work observable without extra polling.",
+      "verification": "Run a delayed export; progress must remain separate from CSV stdout.",
+      "workaround": null,
+      "modeled_saving": null,
+      "id": "ASK-002",
+      "invalid_refs": [],
+      "measured": {
+        "events": 2,
+        "tool_calls": 1,
+        "failed_tool_calls": 0,
+        "tool_seconds": 47.0,
+        "span_seconds": 47.0,
+        "output_tokens": 683,
+        "shared_events": [
+          "E-005"
+        ],
+        "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+      }
+    },
+    {
+      "title": "Explain when to choose export instead of dump",
+      "requested_behavior": "State the output formats and intended use of both commands in top-level help.",
+      "evidence_status": "observed_friction",
+      "how_observed": "Both commands were described as writing records; the required CSV path was unclear.",
+      "consequence": "The agent had to choose without a selection signal.",
+      "event_refs": [
+        "E-001",
+        "E-002"
+      ],
+      "journey_anchors": [],
+      "labels": [
+        "Fork"
+      ],
+      "priority_rationale": "Remove the ambiguous choice at the start of the task.",
+      "verification": "A user reading only top-level help can identify the CSV command.",
+      "workaround": null,
+      "modeled_saving": null,
+      "id": "ASK-003",
+      "invalid_refs": [],
+      "measured": {
+        "events": 2,
+        "tool_calls": 1,
+        "failed_tool_calls": 0,
+        "tool_seconds": 2.0,
+        "span_seconds": 8.0,
+        "output_tokens": 307,
+        "shared_events": [],
+        "basis": "sum over referenced events; tokens attributed per whole assistant message (two asks citing events from the same message both carry its tokens); span = first referenced event start to last referenced event end"
+      }
+    }
+  ],
+  "strengths": [
+    {
+      "title": "A verifiable row count",
+      "how_observed": "Inspect confirmed CSV format and 100 data rows.",
+      "event_refs": [
+        "E-008"
+      ]
+    }
+  ],
+  "gates": [],
+  "journey_errata": [],
+  "extraction_status": "ok",
+  "no_obstacles_observed": false,
+  "extractor": {
+    "model_ids": "fictional reporter"
+  }
+}

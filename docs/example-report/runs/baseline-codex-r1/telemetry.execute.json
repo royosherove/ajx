@@ -1,0 +1,175 @@
+{
+  "session_id": null,
+  "model_ids": [
+    "example-model"
+  ],
+  "final_text": "I exported the records and verified that the CSV contains 100 data rows.",
+  "stop_reason": null,
+  "events": [
+    {
+      "kind": "tool",
+      "tool_use_id": "example-tool-0",
+      "name": "shell",
+      "input": "command: demo-export --help",
+      "input_raw": {
+        "command": "demo-export --help"
+      },
+      "at": "2026-01-01T10:00:00Z",
+      "end": "2026-01-01T10:00:02Z",
+      "is_error": false,
+      "output": "Commands: export, dump. Both write records to a file.",
+      "message_id": "example-message-0",
+      "eid": "E-001",
+      "duration_s": 2.0
+    },
+    {
+      "kind": "text",
+      "text": "I could use export or dump. The help does not explain which produces CSV.",
+      "at": "2026-01-01T10:00:08Z",
+      "message_id": "example-message-1",
+      "eid": "E-002"
+    },
+    {
+      "kind": "tool",
+      "tool_use_id": "example-tool-2",
+      "name": "shell",
+      "input": "command: demo-export export --format csv --out report.csv",
+      "input_raw": {
+        "command": "demo-export export --format csv --out report.csv"
+      },
+      "at": "2026-01-01T10:00:16Z",
+      "end": "2026-01-01T10:00:18Z",
+      "is_error": true,
+      "output": "Unknown option: --out",
+      "message_id": "example-message-2",
+      "eid": "E-003",
+      "duration_s": 2.0
+    },
+    {
+      "kind": "tool",
+      "tool_use_id": "example-tool-3",
+      "name": "shell",
+      "input": "command: demo-export export --help",
+      "input_raw": {
+        "command": "demo-export export --help"
+      },
+      "at": "2026-01-01T10:00:29Z",
+      "end": "2026-01-01T10:00:31Z",
+      "is_error": false,
+      "output": "Use --output FILE. The quick start still shows --out.",
+      "message_id": "example-message-3",
+      "eid": "E-004",
+      "duration_s": 2.0
+    },
+    {
+      "kind": "tool",
+      "tool_use_id": "example-tool-4",
+      "name": "shell",
+      "input": "command: demo-export export --format csv --output report.csv",
+      "input_raw": {
+        "command": "demo-export export --format csv --output report.csv"
+      },
+      "at": "2026-01-01T10:00:38Z",
+      "end": "2026-01-01T10:01:25Z",
+      "is_error": false,
+      "output": "Export started.\nComplete: 100 records.",
+      "message_id": "example-message-4",
+      "eid": "E-005",
+      "duration_s": 47.0
+    },
+    {
+      "kind": "text",
+      "text": "The export has been quiet. I cannot tell whether it is still working.",
+      "at": "2026-01-01T10:00:57Z",
+      "message_id": "example-message-5",
+      "eid": "E-006"
+    },
+    {
+      "kind": "text",
+      "text": "I trust the command help over the older quick start after the flag was rejected.",
+      "at": "2026-01-01T10:01:30Z",
+      "message_id": "example-message-6",
+      "eid": "E-007"
+    },
+    {
+      "kind": "tool",
+      "tool_use_id": "example-tool-7",
+      "name": "shell",
+      "input": "command: demo-export inspect report.csv",
+      "input_raw": {
+        "command": "demo-export inspect report.csv"
+      },
+      "at": "2026-01-01T10:01:36Z",
+      "end": "2026-01-01T10:01:38Z",
+      "is_error": false,
+      "output": "Format: CSV. Data rows: 100. Validation: passed.",
+      "message_id": "example-message-7",
+      "eid": "E-008",
+      "duration_s": 2.0
+    },
+    {
+      "kind": "text",
+      "text": "I exported the records and verified that the CSV contains 100 data rows.",
+      "at": "2026-01-01T10:01:45Z",
+      "message_id": "example-message-8",
+      "eid": "E-009"
+    }
+  ],
+  "usage": [
+    {
+      "id": "example-message-0",
+      "at": "2026-01-01T10:00:00Z",
+      "output_tokens": 130
+    },
+    {
+      "id": "example-message-1",
+      "at": "2026-01-01T10:00:08Z",
+      "output_tokens": 177
+    },
+    {
+      "id": "example-message-2",
+      "at": "2026-01-01T10:00:16Z",
+      "output_tokens": 224
+    },
+    {
+      "id": "example-message-3",
+      "at": "2026-01-01T10:00:29Z",
+      "output_tokens": 271
+    },
+    {
+      "id": "example-message-4",
+      "at": "2026-01-01T10:00:38Z",
+      "output_tokens": 318
+    },
+    {
+      "id": "example-message-5",
+      "at": "2026-01-01T10:00:57Z",
+      "output_tokens": 365
+    },
+    {
+      "id": "example-message-6",
+      "at": "2026-01-01T10:01:30Z",
+      "output_tokens": 412
+    },
+    {
+      "id": "example-message-7",
+      "at": "2026-01-01T10:01:36Z",
+      "output_tokens": 459
+    },
+    {
+      "id": "example-message-8",
+      "at": "2026-01-01T10:01:45Z",
+      "output_tokens": 506
+    }
+  ],
+  "usage_status": "partial",
+  "expected_output_tokens": null,
+  "tool_status": "partial",
+  "expected_tool_calls": null,
+  "harness_reported": {},
+  "timestamp_source": "synthetic timestamps",
+  "limitations": [
+    "Fictional fixture. No product or model was run."
+  ],
+  "message_ids": []
+}

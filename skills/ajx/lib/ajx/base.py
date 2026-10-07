@@ -114,6 +114,7 @@ class Harness:
     binary = None                 # executable name, for availability/doctor
     version_argv = None
     can_resume = False            # can re-enter the worker's own session to self-narrate
+    can_report = False            # fresh reporting call with restricted tool permissions
     clean_supported = False       # can run with user skills/memory/MCP/instructions disabled
     verified_live = False         # adapter validated against a real installed CLI by ajx tests
     default_auth = "inherit"
@@ -194,6 +195,24 @@ class Harness:
     def narrate(self, ctx, prompt):
         """Resume the worker's own session read-only and ask for the journey. None = unsupported."""
         return None
+
+    def report(self, ctx, prompt, schema=None):
+        """Return {proc, text, structured} from a fresh, restricted reporter session."""
+        raise NotImplementedError(f"{self.name} has no reporter adapter")
+
+    def report_result(self, ctx, proc):
+        """Common response extraction for reporters using normalized event streams."""
+        tel = self.normalize(ctx, ctx["stage_name"])
+        proc.update(
+            output_tokens=sum(u["output_tokens"] for u in tel.get("usage") or []
+                              if u.get("output_tokens") is not None) if tel.get("usage") else None,
+            model_ids=",".join(tel.get("model_ids") or []) or None,
+            result_subtype=tel.get("stop_reason"),
+            is_error=bool(proc.get("timed_out") or proc.get("exit_code") not in (None, 0)
+                          or tel.get("stop_reason") in ("error", "failed", "cancelled")),
+            limitations=tel.get("limitations") or [],
+        )
+        return {"proc": proc, "text": tel.get("final_text") or "", "structured": None}
 
     def normalize(self, ctx, stage, exclude_message_ids=()):
         raise NotImplementedError

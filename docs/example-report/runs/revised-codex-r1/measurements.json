@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task_summary": {
+    "elapsed_seconds": 34.0,
+    "elapsed_source": "ajx process start/stop (same clock for every harness)",
+    "stop_reason": "completed",
+    "harness_stop_reason": null,
+    "exit_code": 0,
+    "timed_out": false,
+    "tool_calls": 3,
+    "tool_status": "partial",
+    "failed_tool_calls": 0,
+    "retries_after_error": 0,
+    "output_tokens": 1120,
+    "usage_status": "partial",
+    "longest_tool_seconds": 20.0,
+    "gaps_over_60s": [],
+    "model_ids": [
+      "example-model"
+    ],
+    "harness_reported": {}
+  }
+}

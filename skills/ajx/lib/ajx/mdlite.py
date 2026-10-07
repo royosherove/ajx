@@ -6,6 +6,7 @@ pipe tables, horizontal rules, inline code, bold, italic, and links. All text is
 
 import html
 import re
+from urllib.parse import urlsplit
 
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
@@ -29,7 +30,11 @@ def inline(text):
 
     def link(match):
         href = match.group(2)
-        if href.lower().startswith(("javascript:", "data:")):
+        try:
+            allowed = urlsplit(html.unescape(href)).scheme.lower() in ("", "http", "https")
+        except ValueError:
+            allowed = False
+        if not allowed:
             href = "#"
         return f'<a href="{html.escape(href)}">{match.group(1)}</a>'
 

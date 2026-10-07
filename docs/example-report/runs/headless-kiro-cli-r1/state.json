@@ -1,0 +1,29 @@
+{
+  "execute": {
+    "started_at": "2026-01-01T10:00:00Z",
+    "stopped_at": "2026-01-01T10:00:25Z",
+    "exit_code": 0,
+    "stop_reason": "completed",
+    "timed_out": false
+  },
+  "stages": {
+    "execute": {
+      "status": "done"
+    },
+    "verify": {
+      "status": "done"
+    },
+    "narrate": {
+      "status": "done"
+    },
+    "extract": {
+      "status": "done"
+    },
+    "measure": {
+      "status": "done"
+    },
+    "render": {
+      "status": "done"
+    }
+  }
+}
