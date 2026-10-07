@@ -1,0 +1,16 @@
+{"type":"runStarted","data":{"payloadSchema":"acp","acpProtocolVersion":1,"engine":"v2"}}
+{"type":"metadata","data":{"sessionId":"00000000-0000-4000-8000-000000000002","contextUsagePercentage":10.0}}
+{"type":"metadata","data":{"sessionId":"00000000-0000-4000-8000-000000000002","contextUsagePercentage":10.0}}
+{"type":"metadata","data":{"sessionId":"00000000-0000-4000-8000-000000000002","contextUsagePercentage":10.0}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"tool_call","toolCallId":"tool-example-2","title":"Running: echo hi","kind":"execute","rawInput":{"command":"echo hi"},"_meta":{"kiro":{"toolName":"shell"}}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-example-2","content":[{"type":"content","content":{"type":"text","text":"hi\n"}}]}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-example-2","kind":"execute","status":"completed","title":"Running: echo hi","rawInput":{"command":"echo hi"},"rawOutput":{"items":[{"Json":{"exit_status":"exit status: 0","stdout":"hi\n","stderr":""}}]}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"It"}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" printed"}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" `"}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi` to"}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" stdout"}}}}
+{"type":"sessionUpdate","data":{"sessionId":"00000000-0000-4000-8000-000000000002","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"."}}}}
+{"type":"metadata","data":{"sessionId":"00000000-0000-4000-8000-000000000002","contextUsagePercentage":10.0}}
+{"type":"metadata","data":{"sessionId":"00000000-0000-4000-8000-000000000002","contextUsagePercentage":10.0,"meteringUsage":[{"value":0.03,"unit":"credit","unitPlural":"credits"},{"value":0.015,"unit":"credit","unitPlural":"credits"}],"turnDurationMs":4000}}
+{"type":"runFinished","data":{"sessionId":"00000000-0000-4000-8000-000000000002","status":"success","stopReason":"end_turn","finalText":"It printed `hi` to stdout.","finalTextTruncated":false}}

@@ -1,0 +1,32 @@
+[trial]
+id = "jq-live-01"
+product = "jq"
+product_version_cmd = "jq --version"
+workspace_root = "/tmp"
+timeout_seconds = 300
+max_budget_usd = 1
+
+[task]
+prompt_file = "task-prompt.md"
+
+[[verify]]
+name = "names.txt has three sorted lines"
+run = "test $(wc -l < names.txt) -eq 3 && sort -c names.txt"
+
+[[verify]]
+name = "people.json is valid json with 3 entries"
+run = "test $(jq length people.json) -eq 3"
+
+[reporter]
+harness = "claude-code"
+model = "sonnet"
+
+[[cells]]
+id = "cc-haiku"
+harness = "claude-code"
+model = "haiku"
+
+[[cells]]
+id = "kiro-haiku"
+harness = "kiro-cli"
+model = "claude-haiku-4.5"

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+scanner=$(git config --local --get ajx.gitleaksPath || command -v gitleaks || true)
+if [ -z "$scanner" ] || [ ! -x "$scanner" ]; then
+    echo "Install Gitleaks and follow CONTRIBUTING.md before committing." >&2
+    exit 1
+fi
+
+exec "$scanner" git --pre-commit --staged --redact --no-banner \
+    --ignore-gitleaks-allow --max-decode-depth 2 --max-archive-depth 2 \
+    --config "$root/.gitleaks.toml"

@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["asks", "journey_errata", "strengths", "gates", "no_obstacles_observed"],
+  "properties": {
+    "no_obstacles_observed": {"type": "boolean"},
+    "asks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "requested_behavior", "evidence_status", "how_observed", "consequence",
+                     "event_refs", "journey_anchors", "labels", "priority_rationale", "verification"],
+        "properties": {
+          "title": {"type": "string", "maxLength": 90},
+          "requested_behavior": {"type": "string"},
+          "evidence_status": {"type": "string", "enum": ["verified_defect", "observed_friction", "untested_risk", "feature_request"]},
+          "how_observed": {"type": "string", "description": "attempted action, actual signal/result, how the mismatch became visible"},
+          "consequence": {"type": "string"},
+          "event_refs": {"type": "array", "items": {"type": "string", "pattern": "^E-[0-9]{3,}$"}},
+          "journey_anchors": {"type": "array", "items": {"type": "string"}},
+          "labels": {"type": "array", "items": {"type": "string", "enum": ["Wall", "Roadblock", "Detour", "Wait", "Dead End", "Fork", "Wrong Turn", "Misdirection", "Blind Spot", "Gate", "Trust Decision", "Cost"]}},
+          "priority_rationale": {"type": "string"},
+          "modeled_saving": {
+            "anyOf": [
+              {"type": "null"},
+              {"type": "object", "additionalProperties": false,
+               "required": ["claim", "comparator", "assumption", "uncertainty"],
+               "properties": {"claim": {"type": "string"}, "comparator": {"type": "string"},
+                              "assumption": {"type": "string"}, "uncertainty": {"type": "string"}}}
+            ]
+          },
+          "verification": {"type": "string"},
+          "workaround": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "journey_errata": {
+      "type": "array",
+      "items": {"type": "object", "additionalProperties": false, "required": ["journey_claim", "evidence", "event_refs"],
+                "properties": {"journey_claim": {"type": "string"}, "evidence": {"type": "string"},
+                               "event_refs": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "strengths": {
+      "type": "array",
+      "items": {"type": "object", "additionalProperties": false, "required": ["title", "how_observed", "event_refs"],
+                "properties": {"title": {"type": "string"}, "how_observed": {"type": "string"},
+                               "event_refs": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "gates": {
+      "type": "array",
+      "items": {"type": "object", "additionalProperties": false, "required": ["trigger", "agent_action", "resolved", "event_refs"],
+                "properties": {"trigger": {"type": "string"}, "agent_action": {"type": "string"},
+                               "resolved": {"type": "boolean"}, "event_refs": {"type": "array", "items": {"type": "string"}}}}
+    }
+  }
+}

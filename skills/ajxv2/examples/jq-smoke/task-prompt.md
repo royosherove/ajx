@@ -1,0 +1,1 @@
+Using the `jq` command line tool, create a file named people.json in the current directory containing a JSON array of three people, each with a "name" and an "age". Then use jq to produce names.txt containing only the three names, one per line, sorted alphabetically. Finally print the contents of names.txt.

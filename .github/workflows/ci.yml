@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13', '3.14']
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Offline regression tests
+        run: python -I skills/ajxv2/tests/test_ajx2.py
+      - name: CLI smoke test
+        run: python skills/ajxv2/bin/ajx2 --help
+
+  security:
+    name: Secrets and privacy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install checksum-pinned Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output gitleaks.tar.gz
+          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum --check --strict
+          mkdir -p ajx-security-bin
+          tar -xzf gitleaks.tar.gz -C ajx-security-bin gitleaks
+          echo "$RUNNER_TEMP/ajx-security-bin" >> "$GITHUB_PATH"
+      - name: Verify disclosure rules and staged-content hook
+        run: python3 -I .github/scripts/test_security.py
+      - name: Scan complete history and commit metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          gitleaks git --redact --no-banner --ignore-gitleaks-allow \
+            --max-decode-depth 2 --max-archive-depth 2 \
+            --config .gitleaks.toml --log-opts=--all
+          git log --all --format='%an <%ae>%n%cn <%ce>%n%B' |
+            gitleaks stdin --redact --no-banner --ignore-gitleaks-allow --config .gitleaks.toml

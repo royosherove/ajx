@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["clusters"],
+  "properties": {
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "requested_behavior", "evidence_status", "members", "representative_observation"],
+        "properties": {
+          "title": {"type": "string", "maxLength": 90},
+          "requested_behavior": {"type": "string"},
+          "evidence_status": {"type": "string", "enum": ["verified_defect", "observed_friction", "untested_risk", "feature_request"]},
+          "members": {"type": "array", "minItems": 1,
+                      "items": {"type": "object", "additionalProperties": false, "required": ["run_id", "ask_id"],
+                                "properties": {"run_id": {"type": "string"}, "ask_id": {"type": "string"}}}},
+          "representative_observation": {"type": "object", "additionalProperties": false, "required": ["run_id", "text"],
+                                         "properties": {"run_id": {"type": "string"}, "text": {"type": "string"}}}
+        }
+      }
+    }
+  }
+}

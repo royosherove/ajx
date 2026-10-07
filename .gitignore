@@ -1,0 +1,53 @@
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+auth.json
+.aws/
+.ssh/
+.claude/
+.codex/
+.kiro/
+.ajx-local/
+
+# Private trials, reports, logs, and transfer artifacts
+ajx-reports/
+/trials/
+*.log
+*.bundle
+*.bak
+*.sock
+*.pid
+.cache/
+
+# Workstation and editor state
+.idea/
+.vscode/
+*.swp
+*~
+
+# Internal build workspace metadata
+.brazil/
+.builder-mcp/
+/env/
+/release-info/
+/packageInfo*
+/Config

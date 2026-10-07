@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""ajx2: deterministic runner for AJX v2 trials (matrix of harness x model x config x repetition).
+
+Commands:
+  init <dir> --product NAME        scaffold trial.toml + task-prompt.md
+  doctor [trial.toml]              harness/auth/runner availability; model identity vs task identity;
+                                   env overrides and collisions; preflight (no secrets printed)
+  validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings
+  run <trial.toml> [--cells a,b] [--stages s1,s2] [--dry-run] [--keep-workspace] [--no-synthesis]
+  status <trial.toml|matrix-dir>   per-run stage table
+  report <trial.toml> [--no-synthesis]   re-render run reports and the matrix report
+  plugins                          list registered harness/auth/runner/check plugins
+"""
+
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from ajx2 import envcheck, plugins, render, runner, spec as specmod  # noqa: E402
+from ajx2.util import read_json  # noqa: E402
+
+TRIAL_TEMPLATE = '''# AJXv2 trial file. Everything the matrix needs, in one place. See examples/trial.toml.
+[trial]
+id = "{id}"
+product = "{product}"
+product_version_cmd = ""          # e.g. "mytool --version"; recorded before and after each run
+workspace_root = "/tmp"           # fresh unnamed workspace per run is created here (outside the report dir)
+repetitions = 1
+parallel = 1                      # >1 makes wall-clock incomparable (recorded)
+timeout_seconds = 1800
+narrate_timeout_seconds = 900     # for the resumed self-narration and reporter calls
+# max_budget_usd = 5              # enforced by harnesses that support it (claude-code)
+order_seed = 0
+cache = "isolated"                # isolated | shared package caches
+
+[task]
+prompt_file = "task-prompt.md"    # exact bytes are hashed; never edited by ajx2
+materials = []                    # URLs/docs the prompt points the agent to (recorded)
+human = "unavailable"             # headless: a required human action is recorded as a Gate
+# fixture_dir = "fixture"         # copied into every fresh workspace before setup
+# identity_cmd = "aws sts get-caller-identity --profile my-sandbox"   # the account the worker acts in;
+                                  # doctor runs it in the worker's own tool shell and fails if it errors
+
+# [env]                           # worker env. Not for credentials the model also uses (Bedrock reads
+# MY_VAR = "x"                    # AWS_*): doctor warns on collisions and on values the shell overrides
+
+# [[preflight]]                   # must pass before each worker starts; same env as verify/teardown
+# name = "task credentials work"
+# run = "aws sts get-caller-identity --profile my-sandbox"
+
+# [[setup]]                       # before the clock; recorded as preinstalled setup
+# run = "git init -q"
+
+# [[verify]]                      # deterministic checks run by ajx2 AFTER the agent stops
+# name = "project created"
+# type = "file_exists"            # shell | file_exists | http (plugins can add more)
+# path = "*/package.json"
+
+# [[teardown]]                    # always runs; $AJX2_RUN_TOKEN is available for tagging/finding resources
+# run = "true"
+
+[reporter]                        # fixed across cells so report quality is not a confounder
+harness = "claude-code"
+# model = "opus"
+# auth = "inherit"
+
+[[cells]]
+id = "claude-default"
+harness = "claude-code"
+# model = "opus"                  # or models = ["sonnet", "opus"]: one cell per model (claude-default-sonnet, ...)
+config = "clean"                  # clean = no user skills/memory/MCP/CLAUDE.md; user = your normal config
+# auth = "inherit"                # or a [auth.*] profile name, or an auth type (ajx2 plugins)
+'''
+
+PROMPT_TEMPLATE = '''I want to try {product}.
+
+<Describe the real outcome you want, as a customer would. Name the materials the agent may use
+(for example the GitHub README URL). State the boundaries (account/profile/region, spend limit,
+what to clean up). Do not mention evaluation, AJX, or expected problems.>
+'''
+
+
+def cmd_init(args):
+    d = Path(args.dir).resolve()
+    d.mkdir(parents=True, exist_ok=True)
+    tid = args.id or d.name.lower().replace(" ", "-")
+    trial, prompt = d / "trial.toml", d / "task-prompt.md"
+    for path, text in ((trial, TRIAL_TEMPLATE.format(id=tid, product=args.product)),
+                       (prompt, PROMPT_TEMPLATE.format(product=args.product))):
+        if path.exists() and not args.force:
+            print(f"exists, not overwritten: {path}")
+        else:
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+    return 0
+
+
+def cmd_plugins(args):
+    plugins.load()
+    for kind in plugins.KINDS:
+        print(f"{kind}:")
+        for name in plugins.names(kind):
+            cls = plugins.get(kind, name)
+            extra = ""
+            if kind == "harness":
+                h = cls()
+                extra = (f"  installed={'yes' if h.available() else 'no'} verified_live={h.verified_live} "
+                         f"resume={h.can_resume} clean={h.clean_supported} default_auth={h.default_auth}")
+            if kind == "auth":
+                extra = f"  for={','.join(cls.harnesses)}  {cls.description}"
+            print(f"  {name:22s}{extra}")
+    return 0
+
+
+def cmd_doctor(args):
+    spec = specmod.load(args.trial) if args.trial else None
+    plugins.load(Path(spec["path"]).parent if spec else None)
+    print(f"python {sys.version.split()[0]}")
+    names = specmod.harness_names(spec) if spec else plugins.names("harness")
+    wanted = {c["harness"] for c in spec["cells"]} | {spec["reporter"]["harness"]} if spec else set(names)
+    ok = True
+    for name in names:
+        if name not in wanted:
+            continue
+        h = specmod.harness_for(spec, name) if spec else plugins.get("harness", name)()
+        avail = h.available()
+        print(f"harness {name:14s} installed={'yes' if avail else 'NO '} version={h.version() or 'n/a'} "
+              f"verified_live={h.verified_live} resume={h.can_resume} clean={h.clean_supported} telemetry: {h.telemetry}")
+        ok &= avail
+    if spec:
+        with tempfile.TemporaryDirectory() as tmp:
+            ok &= _doctor_cells(spec, Path(tmp))
+        for cmd in spec["verify"]:
+            print(f"verify  {cmd['type']:10s} {cmd['name']}")
+        print(f"workspace_root={spec['trial']['workspace_root']} output_dir={spec['trial']['output_dir']}")
+        if not ok:
+            print("NOT READY: fix the FAILED/PROBLEMS lines above before `ajx2 run`.")
+        print("Workers run with all tool permissions auto-approved. Show the user the TASK identity (the account "
+              "the worker acts in) and get confirmation that it is a sandbox before `ajx2 run`. The harness auth "
+              "identity is only the model's credentials.")
+    return 0 if ok else 1
+
+
+def _doctor_cells(spec, tmp):
+    """Per cell: model credentials, the worker's tool-shell identity and env warnings; then, per distinct
+    verify/teardown environment, the same identity under /bin/sh and the [[preflight]] results."""
+    ok, memo, groups = True, {}, {}
+    ident_cmd = spec["task"].get("identity_cmd")
+    ws = envcheck.scratch_workspace(spec, tmp)
+
+    def once(key, fn):
+        if key not in memo:
+            memo[key] = fn()
+        return memo[key]
+
+    def sig(env):
+        return tuple(sorted(env.items()))
+
+    for cell in spec["cells"]:
+        harness = specmod.harness_for(spec, cell["harness"])
+        auth = specmod.auth_for(spec, cell)
+        rn = specmod.runner_for(spec, cell)
+        probs = auth.problems()
+        ctx = envcheck.placeholder_ctx(spec, cell, auth, rn, tmp)
+        checks, view = envcheck.inspect_cell(spec, cell, harness, auth, rn, ws, ctx)
+        eff = view["effective"]
+        checks["auth_identity"] = once(("auth", auth.profile, sig(eff)), lambda: envcheck.auth_identity(auth, eff))
+        print(f"cell {cell['id']:16s} harness={cell['harness']} model={cell.get('model') or 'harness default'} "
+              f"config={cell['config']}")
+        print(f"    auth={auth.profile} ({auth.name}) env={sorted(auth.env())} unset={auth.unset()} "
+              f"isolates_config={auth.isolates_config}")
+        for s in checks["harness_settings"]:
+            print(f"    harness settings env applied over the worker env: {s['source']} sets {', '.join(s['names'])}")
+        print(f"    harness auth identity (model credentials): {checks['auth_identity'] or 'n/a'}")
+        if checks["auth_identity"] and envcheck.auth_error_lines(checks["auth_identity"]):
+            print("    FAILED the model credentials above do not authenticate; every model call would fail")
+            ok = False
+        checks["task_identity"] = None
+        if ident_cmd and checks["local_runner"]:
+            checks["task_identity"] = once(("tool", ident_cmd, view["shell"], sig(eff)),
+                                           lambda: envcheck.identity_result(ident_cmd, ws, eff, view["shell"]))
+            label = f"task identity (worker tool shell, {checks['tool_shell']}): "
+            if checks["task_identity"]["ok"]:
+                print(f"    {label}{checks['task_identity']['output']}")
+            else:
+                print(f"    {label}FAILED ({_why(checks['task_identity'])}): {checks['task_identity']['output']}")
+                ok = False
+        elif ident_cmd:
+            print(f"    task identity: not checked here (runner {rn.name} runs the worker elsewhere)")
+        else:
+            print("    task identity: not checked ([task] identity_cmd unset; set it for any task that uses an account)")
+        checks["default_aws_identity"] = None
+        if checks["local_runner"] and envcheck.uses_aws(spec, auth, view):
+            checks["default_aws_identity"] = once(
+                ("tool", envcheck.DEFAULT_AWS_IDENTITY, view["shell"], sig(eff)),
+                lambda: envcheck.identity_result(envcheck.DEFAULT_AWS_IDENTITY, ws, eff, view["shell"]))
+            d = checks["default_aws_identity"]
+            print("    default AWS identity in the agent's tool shell (any aws/SDK call without --profile): "
+                  + (d["output"] if d["ok"] else f"none ({_why(d)}: {d['output']})"))
+        for w in envcheck.warnings(checks, auth, view) + [envcheck.default_identity_warning(checks)]:
+            if w:
+                print(f"    WARNING {w}")
+        if probs:
+            print(f"    PROBLEMS: {probs}")
+            ok = False
+        print(f"    runner={rn.name} {rn.describe()}")
+        env = envcheck.command_env(specmod.worker_env(spec, cell, auth), auth.unset(), "doctor")
+        groups.setdefault(sig(env), {"env": env, "cells": [], "tool": []})
+        groups[sig(env)]["cells"].append(cell["id"])
+        groups[sig(env)]["tool"].append(checks["task_identity"])
+    if not (ident_cmd or spec["preflight"]):
+        return ok
+    for group in groups.values():
+        print(f"verify/teardown/preflight shell (/bin/sh -c, ajx2 env only; no harness settings, no shell startup "
+              f"files) for cells {', '.join(group['cells'])}")
+        if ident_cmd:
+            res = envcheck.identity_result(ident_cmd, ws, group["env"])
+            if not res["ok"]:
+                print(f"    task identity: FAILED ({_why(res)}): {res['output']}")
+                ok = False
+            else:
+                differs = [t for t in group["tool"] if t and t["ok"] and t["output"] != res["output"]]
+                print(f"    task identity: {res['output']}")
+                if differs:
+                    print("    WARNING this differs from the worker's tool shell identity: verify and teardown act as a "
+                          "different identity than the agent and may not see what it created")
+        for rec in envcheck.run_preflight(spec["preflight"], ws, group["env"]):
+            print(f"    preflight {rec['name']}: " + ("ok" if rec["passed"] else f"FAILED ({envcheck.preflight_failure(rec)})"))
+            ok &= rec["passed"]
+    return ok
+
+
+def _why(res):
+    if res["timed_out"]:
+        return "timed out"
+    return f"exit {res['exit_code']}" if res["exit_code"] != 0 else "credential errors in its output"
+
+
+def cmd_validate(args):
+    spec = specmod.load(args.trial)
+    plan = specmod.run_plan(spec, _cells(args))
+    print(f"trial {spec['trial']['id']} product={spec['trial']['product']} trial_sha256={spec['sha256'][:16]}")
+    print(f"prompt {spec['task']['prompt_path']} sha256={spec['task']['prompt_sha256']}")
+    print(f"cells={len(spec['cells'])} repetitions={spec['trial']['repetitions']} runs={len(plan)} parallel={spec['trial']['parallel']}")
+    for c, r in plan:
+        print(f"  {c['id']}-r{r}: {c['harness']} model={c.get('model') or 'harness default'} config={c['config']} "
+              f"auth={c.get('auth') or 'default'}")
+    print(f"verify checks={len(spec['verify'])} setup={len(spec['setup'])} teardown={len(spec['teardown'])} "
+          f"preflight={len(spec['preflight'])} task identity_cmd={'set' if spec['task'].get('identity_cmd') else 'unset'}")
+    print(f"output_dir={spec['trial']['output_dir']}")
+    wanted = {c["id"] for c, _ in plan}
+    with tempfile.TemporaryDirectory() as tmp:  # probes the agent's tool shell; runs no identity commands
+        ws = envcheck.scratch_workspace(spec, tmp)
+        for cell in (c for c in spec["cells"] if c["id"] in wanted):
+            auth, rn = specmod.auth_for(spec, cell), specmod.runner_for(spec, cell)
+            checks, view = envcheck.inspect_cell(spec, cell, specmod.harness_for(spec, cell["harness"]), auth, rn, ws,
+                                                 envcheck.placeholder_ctx(spec, cell, auth, rn, tmp))
+            for w in envcheck.warnings(checks, auth, view):
+                print(f"WARNING {cell['id']}: {w}")
+    return 0
+
+
+def _cells(args):
+    return [c.strip() for c in args.cells.split(",")] if getattr(args, "cells", None) else None
+
+
+def cmd_run(args):
+    spec = specmod.load(args.trial)
+    stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
+    log = lambda m: print(f"[{__import__('datetime').datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)  # noqa: E731
+    meta = runner.run_matrix(spec, only_cells=_cells(args), stages=stages, keep_workspace=args.keep_workspace,
+                             log=log, dry_run=args.dry_run, synthesize=not args.no_synthesis)
+    if args.dry_run:
+        print(json.dumps(meta, indent=2))
+        return 0
+    out = Path(spec["trial"]["output_dir"])
+    print(f"\nmatrix report: {out / 'index.html'}\nmarkdown:      {out / 'matrix.md'}")
+    return cmd_status(args)
+
+
+def cmd_status(args):
+    path = Path(args.trial)
+    out = Path(specmod.load(path)["trial"]["output_dir"]) if path.is_file() else path
+    runs = sorted((out / "runs").iterdir()) if (out / "runs").exists() else []
+    print(f"{'run':20s} " + " ".join(f"{s[:7]:>7s}" for s in runner.STAGES) + "  verified")
+    bad, cleanup = 0, []
+    for d in runs:
+        st = read_json(d / "state.json", {"stages": {}})
+        marks = []
+        for s in runner.STAGES:
+            v = st["stages"].get(s, {}).get("status")
+            mark = {"done": "ok", "error": "ERR", "running": "run", "interrupted": "INT", None: "-"}.get(v, v or "-")
+            # "ran" is not "cleaned up": a teardown that failed or could not authenticate is not ok
+            td = (st.get("teardown") or {}).get("status")
+            if s == "teardown" and v == "done" and td in TEARDOWN_MARKS:
+                mark = TEARDOWN_MARKS[td]
+                cleanup.append(f"{d.name}: {render.TEARDOWN_PROBLEMS[td]}; see {d / 'teardown.json'}")
+            marks.append(mark)
+            bad += v == "error" or mark in TEARDOWN_MARKS.values()
+        verify = read_json(d / "verify.json", {})
+        verified = verify.get("outcome") or read_json(d / "run.json", {}).get("task_outcome_verified") or ""
+        if verify.get("checks_with_auth_errors"):
+            verified += f" ({len(verify['checks_with_auth_errors'])} check(s) hit credential errors)"
+        print(f"{d.name:20s} " + " ".join(f"{m:>7s}" for m in marks) + f"  {verified}")
+    for line in cleanup:
+        print(f"CLEANUP NOT CONFIRMED {line}")
+    if cleanup:
+        print("Resources the task created may still exist. After fixing credentials: "
+              "ajx2 run <trial> --cells <cell> --stages teardown,render")
+    return 1 if bad else 0
+
+
+TEARDOWN_MARKS = {"auth_errors": "AUTH", "failed": "FAIL", "skipped": "SKIP"}
+
+
+def cmd_report(args):
+    spec = specmod.load(args.trial)
+    out = Path(spec["trial"]["output_dir"])
+    for d in sorted((out / "runs").iterdir()) if (out / "runs").exists() else []:
+        if (d / "run.json").exists():
+            render.run_report(d)
+    render.matrix_report(spec, synthesize=not args.no_synthesis)
+    print(f"{out / 'index.html'}")
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="ajx2", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("init"); s.add_argument("dir"); s.add_argument("--product", required=True); s.add_argument("--id"); s.add_argument("--force", action="store_true"); s.set_defaults(fn=cmd_init)
+    s = sub.add_parser("plugins"); s.set_defaults(fn=cmd_plugins)
+    s = sub.add_parser("doctor"); s.add_argument("trial", nargs="?"); s.set_defaults(fn=cmd_doctor)
+    s = sub.add_parser("validate"); s.add_argument("trial"); s.add_argument("--cells"); s.set_defaults(fn=cmd_validate)
+    s = sub.add_parser("run"); s.add_argument("trial"); s.add_argument("--cells"); s.add_argument("--stages")
+    s.add_argument("--dry-run", action="store_true"); s.add_argument("--keep-workspace", action="store_true")
+    s.add_argument("--no-synthesis", action="store_true"); s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("status"); s.add_argument("trial"); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("report"); s.add_argument("trial"); s.add_argument("--no-synthesis", action="store_true"); s.set_defaults(fn=cmd_report)
+    args = p.parse_args(argv)
+    try:
+        return args.fn(args)
+    except specmod.SpecError as exc:
+        print(f"trial file error: {exc}", file=sys.stderr)
+        return 2
+    except runner.LockedError as exc:
+        print(f"locked: {exc}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

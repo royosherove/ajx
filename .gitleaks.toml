@@ -1,0 +1,44 @@
+title = "AJX secrets and publication privacy checks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-email"
+description = "Personal email address; use synthetic examples or no-reply attribution"
+regex = '''(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'''
+[[rules.allowlists]]
+description = "Reserved example domains and GitHub no-reply commit attribution"
+regexes = ['''(?i)^[^@]+@(?:example\.(?:com|net|org)|users\.noreply\.github\.com)$''']
+
+[[rules]]
+id = "personal-home-path"
+description = "Absolute home directory path"
+regex = '''(?:/(?:Users|home)/[A-Za-z0-9_.-]+|[A-Za-z]:\\Users\\[A-Za-z0-9_.-]+)'''
+
+[[rules]]
+id = "internal-hostname"
+description = "Internal service hostname"
+regex = '''(?i)\b(?:[a-z0-9-]+\.)*(?:corp\.amazon\.com|git\.amazon\.com|code\.amazon\.com|bindles\.amazon\.com|w\.amazon\.com|a2z\.com|aws\.dev)\b'''
+
+[[rules]]
+id = "cloud-account-id"
+description = "Twelve-digit cloud account identifier (excluding UUID components)"
+regex = '''(?:^|[^A-Za-z0-9-])([0-9]{12})(?:$|[^A-Za-z0-9-])'''
+secretGroup = 1
+[[rules.allowlists]]
+description = "Synthetic account identifiers"
+regexes = ['''^(?:000000000000|123456789012)$''']
+
+[[rules]]
+id = "captured-agent-metadata"
+description = "Captured provider identifiers or private agent environment metadata"
+regex = '''"(?:requestId|request_id|signature|messaging_socket_path)"\s*:\s*"[^"]+"|"type"\s*:\s*"(?:skill_listing|deferred_tools_delta|agent_listing_delta)"'''
+
+[[rules]]
+id = "private-file"
+description = "Private runtime output, credentials, or internal packaging file"
+path = '''(^|/)(?:\.env(?:\.[^/]+)?|\.aws|\.ssh|\.claude|\.codex|\.kiro|\.brazil|\.builder-mcp|\.ajx-local|ajx-reports|credentials\.json|auth\.json|packageInfo(?:\.bak)?)(?:/|$)|^(?:Config|release-info/|env/|trials/)|\.(?:pem|key|p12|pfx|bundle)$|(?:execute|narrate|extract|reconstruct)\.raw\.jsonl$'''
+[[rules.allowlists]]
+description = "Explicit environment example template"
+paths = ['''(^|/)\.env\.example$''']
