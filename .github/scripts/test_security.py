@@ -19,17 +19,19 @@ SCANNER = str(Path(SCANNER).resolve())
 class PublicationChecks(unittest.TestCase):
     def test_rules_and_safe_examples(self):
         # Deliberately generated dummy values; no credentials are used or verified.
-        cases = {
-            "personal-email": "fictional-person" + "@" + "invalid.test",
-            "personal-home-path": "/" + "Users" + "/fictional-person/project",
-            "internal-hostname": "git" + "." + "amazon.com",
-            "cloud-account-id": "account=" + "987654" + "321098",
-            "captured-agent-metadata": json.dumps({"request" + "_id": "synthetic"}),
-            "aws-access-token": "AKIA" + "BCDEFGHIJKLMNOPQ",
-        }
+        cases = [
+            ("personal-email", "fictional-person" + "@" + "invalid.test"),
+            ("personal-email", "fictional-person" + "@" + "github.com"),
+            ("personal-email", "support" + "@" + "github.com.invalid.test"),
+            ("personal-home-path", "/" + "Users" + "/fictional-person/project"),
+            ("internal-hostname", "git" + "." + "amazon.com"),
+            ("cloud-account-id", "account=" + "987654" + "321098"),
+            ("captured-agent-metadata", json.dumps({"request" + "_id": "synthetic"})),
+            ("aws-access-token", "AKIA" + "BCDEFGHIJKLMNOPQ"),
+        ]
         with tempfile.TemporaryDirectory() as tmp:
-            for rule, value in cases.items():
-                with self.subTest(rule=rule):
+            for index, (rule, value) in enumerate(cases):
+                with self.subTest(rule=rule, case=index):
                     report = Path(tmp) / "report.json"
                     report.unlink(missing_ok=True)
                     proc = subprocess.run([
@@ -41,7 +43,14 @@ class PublicationChecks(unittest.TestCase):
                     findings = json.loads(report.read_text())
                     self.assertIn(rule, {f["RuleID"] for f in findings})
                     self.assertNotIn(value, proc.stdout + proc.stderr + report.read_text())
-        safe = "ajx@example.com\nexample@users.noreply.github.com\n/tmp/example-workspace\n"
+        safe = "\n".join([
+            "ajx@example.com",
+            "example@users.noreply.github.com",
+            "noreply@github.com",
+            "support@github.com",
+            "/tmp/example-workspace",
+            "",
+        ])
         proc = subprocess.run([
             SCANNER, "stdin", "--config", str(ROOT / ".gitleaks.toml"),
             "--redact", "--no-banner",

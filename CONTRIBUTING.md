@@ -42,9 +42,10 @@ reachable history with the repository's `.gitleaks.toml` rules.
 
 The additional rules detect personal email addresses, home paths, internal
 hostnames, cloud account identifiers, and captured agent environment metadata.
-Reserved example email domains and GitHub's no-reply attribution domain are
-allowed. Automated checks are a safeguard; review new fixtures and attachments
-manually too. Do not add broad exclusions to silence a finding.
+Reserved example email domains, GitHub's no-reply attribution domain, and the
+public `noreply@github.com` and `support@github.com` bot addresses are allowed.
+Automated checks are a safeguard; review new fixtures and attachments manually
+too. Do not add broad exclusions to silence a finding.
 
 Use GitHub's no-reply email for commits if you do not want your personal email
 in repository history. Report vulnerabilities as described in

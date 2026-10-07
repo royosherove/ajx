@@ -8,8 +8,11 @@ id = "personal-email"
 description = "Personal email address; use synthetic examples or no-reply attribution"
 regex = '''(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'''
 [[rules.allowlists]]
-description = "Reserved example domains and GitHub no-reply commit attribution"
-regexes = ['''(?i)^[^@]+@(?:example\.(?:com|net|org)|users\.noreply\.github\.com)$''']
+description = "Reserved examples, GitHub no-reply attribution, and public GitHub bot addresses"
+regexes = [
+  '''(?i)^[^@]+@(?:example\.(?:com|net|org)|users\.noreply\.github\.com)$''',
+  '''(?i)^(?:noreply|support)@github\.com$''',
+]
 
 [[rules]]
 id = "personal-home-path"
