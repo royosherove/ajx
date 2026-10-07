@@ -3,8 +3,9 @@
 **Status: proposed; not implemented.** Reviewed on 2026-10-07.
 
 AJX should let a product team ask: **Can agents install and use this product
-successfully across the environments our users have?** A test environment should
-be as explicit as the harness, model, and product version in a comparison.
+successfully across the environments and agent configurations our users have?**
+The machine, its permissions, and the agent's skills, plugins, and hooks should
+be explicit inputs alongside the harness, model, and product version.
 
 The first implementation should provision a disposable EC2 developer machine,
 with an isolated workspace, a declared permission profile, and a verified cleanup
@@ -54,6 +55,7 @@ A scenario should answer these questions before a worker starts:
 | Starting state | Product absent or installed; fixtures; existing cloud resources; OS and architecture; tools already present; empty or warm caches. |
 | Environment needs | Shell, native binaries, package installation, outbound network, writable paths, background processes, local ports, and optional PTY/SSH requirements. |
 | Permissions | Filesystem grants, access to adjacent directories, privilege escalation, tool approval behavior, network destinations, and task account permissions. |
+| Agent configuration | Skills, plugins, and hooks enabled or disabled for the worker; their resolved versions, configuration, discovery scopes, and bundled dependencies. |
 | Success | Observable outputs and required checks, with an explicit scope for what each check proves. |
 | Stop conditions | Worker completion, harness failure, cancellation, wall-time limit, and any enforceable token/tool/spend limits. |
 | Evidence and cleanup | What must be captured, where it is stored, retention, resource ownership, cleanup verification, and maximum environment lifetime. |
@@ -144,6 +146,94 @@ privileged instance profile through metadata, a container-engine socket, or host
 mounts. A network allowlist needs actual enforcement; a list in TOML or a prompt
 is not a network boundary.
 
+## Control skills, plugins, and hooks independently
+
+An agent configuration profile should control **skills**, **harness plugins**,
+and **hooks** separately for each matrix cell. Here, plugins mean extensions
+loaded by the agent harness; AJX's own runner, auth, check, and reporting plugins
+remain part of the test infrastructure.
+
+Each category should support three modes:
+
+| Mode | Meaning |
+|---|---|
+| None | Disable optional entries in this category through the adapter's supported controls and isolated configuration. Record anything mandatory that remains active. |
+| Selected | Enable only named, pinned entries. The plan resolves their dependencies and rejects contradictory selections. |
+| Snapshot | Capture an explicit snapshot of the chosen user's configuration, resolve all entries before the run, and recreate it in an isolated environment. Do not inherit a changing live configuration. |
+
+Start with a plain baseline with optional skills, plugins, and hooks disabled.
+Useful comparison profiles include a product skill alone, a product plugin with
+its bundled features, selected hooks, and a snapshot of a typical user's setup.
+Paired runs can then ask whether a product skill removes a roadblock, whether a
+plugin makes a workflow discoverable, or whether hooks introduce delay or prevent
+an operation. Hold the other inputs fixed and repeat each profile.
+
+### Resolve what the profile actually enables
+
+The adapter should produce a manifest before execution, including:
+
+- Stable identifiers, versions or content hashes, discovery scope, and sanitized
+  configuration for every selected skill, plugin, and hook.
+- The complete dependency expansion. If a plugin supplies skills, hooks, tools,
+  or MCP servers, list those contributions and their effective enabled state.
+- Relevant instruction files, memory, startup scripts, and other context sources
+  that remain present. Hold these fixed during an extension comparison.
+- For hooks: event triggers, order, executable/configuration hashes, timeout,
+  execution identity, and whether they can block or modify an operation.
+- Adapter capabilities and limitations for the exact harness version.
+
+Do not label a profile “plugin on, hooks off” if the adapter cannot independently
+disable that plugin's hooks. Reject an impossible combination or create a
+different, explicitly named comparison profile. Resolve name collisions and
+dependency conflicts before starting the worker.
+
+The agent's configuration lives inside the disposable environment. Do not toggle
+or remove the user's installed skills, plugins, or global hook configuration.
+Pin resolved content and record any configuration changes during an attempt.
+Default to keeping the profile fixed; a scenario that tests extension installation
+or configuration changes must declare those changes as part of the task.
+
+If a hook executes with a different identity or outside the worker's sandbox,
+verify and record its permissions separately. A workspace-only claim must cover
+the extension's execution context too. Attribute startup hooks to preparation or
+task time according to the scenario's declared measurement boundary.
+
+Disabling discovery through a harness setting does not necessarily make a skill's
+files unreadable to its shell. The profile must state whether it tests **disabled
+activation** or **absence of the extension content**. Apply the machine's
+filesystem controls when absence is required. If a managed policy, built-in
+extension, or discovery source cannot be controlled, record the limitation and
+reject profiles that require a stronger boundary.
+
+### Separate configuration from observed use
+
+Record these states separately: **installed**, **discoverable**, **enabled**,
+**loaded into context**, and **invoked or executed**. An enabled skill may never be
+loaded; missing telemetry must remain `unknown`, not become evidence that a skill
+was unused or a hook never ran.
+
+Capture hook start/end events, exit results, blocked operations, and observable
+output changes. Link them to the triggering journey event when that relationship
+is available. Include hook work in the task's elapsed time, and expose its
+contribution without double-counting overlapping intervals. Record additional
+context tokens and model costs only when measurable; hook-triggered model calls
+need their own provenance and cost coverage.
+
+Use the worker's profile for execution and record what resumption retains during
+narration. Keep the reporter and any model-based verifier configuration fixed
+across the matrix. AJX's coordinator skill and evaluation instructions should
+remain outside the worker's task context; any exposure is an explicit limitation.
+
+The manifest and relevant extension activity should appear in `run.json`, matrix
+comparison views, and the journey. Keep asks first, but show whether an obstacle
+occurred with the product skill enabled, a particular plugin loaded, or a hook
+blocking the command. Improvements attributed to an extension require comparable
+follow-up evidence.
+
+This profile model is proposed AJX behavior. It is separate from the aws-bench
+features reviewed above and does not claim that every harness already exposes
+equivalent extension controls.
+
 ## Choose a backend by capabilities
 
 Service details below were checked against AWS documentation on 2026-10-07.
@@ -174,13 +264,15 @@ An attempt is identified by:
 product artifact + documentation revision
 × scenario revision
 × harness version + model/provider + agent settings
+× resolved skills + plugins + hooks profile
 × resolved environment + permission profile + starting state
 × repetition
 ```
 
 Vary one dimension at a time for causal comparisons. For example, hold the
-scenario, harness, model, and permission profile fixed while comparing two
-product versions; then hold the product fixed while exploring harness coverage.
+scenario, harness, model, permission profile, and extension profile fixed while
+comparing two product versions; then hold the product fixed while exploring
+harness coverage or extension effects.
 Cross-environment comparisons remain useful but should show all differing inputs.
 
 Use pinned artifacts and resolved versions, not only mutable image tags or model
@@ -209,12 +301,14 @@ Allow multiple contributing causes and an `unknown` explanation:
 | Installation fails because the scenario denies all downloads | Environment constraint; assess the product's offline experience only if that was the intended scenario. |
 | A user-level installation path exists, but documentation only describes sudo | Possible documentation/onboarding ask under the workspace-only profile. Validate the working path in a separate follow-up attempt. |
 | The harness refuses a command before the product runs | Harness approval or tool restriction; preserve the gate and its impact. |
+| A hook blocks a command or a plugin changes its behavior | Agent configuration may contribute to the result; cite the extension manifest and observed events, and compare with the relevant extension disabled when supported. |
 | The CLI emits an unhelpful permission error for a declared unsupported operation | The restriction may be correct while the diagnostic still deserves a product ask. |
 | EC2 bootstrap fails or the verifier's credentials expire | Infrastructure or verification failure; do not infer product quality from it. |
 
 The HTML reports should continue to put asks first for every configuration.
-Add environment and permission summaries beside the existing product/harness/
-model labels, comparison filters, completion checks, and cleanup status.
+Add environment, permission, and extension-profile summaries beside the existing
+product/harness/model labels, comparison filters, completion checks, and cleanup
+status.
 `pretty-journey.html` should link gates, roadblocks, forks, and detours to the
 specific observed operation and applicable policy. Separate lifecycle events
 from the agent's product journey. A blocked call is not automatically a security
@@ -291,6 +385,21 @@ sudo = false
 network = "declared-endpoints-only"
 task_cloud_access = "none"
 
+[agent_configuration]
+id = "product-skill-only"
+inherit_live_user_config = false
+changes_during_task = "forbidden"
+
+[agent_configuration.skills]
+mode = "selected"
+enabled = ["product-guide"] # Resolved to a pinned manifest before execution.
+
+[agent_configuration.plugins]
+mode = "none"
+
+[agent_configuration.hooks]
+mode = "none"
+
 [completion]
 required_checks = ["csv-values-match", "input-unchanged"]
 verifier_location = "outside-worker"
@@ -307,19 +416,23 @@ cleanup_verification = "required"
 ```
 
 The coordinator would resolve the image, endpoint policy, tools, credentials,
-checks, and resource plan before this becomes executable. A profile name or
-symbolic path is not sufficient evidence that its policy has been enforced.
+extension manifest, checks, and resource plan before this becomes executable.
+A profile name or symbolic path is not sufficient evidence that its policy has
+been enforced.
 
 ## Delivery order and acceptance
 
-1. **Contract and offline validation:** scenario/environment schema, capability
-   negotiation, clear outcome categories, fake-provider lifecycle tests, and
-   synthetic report examples. Keep current local workflows compatible.
+1. **Contract and offline validation:** scenario/environment and agent-profile
+   schemas, capability negotiation, clear outcome categories, fake-provider and
+   fake-harness tests, and synthetic report examples. Test extension selection,
+   plugin dependency expansion, and unsupported combinations. Keep current local
+   workflows compatible.
 2. **EC2 pilot:** one supported Linux image, one fresh machine per attempt, SSM
    transport, workspace-only and guest-administrator profiles, an independent
    expiry controller, and evidence collection on failure.
-3. **Reproducible comparisons:** pinned images, policy probes, repeated matrices,
-   lifecycle cost/coverage reporting, and before/after product comparisons.
+3. **Reproducible comparisons:** pinned images and extension manifests, policy
+   probes, repeated matrices, lifecycle and extension cost/coverage reporting,
+   and before/after product comparisons.
 4. **Managed backend qualification:** evaluate AgentCore Runtime, Code
    Interpreter, and Runtime Instances against the same capability contract.
    Expose only the combinations that have passed integration trials.
@@ -334,6 +447,10 @@ The pilot is complete only when an authorized live trial demonstrates:
   cleanup; failed cleanup prevents reuse.
 - At least two CLI harnesses produce comparable, honestly labeled results under
   the same supported environment profile.
+- Supported adapters can run a plain baseline and a selected-skill profile
+  without modifying the user's configuration. Plugin and hook controls are
+  qualified per adapter, with enabled/disabled behavior, dependency resolution,
+  and actual-use telemetry checked where available.
 
 No cloud resources are provisioned by this proposal.
 

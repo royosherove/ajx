@@ -76,5 +76,5 @@ A cell may list `models = [...]`: it becomes one cell per model (`<id>-<model>`,
 
 [Reproducible execution environments](design/execution-environments.md) describes
 a future scenario and permissions contract, disposable AWS developer machines,
-and independent completion checks. It is a design proposal, not implemented
-provisioning or sandbox enforcement.
+per-test skills/plugins/hooks, and independent completion checks. It is a design
+proposal, not implemented provisioning, extension controls, or sandbox enforcement.
