@@ -444,8 +444,9 @@ class Run:
         self.state["teardown"] = envcheck.teardown_summary(results, len(self.spec["teardown"]), ran)
         self.save()
         if self.state["teardown"]["status"] != "ok":
+            retry = "teardown,release,render,archive" if self.environment_profile else "teardown,render"
             self.log(f"[{self.run_id}] teardown {self.state['teardown']['status']}: resources the task created may "
-                     f"still exist; see teardown.json, then `ajx run <trial> --cells {self.cell['id']} --stages teardown,render`")
+                     f"still exist; see teardown.json, then `ajx run <trial> --cells {self.cell['id']} --stages {retry}`")
         env = read_json(self.run_dir / "environment.json", {})
         if self.environment_profile:
             try:
@@ -538,11 +539,37 @@ class Run:
         self.state["extract"] = result["proc"]
         self.save()
 
+    def _teardown_needs_environment(self):
+        """A failed environment command needs the original prepared attempt for an explicit retry."""
+        if not self.environment_profile or not self.done("prepare") or self.status("teardown") not in TERMINAL:
+            return False
+        commands = self.spec["teardown"]
+        required = [index for index, cmd in enumerate(commands) if cmd.get("location") == "environment"]
+        if not required:
+            return False
+        if self.status("teardown") in ("error", "interrupted"):
+            return True
+        if (self.state.get("teardown") or {}).get("status") == "ok":
+            return False
+        results = read_json(self.run_dir / "teardown.json", [])
+        return any(index >= len(results) or results[index].get("exit_code") != 0
+                   or results[index].get("timed_out") or results[index].get("auth_errors") for index in required)
+
     def stage_release(self):
         """Release the worker after narration; reporting consumes exported evidence."""
         if not self.environment_profile or not self.state.get("environment"):
             return
-        result = self.runner.release(self.ctx())
+        if (self.state.get("environment_cleanup") or {}).get("confirmed") is True:
+            return
+        if self._teardown_needs_environment() and not getattr(self, "_explicit_release", False):
+            result = {
+                "status": "deferred_teardown", "confirmed": False, "backend": self.environment_profile["backend"],
+                "reason": "Task teardown needs its original environment. Retry teardown,release,render,archive; "
+                          "explicit release,render,archive discards the environment without confirming task cleanup.",
+                "expires_at": self.state["environment"].get("expires_at"),
+            }
+        else:
+            result = self.runner.release(self.ctx())
         self.state["environment_cleanup"] = result
         self.save()
         environment = read_json(self.run_dir / "environment.json", {})
@@ -736,6 +763,9 @@ class Run:
         return st in ("done", "interrupted") or (stage == "execute" and st == "error")
 
     def go(self, stages=None, keep_workspace=False):
+        # A release-only request explicitly disposes of the environment. A teardown retry
+        # that also names release must still retain the environment if that retry fails.
+        self._explicit_release = bool(stages and "release" in stages and "teardown" not in stages)
         self._detect_interrupted()
         if stages:
             unknown = [s for s in stages if s not in STAGES]

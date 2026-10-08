@@ -25,7 +25,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
-from ajx import base as basemod, environments as envmod  # noqa: E402
+from ajx import base as basemod, environments as envmod, runner as runmod, spec as specmod  # noqa: E402
 from ajx.environments import EnvironmentError, EnvironmentRunner, normalize_profiles, validate_for_cell  # noqa: E402
 
 
@@ -1197,6 +1197,76 @@ class RealDockerIntegrationTest(TempTest):
         self.assertEqual((ctx["home_dir"] / "teardown-ran").read_text(), "cleaned")
         self.assertEqual((ctx["workspace"] / "before-timeout").read_text(), "evidence")
         self.assertTrue(runner.release(ctx)["confirmed"])
+
+    def test_failed_task_teardown_retries_inside_the_original_container(self):
+        (self.base / "task.md").write_text("Create a synthetic task artifact.")
+        trial = self.base / "trial.toml"
+        trial.write_text(f"""
+[trial]
+id = "container-teardown-retry"
+product = "synthetic"
+workspace_root = {json.dumps(str(self.root / "workspaces"))}
+output_dir = "results"
+environment = "container"
+
+[task]
+prompt_file = "task.md"
+
+[environments.container]
+backend = "container"
+image = {json.dumps(os.environ["AJX_TEST_CONTAINER_IMAGE"])}
+
+[auth.test]
+type = "env"
+isolates_config = true
+
+[reporter]
+harness = "codex"
+
+[[setup]]
+run = 'printf ready > "$HOME/prepared-tool"'
+
+[[teardown]]
+run = 'test -e allow-cleanup || exit 4; test "$(cat "$HOME/prepared-tool")" = ready && touch "$HOME/teardown-ran"'
+
+[[cells]]
+id = "container"
+harness = "codex"
+auth = "test"
+""")
+        spec = specmod.load(trial)
+        run = runmod.Run(spec, spec["cells"][0], 1, lambda _: None)
+        run.harness = basemod.Harness()
+
+        def cleanup():
+            if run.state.get("environment"):
+                self.assert_released(run.runner, run.ctx())
+
+        self.addCleanup(cleanup)
+        with mock.patch.object(run.harness, "execute", side_effect=lambda ctx: run.harness.run(
+                ctx, ["/bin/sh", "-c", "printf x >> task-ran"], "execute")):
+            run.go(["prepare", "execute", "teardown", "release", "archive"])
+        self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
+        self.assertEqual(run.status("archive"), "error")
+        handle = copy.deepcopy(run.state["environment"])
+        original = run.runner._find(handle, run.ctx())["Id"]
+        self.assertEqual(run.runner.shell('cat "$HOME/prepared-tool"', run.ctx())["stdout"], "ready")
+        (Path(run.state["paths"]["workspace"]) / "allow-cleanup").touch()
+        retried = runmod.Run(spec, spec["cells"][0], 1, lambda _: None)
+        retried.harness = basemod.Harness()
+        self.assertEqual(retried.runner._find(handle, retried.ctx())["Id"], original)
+        with mock.patch.object(retried.harness, "execute") as execute, \
+                mock.patch.object(retried.runner, "plan") as plan:
+            retried.go(["teardown", "release", "archive"])
+        execute.assert_not_called()
+        plan.assert_not_called()
+        self.assertEqual(retried.state["teardown"]["status"], "ok")
+        self.assertTrue(retried.state["environment_cleanup"]["confirmed"])
+        self.assertEqual(retried.state["environment"], handle)
+        self.assertTrue(retried.done("archive"))
+        self.assertEqual((retried.run_dir / "workspace" / "task-ran").read_text(), "x")
+        self.assertTrue((retried.run_dir / "agent-home" / "teardown-ran").exists())
+        self.assertIsNone(retried.runner._find(handle, retried.ctx()))
 
     def test_lifetime_expiry_without_release_or_a_coordinator_timer(self):
         runner, ctx, handle, _ = self.make_real("expiry", limits={"lifetime_seconds": 12})

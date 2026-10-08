@@ -218,6 +218,20 @@ commands are no longer available. A root-owned bounded supervisor also expires
 the container if the coordinator disappears.
 Local processes have weaker cancellation guarantees, recorded in their report.
 
+If an environment-located teardown fails, automatic release and archival are
+deferred so you can repair the cleanup inputs and retry in the same environment:
+
+```sh
+ajx run trial.toml --cells CELL --stages teardown,release,render,archive
+```
+
+Known staged credential files are still purged; restore any task credentials
+needed for the retry through the trial's declared credential inputs. A container
+keeps its original expiry deadline and is never restarted or recreated for a
+retry. To discard the environment while leaving task cleanup recorded as failed,
+explicitly run `--stages release,render,archive` without `teardown`. Host-located
+cleanup failures do not retain the worker environment.
+
 Resume never recreates a missing container or silently repeats a task. Changing
 a recorded profile, cell or prompt requires a new output directory. A failed
 preparation is preserved too; fix the configuration and start a new attempt

@@ -317,7 +317,9 @@ class EnvironmentLifecycleTests(unittest.TestCase):
                 self.assertEqual(run.status("execute"), "interrupted")
                 if failed_cleanup == "teardown":
                     self.assertEqual(run.status("teardown"), "interrupted")
-                    self.assertTrue(run.done("archive"), run.state)
+                    self.assertEqual(run.status("archive"), "error")
+                    self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
+                    self.assertNotIn("archived", run.state)
                 elif failed_cleanup == "release":
                     self.assertEqual(run.status("release"), "interrupted")
                     self.assertEqual(run.status("archive"), "error")
@@ -327,6 +329,82 @@ class EnvironmentLifecycleTests(unittest.TestCase):
                     self.assertEqual(run.status("archive"), "interrupted")
                     self.assertEqual(run.state["interruption_cleanup"]["steps"]["credentials"]["status"], "interrupted")
                 self.assert_purged_evidence(run.state.get("archived") or run.state["paths"], source)
+
+    def test_failed_environment_teardown_retains_tools_and_allows_retry_without_replay(self):
+        failures = {
+            "exit": 'test -e allow-cleanup || exit 4',
+            "timeout": 'if [ ! -e allow-cleanup ]; then sleep 60; fi',
+            "auth": 'if [ ! -e allow-cleanup ]; then echo "Unable to locate credentials" >&2; fi',
+        }
+        for kind, command in failures.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                spec, run, source = self.copied_auth_run(tmp)
+                spec["teardown"][0].update(run=command + '; touch "$HOME/teardown-ran"', timeout=1)
+                messages = []
+                run.log = messages.append
+                with mock.patch.object(run.runner, "release", wraps=run.runner.release) as release:
+                    run.go(["prepare", "execute", "teardown", "release", "archive"])
+                release.assert_not_called()
+                self.assertNotEqual(run.state["teardown"]["status"], "ok")
+                self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
+                self.assertFalse(run.state["environment_cleanup"]["confirmed"])
+                self.assertEqual(run.status("archive"), "error")
+                self.assertNotIn("archived", run.state)
+                self.assertTrue(any("teardown,release,render,archive" in message for message in messages))
+                paths, handle = dict(run.state["paths"]), dict(run.state["environment"])
+                self.assertTrue(all(Path(path).is_dir() for path in paths.values()))
+                self.assertFalse((Path(paths["config_dir"]) / "auth.json").exists())
+                self.assertTrue(source.exists())
+                self.assertEqual(run.runner.shell('cat "$HOME/installed-tool"', run.ctx())["stdout"], "ready")
+
+                retried = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+                with mock.patch.object(retried.runner, "release", wraps=retried.runner.release) as release:
+                    retried.go(["teardown", "release", "archive"])
+                release.assert_not_called()
+                self.assertEqual(retried.state["environment_cleanup"]["status"], "deferred_teardown")
+                (Path(paths["workspace"]) / "allow-cleanup").touch()
+                with mock.patch.object(retried.harness, "execute") as execute, \
+                        mock.patch.object(retried.runner, "plan") as plan, \
+                        mock.patch.object(retried.runner, "prepare") as prepare:
+                    retried.go(["teardown", "release", "archive"])
+                execute.assert_not_called()
+                plan.assert_not_called()
+                prepare.assert_not_called()
+                self.assertEqual(retried.state["teardown"]["status"], "ok")
+                self.assertTrue(retried.state["environment_cleanup"]["confirmed"])
+                self.assertTrue(retried.done("archive"), retried.state)
+                self.assertEqual(retried.state["environment"], handle)
+                self.assertEqual((retried.run_dir / "workspace" / "executions.txt").read_text(), "one execution")
+                self.assertTrue((retried.run_dir / "agent-home" / "teardown-ran").exists())
+                self.assertFalse((retried.run_dir / "harness-config" / "auth.json").exists())
+                self.assertTrue(source.exists())
+
+    def test_explicit_release_can_discard_environment_after_failed_task_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec, run, source = self.copied_auth_run(tmp)
+            spec["teardown"][0]["run"] = "exit 4"
+            run.go(["prepare", "execute", "teardown", "release", "archive"])
+            self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
+            retried = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            with mock.patch.object(retried, "stage_teardown") as teardown:
+                retried.go(["release", "archive"])
+            teardown.assert_not_called()
+            self.assertTrue(retried.state["environment_cleanup"]["confirmed"])
+            self.assertEqual(retried.state["teardown"]["status"], "failed")
+            self.assertTrue(retried.done("archive"))
+            self.assertFalse((retried.run_dir / "harness-config" / "auth.json").exists())
+            self.assertTrue(source.exists())
+
+    def test_only_failed_environment_commands_defer_release(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed), tempfile.TemporaryDirectory() as tmp:
+                _, run, _ = self.copied_auth_run(tmp)
+                host = {**run.spec["teardown"][0], "run": "exit 4", "location": "host"}
+                run.spec["teardown"] = [run.spec["teardown"][0], host] if mixed else [host]
+                run.go(["prepare", "execute", "teardown", "release", "archive"])
+                self.assertEqual(run.state["teardown"]["status"], "failed")
+                self.assertTrue(run.state["environment_cleanup"]["confirmed"])
+                self.assertTrue(run.done("archive"))
 
     def test_handled_interruption_archives_after_already_confirmed_release_without_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -537,7 +615,7 @@ class EnvironmentLifecycleTests(unittest.TestCase):
             with mock.patch.object(resumed.runner, "release", return_value={
                     "status": "failed", "confirmed": False, "error": "synthetic backend outage"}) as release, \
                     mock.patch.object(resumed.auth, "cleanup", wraps=resumed.auth.cleanup) as cleanup:
-                resumed.go(["archive"])
+                resumed.go(["release", "archive"])
             release.assert_not_called()
             cleanup.assert_called_once()
             self.assertTrue(resumed.done("archive"), resumed.state)
