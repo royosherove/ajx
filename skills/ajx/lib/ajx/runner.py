@@ -122,13 +122,20 @@ class Run:
         self.runner = specmod.runner_for(spec, cell)
         self.environment_profile = specmod.environment_for(spec, cell)
         self.configuration_profile = specmod.agent_configuration_for(spec, cell)
-        contract = {"environment": self.environment_profile, "agent_configuration": self.configuration_profile,
+        contract = {"environment": self.environment_profile,
+                    "agent_configuration": agent_configuration.resume_contract(self.configuration_profile),
                     "cell": cell, "prompt_sha256": spec["task"]["prompt_sha256"]}
         self.contract_sha256 = sha256_bytes(json.dumps(contract, sort_keys=True).encode())
         if self.state.get("environment_contract_sha256"):
             if self.state["environment_contract_sha256"] != self.contract_sha256:
-                raise specmod.SpecError(f"{self.run_id}: environment, agent configuration, or task changed; "
-                                        "use a new trial output directory for a new comparison")
+                # Upgrade old fingerprints only when every original field still matches.
+                legacy = {**contract, "agent_configuration": self.configuration_profile}
+                legacy_sha256 = sha256_bytes(json.dumps(legacy, sort_keys=True).encode())
+                if self.state["environment_contract_sha256"] != legacy_sha256:
+                    raise specmod.SpecError(f"{self.run_id}: environment, agent configuration, or task changed; "
+                                            "use a new trial output directory for a new comparison")
+                self.state["environment_contract_sha256"] = self.contract_sha256
+                self.save()
         elif self.environment_profile and self.state.get("paths"):
             raise specmod.SpecError(f"{self.run_id}: cannot add environment profiles to an existing attempt; "
                                     "use a new trial output directory")
@@ -565,6 +572,10 @@ class Run:
     # ------------------------------------------------------------------ driver
 
     def _detect_interrupted(self):
+        if self.environment_profile and self.status("prepare") == "running":
+            self.mark("prepare", "interrupted", note="ajx stopped during preparation; keeping the original "
+                                                     "owned paths and environment for cleanup without replay")
+            self.log(f"[{self.run_id}] prepare was interrupted; cleaning up the recorded attempt")
         if self.status("execute") == "running":
             ex = self.state.get("execute") or {}
             self.state["execute"] = {**ex, "stop_reason": "interrupted", "interrupted": True}
@@ -589,6 +600,13 @@ class Run:
             unknown = [s for s in stages if s not in STAGES]
             if unknown:
                 raise ValueError(f"unknown stage(s) {unknown}; stages are {list(STAGES)}")
+        if self.environment_profile and self.status("prepare") == "interrupted":
+            # As with failed preparation, release before archiving and purging credentials.
+            # Retry unconfirmed cleanup against the same paths, even with --stages prepare.
+            if not self.done("archive"):
+                self._safe("archive")
+            return self.state
+        if stages:
             blocked = [s for s in stages if s in NOT_REDOABLE and self.status(s) in TERMINAL]
             if blocked:
                 self.log(f"[{self.run_id}] refusing to redo {blocked}: a task runs once per repetition; add a "

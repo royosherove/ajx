@@ -16,6 +16,8 @@ Plugins/hooks other than none are unsupported and rejected.
 Integration:
 * normalize_profiles(raw_profiles, base_dir) returns JSON-safe normalized tables.
   ``_source`` and ``_identity`` are private resolution data; do not publish them.
+* resume_contract(profile) retains profile semantics and source paths while
+  excluding source filesystem identities from the saved attempt comparison.
 * validate_for_cell(profile, cell, harness, auth, environment_profile=None)
   raises ValueError without reading credentials or launching a provider.
 * prepare(profile, ctx, harness) runs only backend help/version capability checks,
@@ -42,6 +44,7 @@ https://kiro.dev/docs/custom-agents/configuration-reference/
 https://kiro.dev/docs/getting-started/authentication/
 """
 
+import copy
 import fnmatch
 import hashlib
 import json
@@ -356,6 +359,21 @@ def normalize_profiles(raw_profiles, base_dir):
             profile[category] = {"mode": "none", "entries": []}
         out[name] = profile
     return out
+
+
+def resume_contract(profile):
+    """Keep profile semantics stable across source touches or identical checkouts.
+
+    Filesystem identities protect the interval between resolution and copying.
+    They are not part of a saved attempt's content contract; retain them on the
+    original profile for _install's before/after integrity checks.
+    """
+    if profile is None:
+        return None
+    contract = copy.deepcopy(profile)
+    for entry in contract["skills"]["entries"]:
+        entry.pop("_identity", None)
+    return contract
 
 
 def _controlled_env(key):
@@ -938,5 +956,5 @@ def ensure_reporter_context(ctx):
           "reporter must use a separate fixed context without the worker agent_configuration")
 
 
-__all__ = ["normalize_profiles", "validate_for_cell", "prepare", "configuration",
+__all__ = ["normalize_profiles", "resume_contract", "validate_for_cell", "prepare", "configuration",
            "launch_args", "launch_env", "launch_binary", "launch_context", "ensure_reporter_context"]

@@ -550,6 +550,21 @@ class LocalEnvironmentTest(TempTest):
         out = second.shell("i=0; while [ $i -lt 15000 ]; do printf x; i=$((i+1)); done", ctx2, timeout=10)
         self.assertEqual(len(out["stdout"]), 8000)
 
+    def test_local_abort_preserves_cleanup_context_until_final_release(self):
+        runner, ctx = self.local_runner(), context(self.root)
+        persist(runner, ctx)
+        runner.prepare(ctx)
+        self.addCleanup(runner.release, ctx)
+        outcome = runner.abort(ctx)
+        self.assertEqual(outcome["worker_stop"], "caller-managed")
+        cleanup = runner.shell('printf cleaned > "$HOME/cleanup-result"', ctx)
+        self.assertEqual(cleanup["exit_code"], 0, cleanup)
+        recovered = EnvironmentRunner(runner.profile)
+        self.assertEqual(recovered.shell('cat "$HOME/cleanup-result"', ctx)["stdout"], "cleaned")
+        self.assertTrue(runner.release(ctx)["confirmed"])
+        with self.assertRaisesRegex(EnvironmentError, "released"):
+            recovered.shell("true", ctx)
+
 
 class HostEnvironmentTest(TempTest):
     def make_runner(self, coordinator_path):
@@ -861,6 +876,9 @@ class ContainerEnvironmentTest(TempTest):
         self.assertEqual(self.engine.containers, {})
         with self.assertRaisesRegex(EnvironmentError, "released"):
             runner.wrap(["tool"], ctx, {})
+        with self.assertRaisesRegex(EnvironmentError, "missing|expired"):
+            FakeRunner(runner.profile, self.engine).wrap(["tool"], ctx, {})
+        self.assertEqual(self.engine.count(["run"]), 1)
 
     def test_expiry_at_execution_stops_owned_container_and_does_not_extend_deadline(self):
         runner, ctx, handle, report = self.prepared()

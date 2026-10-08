@@ -54,6 +54,8 @@ Automated checks are a safeguard; review new fixtures and attachments manually
 too. Do not add broad exclusions to silence a finding.
 
 Use GitHub's no-reply email for commits if you do not want your personal email
-in repository history. Report vulnerabilities as described in
+in repository history, and select it as the author email when merging pull
+requests. Pull request privacy checks scan the contribution history; runtime
+checks exercise GitHub's temporary merge. Report vulnerabilities as described in
 [SECURITY.md](SECURITY.md). Contributions are provided under the
 [MIT license](LICENSE).

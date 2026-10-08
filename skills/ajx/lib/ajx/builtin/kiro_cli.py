@@ -6,6 +6,20 @@ from ..agent_configuration import (configuration, ensure_reporter_context, launc
 from ..plugins import register
 
 
+def _restricted_auth_args(ctx):
+    """Keep provider/model options without granting tools during reporting."""
+    args, restricted, i = auth_args(ctx), [], 0
+    while i < len(args):
+        flag, equals, _ = args[i].partition("=")
+        if flag == "--trust-tools":
+            if not equals and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                i += 1  # Remove the split-form tool list as well as its flag.
+        elif flag != "--trust-all-tools":
+            restricted.append(args[i])
+        i += 1
+    return restricted
+
+
 @register("harness", "kiro-cli")
 class KiroCli(Harness):
     binary = "kiro-cli"
@@ -51,7 +65,7 @@ class KiroCli(Harness):
         if ctx["cell"].get("model"):
             argv += ["--model", ctx["cell"]["model"]]
         if configuration(ctx):
-            argv += auth_args(ctx)
+            argv += _restricted_auth_args(ctx)
         argv += launch_args(ctx, self)
         proc = self.run(launch_context(ctx), argv + [prompt], "narrate", extra_env=self.clean_env(ctx))
         proc.update(argv=self.safe_argv(ctx, argv + [prompt], hide=(prompt,)), session_id=sid,
@@ -66,7 +80,7 @@ class KiroCli(Harness):
             argv += ["--model", ctx["cell"]["model"]]
         if ctx["cell"].get("effort"):
             argv += ["--effort", ctx["cell"]["effort"]]
-        argv += ctx["auth"].extra_args()
+        argv += _restricted_auth_args(ctx)
         proc = self.run(ctx, argv + [prompt], ctx["stage_name"])
         proc.update(argv=self.safe_argv(ctx, argv + [prompt], hide=(prompt,)),
                     tools_policy="no trusted tools; headless tool requests are denied")

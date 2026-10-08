@@ -97,6 +97,11 @@ def load(path):
             if key == "verify":
                 _need(entry["type"] in plugins.names("check"),
                       f"verify[{i}].type {entry['type']!r} unknown; available {plugins.names('check')}")
+                if entry["type"] == "file_exists":
+                    pattern = entry.get("path")
+                    _need(isinstance(pattern, str) and bool(pattern) and "\x00" not in pattern
+                          and not Path(pattern).is_absolute() and ".." not in Path(pattern).parts,
+                          f"verify[{i}].path must be a non-empty glob beneath the workspace, without '..'")
             entry.setdefault("location", "host" if key == "verify" else "environment")
             _need(entry["location"] in ("host", "environment"),
                   f"{key}[{i}].location must be host|environment")
@@ -184,6 +189,9 @@ def load(path):
         configuration = agent_configuration_for(spec, cell)
         try:
             if environment:
+                _need(auth.isolates_config,
+                      f"auth {auth.profile!r} cannot use fresh HOME/config directories; "
+                      "environments require an auth profile that supplies credentials to isolated configuration")
                 environments.validate_for_cell(
                     environment, {**cell, "env": worker_env(spec, cell, auth), "unset_env": auth.unset()})
             if configuration:

@@ -65,6 +65,12 @@ provider or task variables in the trial or auth profile. An explicit `PATH` can
 select additional local tools; otherwise the environment uses its own install
 paths and a small system path.
 
+Authentication must work with these fresh directories even when no agent skill
+profile is selected. AJX rejects auth profiles that depend on the caller's home
+or stored login without staging credentials. Use a supported credential-copying
+profile, such as `codex-chatgpt`, or explicitly configured environment-based
+authentication; a successful login in the caller's terminal is insufficient.
+
 Local profiles isolate starting directories and configuration. They **do not
 enforce a filesystem, network or privilege sandbox**. Required restrictions that
 this backend cannot enforce are rejected.
@@ -189,7 +195,9 @@ usability improvement is inferred merely from enabling a skill.
 Setup, preflight and teardown default to `location = "environment"`. Verification
 defaults to `location = "host"`, using trusted check code outside the container.
 Shell checks can explicitly select either location. File and HTTP checks run on
-the host; host file checks inspect collected/bind-mounted output.
+the host; host file checks inspect collected/bind-mounted output. `file_exists`
+globs must stay beneath the workspace. Only regular files reached without
+symlinks in the workspace or any path component can satisfy a file check.
 
 Host shell checks use a separate private home and cache, with tools resolved
 from the coordinator's absolute search paths outside worker directories. A

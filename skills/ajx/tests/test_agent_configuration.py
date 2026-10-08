@@ -290,6 +290,25 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed after resolution"):
             ac.prepare(profile, self.ctx(Codex()), Codex())
 
+    def test_resume_contract_keeps_live_source_integrity_checks(self):
+        profile = self.profile()
+        original = copy.deepcopy(profile)
+        contract = ac.resume_contract(profile)
+        self.assertIsNone(ac.resume_contract(None))
+        self.assertEqual(profile, original)
+        self.assertNotIn("_identity", contract["skills"]["entries"][0])
+        self.assertEqual(contract["skills"]["entries"][0]["_source"], str(self.source))
+        source = self.source / "SKILL.md"
+        before = source.stat()
+        os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+        touched = self.profile()
+        self.assertNotEqual(profile["skills"]["entries"][0]["_identity"],
+                            touched["skills"]["entries"][0]["_identity"])
+        self.assertEqual(ac.resume_contract(touched), contract)
+        # A fresh resume contract must not weaken resolution-to-copy checks.
+        with self.assertRaisesRegex(ValueError, "changed after resolution"):
+            ac.prepare(profile, self.ctx(Codex()), Codex())
+
     def test_source_mutation_during_copy_is_rejected_and_partial_copy_removed(self):
         profile = self.profile()
         ctx = self.ctx(Codex())
@@ -453,6 +472,59 @@ class ProfileTests(unittest.TestCase):
         ctx = self.ctx(Codex(), auth)
         ctx["cell"]["args"] = ["--model", "synthetic-model", "-c", 'model_reasoning_effort="low"']
         ac.validate_for_cell(self.profile(), ctx["cell"], Codex(), auth)
+
+    def test_kiro_narrator_and_reporter_remove_auth_tool_grants(self):
+        grants = (["--trust-all-tools"], ["--trust-tools=fs_write"],
+                  ["--trust-tools", "fs_write"],
+                  ["--trust-tools=fs_write", "--trust-all-tools", "--trust-tools", "execute_bash"])
+        for permissions in grants:
+            with self.subTest(permissions=permissions):
+                harness = KiroCli()
+                args = ["--model", "synthetic-model", *permissions, "--effort=low"]
+                auth = EnvAuth({"required_env": ["KIRO_API_KEY"], "args": args,
+                                "env": {"KIRO_API_KEY": "synthetic-provider-key"}})
+                worker, _ = self.prepared(harness, auth=auth)
+                worker["env"].update(auth.env())
+                with mock.patch("ajx.base.run_streaming", return_value={"exit_code": 0, "timed_out": False}) as run:
+                    harness.execute(worker)
+                worker_argv = run.call_args.args[0]
+                for arg in permissions:
+                    self.assertIn(arg, worker_argv)
+
+                reporter = self.ctx(harness, auth)
+                reporter["cell"].pop("agent_configuration")
+                reporter.update(stage_name="extract", env=auth.env())
+                for stage, ctx in (("narrate", worker), ("extract", reporter)):
+                    with self.subTest(stage=stage), mock.patch(
+                            "ajx.base.run_streaming", return_value={"exit_code": 0, "timed_out": False}) as run:
+                        if stage == "narrate":
+                            harness.narrate(ctx, "Describe the recorded attempt.")
+                        else:
+                            harness.report(ctx, "Analyze the supplied evidence.")
+                    argv, env = run.call_args.args[0], run.call_args.kwargs["env"]
+                    self.assertEqual([arg for arg in argv if arg.partition("=")[0] in
+                                      ("--trust-tools", "--trust-all-tools")], ["--trust-tools="])
+                    self.assertNotIn("fs_write", argv)
+                    self.assertNotIn("execute_bash", argv)
+                    self.assertEqual(argv[argv.index("--model") + 1], "synthetic-model")
+                    self.assertIn("--effort=low", argv)
+                    self.assertEqual(env["KIRO_API_KEY"], "synthetic-provider-key")
+                self.assertEqual(auth.extra_args(), args)
+
+    def test_kiro_reporter_removes_equals_form_all_tools_grant(self):
+        harness = KiroCli()
+        auth = EnvAuth({"args": ["--trust-all-tools=true", "--model=synthetic-model",
+                                "--trust-tools", "fs_write", "--effort", "low"]})
+        ctx = self.ctx(harness, auth)
+        ctx["cell"].pop("agent_configuration")
+        ctx["stage_name"] = "extract"
+        with mock.patch("ajx.base.run_streaming", return_value={"exit_code": 0, "timed_out": False}) as run:
+            harness.report(ctx, "Analyze the supplied evidence.")
+        argv = run.call_args.args[0]
+        self.assertEqual([arg for arg in argv if arg.startswith("--trust")], ["--trust-tools="])
+        self.assertNotIn("fs_write", argv)
+        self.assertIn("--model=synthetic-model", argv)
+        self.assertEqual(argv[argv.index("--effort") + 1], "low")
 
     def test_incompatible_auth_and_strict_absence_rejected(self):
         for harness, auth in ((ClaudeCode(), ClaudeSubscription()), (KiroCli(), KiroLogin())):

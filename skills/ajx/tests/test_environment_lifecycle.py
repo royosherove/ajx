@@ -3,6 +3,7 @@
 import json
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
 from ajx import plugins, runner, spec as specmod  # noqa: E402
-from ajx.base import Harness, empty_telemetry  # noqa: E402
+from ajx.base import Auth, Harness, empty_telemetry  # noqa: E402
 from ajx.util import context_shell, read_json, write_json  # noqa: E402
 
 
@@ -61,6 +62,17 @@ print("same environment available for narration")
             if stage == "narrate" else "synthetic task completed",
             stop_reason="completed",
         )
+
+
+@plugins.register("auth", "environment-copy")
+class EnvironmentCopyAuth(Auth):
+    """Copy only the synthetic credential created by a lifecycle test."""
+
+    def prepare(self, ctx):
+        shutil.copyfile(self.conf["source"], Path(ctx["config_dir"]) / "auth.json")
+
+    def cleanup(self, ctx):
+        (Path(ctx["config_dir"]) / "auth.json").unlink(missing_ok=True)
 
 
 def trial_at(root, *, setup='printf ready > "$HOME/installed-tool"', extra=""):
@@ -121,6 +133,106 @@ def no_model_extract(run):
 
 
 class EnvironmentLifecycleTests(unittest.TestCase):
+    def interrupted_prepare(self, root):
+        spec = trial_at(root)
+        source = Path(root) / "synthetic-login.json"
+        source.write_text('{"token": "synthetic-offline-credential"}')
+        spec["auth"]["test"] = {"type": "environment-copy", "source": str(source)}
+        run = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+        run.mark("prepare", "running")
+        # Bypass go's exception handler to leave the same durable state as coordinator death.
+        with mock.patch.object(run, "_command", side_effect=KeyboardInterrupt("synthetic coordinator crash")):
+            with self.assertRaises(KeyboardInterrupt):
+                run.stage_prepare()
+        self.assertEqual(run.status("prepare"), "running")
+        self.assertEqual((Path(run.state["paths"]["config_dir"]) / "auth.json").read_text(), source.read_text())
+        (Path(run.state["paths"]["workspace"]) / "partial-evidence.txt").write_text("keep preparation evidence")
+        (Path(run.state["paths"]["home_dir"]) / "credentials.json").write_text("synthetic cached credential")
+        return spec, run, source
+
+    def test_interrupted_prepare_cleans_original_credentials_without_replaying(self):
+        for stages in (None, ["prepare"]):
+            with self.subTest(stages=stages), tempfile.TemporaryDirectory() as tmp:
+                spec, interrupted, source = self.interrupted_prepare(tmp)
+                paths = dict(interrupted.state["paths"])
+                owned = list(interrupted.state["owned_paths"])
+                handle = dict(interrupted.state["environment"])
+                resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+                with mock.patch.object(resumed.runner, "plan", wraps=resumed.runner.plan) as plan, \
+                        mock.patch.object(resumed.runner, "prepare", wraps=resumed.runner.prepare) as prepare, \
+                        mock.patch.object(resumed.auth, "cleanup", wraps=resumed.auth.cleanup) as cleanup, \
+                        mock.patch.object(EnvironmentProbe, "execute", side_effect=AssertionError("must not execute")) as execute:
+                    resumed.go(stages)
+                    self.assertEqual(resumed.status("prepare"), "interrupted", resumed.state)
+                    self.assertIsNone(resumed.status("execute"))
+                    self.assertTrue(resumed.done("archive"), resumed.state)
+                    self.assertTrue(resumed.state["environment_cleanup"]["confirmed"])
+                    self.assertEqual(resumed.state["paths"], paths)
+                    self.assertEqual(resumed.state["owned_paths"], owned)
+                    self.assertEqual(resumed.state["environment"], handle)
+                    self.assertEqual(cleanup.call_args.args[0]["config_dir"], paths["config_dir"])
+                    self.assertTrue(all(not Path(path).exists() for path in paths.values()))
+                    self.assertFalse((resumed.run_dir / "harness-config" / "auth.json").exists())
+                    self.assertFalse((resumed.run_dir / "agent-home" / "credentials.json").exists())
+                    self.assertEqual((resumed.run_dir / "workspace" / "partial-evidence.txt").read_text(),
+                                     "keep preparation evidence")
+                    self.assertTrue(source.exists(), "cleanup must preserve the original login")
+                    resumed.go()
+                    plan.assert_not_called()
+                    prepare.assert_not_called()
+                    execute.assert_not_called()
+                    cleanup.assert_called_once()
+
+    def test_interrupted_prepare_retries_unconfirmed_cleanup_with_original_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec, interrupted, source = self.interrupted_prepare(tmp)
+            paths = dict(interrupted.state["paths"])
+            resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            with mock.patch.object(resumed.runner, "release", return_value={"status": "failed", "confirmed": False}), \
+                    mock.patch.object(resumed.auth, "cleanup", wraps=resumed.auth.cleanup) as cleanup:
+                resumed.go()
+                self.assertEqual(resumed.status("prepare"), "interrupted", resumed.state)
+                self.assertEqual(resumed.status("archive"), "error")
+                self.assertEqual(resumed.state["paths"], paths)
+                self.assertNotIn("archived", resumed.state)
+                self.assertTrue(all(Path(path).exists() for path in paths.values()))
+                self.assertEqual((Path(paths["config_dir"]) / "auth.json").read_text(), source.read_text())
+                cleanup.assert_not_called()
+            recovered = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            with mock.patch.object(EnvironmentProbe, "execute", side_effect=AssertionError("must not execute")) as execute:
+                recovered.go(["prepare"])
+            execute.assert_not_called()
+            self.assertEqual(recovered.state["paths"], paths)
+            self.assertTrue(recovered.done("archive"), recovered.state)
+            self.assertTrue(recovered.state["environment_cleanup"]["confirmed"])
+            self.assertTrue(all(not Path(path).exists() for path in paths.values()))
+            self.assertFalse((recovered.run_dir / "harness-config" / "auth.json").exists())
+
+    def test_local_task_timeout_still_runs_default_environment_teardown(self):
+        def timeout_worker(harness, ctx):
+            code = "from pathlib import Path; import time; Path('task-started').write_text('once'); time.sleep(60)"
+            return harness.run(ctx, [sys.executable, "-I", "-c", code], "execute", timeout=1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = trial_at(tmp)
+            self.assertEqual(spec["teardown"][0]["location"], "environment")
+            run = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            stages = ["prepare", "execute", "teardown", "release", "archive"]
+            with mock.patch.object(EnvironmentProbe, "execute", timeout_worker):
+                run.go(stages)
+            self.assertTrue(all(run.done(stage) for stage in stages), run.state)
+            self.assertEqual(run.state["execute"]["stop_reason"], "timeout")
+            self.assertTrue(run.state["execute"]["timed_out"])
+            self.assertTrue((run.run_dir / "agent-home" / "teardown-ran").exists())
+            self.assertEqual((run.run_dir / "workspace" / "task-started").read_text(), "once")
+            self.assertEqual(run.state["teardown"]["status"], "ok")
+            self.assertEqual(read_json(run.run_dir / "teardown.json")[0]["location"], "environment")
+            self.assertTrue(run.state["environment_cleanup"]["confirmed"])
+            self.assertTrue(all(not Path(path).exists() for path in run.state["paths"].values()))
+            with mock.patch.object(EnvironmentProbe, "execute", side_effect=AssertionError("must not execute twice")) as execute:
+                run.go(["execute"])
+            execute.assert_not_called()
+
     def test_local_lifecycle_isolated_home_and_environment_survives_to_narration(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = trial_at(tmp)

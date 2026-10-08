@@ -65,6 +65,8 @@ NEVER create, restart, or replay a missing/expired attempt. Ownership labels are
 checked before removal, then removal uses the full immutable container ID.
 Call abort(ctx) immediately after a wrapped harness timeout: killing the Docker
 client alone does not kill docker-exec workers. shell() does this automatically.
+Local abort relies on the caller to reap process groups and keeps the prepared
+environment available for cleanup commands until final release().
 For wrapped launches, pass environment_env(ctx) plus declared/auth overrides to
 both wrap() and child_env(); the latter is the actual subprocess environment.
 Independent supervisor expiry stops workers if the coordinator disappears.
@@ -1460,7 +1462,12 @@ class EnvironmentRunner(Runner):
         return report
 
     def abort(self, ctx):
-        """Stop all owned container workers, including descendants of docker-exec processes."""
+        """Stop container workers; local callers reap processes while retaining cleanup access."""
+        if self.backend == "local":
+            return {"status": "caller_managed", "confirmed": False, "backend": "local",
+                    "worker_stop": "caller-managed",
+                    "limitations": ["The caller must reap local process groups; abort keeps the prepared "
+                                    "environment available for cleanup until final release."]}
         return self.release(ctx)
 
     def release(self, ctx):
