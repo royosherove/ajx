@@ -1199,6 +1199,9 @@ class RealDockerIntegrationTest(TempTest):
         self.assertTrue(runner.release(ctx)["confirmed"])
 
     def test_failed_task_teardown_retries_inside_the_original_container(self):
+        class ShellHarness(basemod.Harness):
+            binary = "/bin/sh"
+
         (self.base / "task.md").write_text("Create a synthetic task artifact.")
         trial = self.base / "trial.toml"
         trial.write_text(f"""
@@ -1236,7 +1239,7 @@ auth = "test"
 """)
         spec = specmod.load(trial)
         run = runmod.Run(spec, spec["cells"][0], 1, lambda _: None)
-        run.harness = basemod.Harness()
+        run.harness = ShellHarness()
 
         def cleanup():
             if run.state.get("environment"):
@@ -1246,6 +1249,8 @@ auth = "test"
         with mock.patch.object(run.harness, "execute", side_effect=lambda ctx: run.harness.run(
                 ctx, ["/bin/sh", "-c", "printf x >> task-ran"], "execute")):
             run.go(["prepare", "execute", "teardown", "release", "archive"])
+        self.assertTrue(run.done("prepare"), run.state["stages"])
+        self.assertTrue(run.done("execute"), run.state["stages"])
         self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
         self.assertEqual(run.status("archive"), "error")
         handle = copy.deepcopy(run.state["environment"])
@@ -1253,7 +1258,7 @@ auth = "test"
         self.assertEqual(run.runner.shell('cat "$HOME/prepared-tool"', run.ctx())["stdout"], "ready")
         (Path(run.state["paths"]["workspace"]) / "allow-cleanup").touch()
         retried = runmod.Run(spec, spec["cells"][0], 1, lambda _: None)
-        retried.harness = basemod.Harness()
+        retried.harness = ShellHarness()
         self.assertEqual(retried.runner._find(handle, retried.ctx())["Id"], original)
         with mock.patch.object(retried.harness, "execute") as execute, \
                 mock.patch.object(retried.runner, "plan") as plan:
