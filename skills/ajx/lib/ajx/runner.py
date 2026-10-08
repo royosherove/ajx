@@ -36,6 +36,7 @@ from .util import context_shell, kill_group, now, read_json, run_shell, sha256_b
 
 STAGES = ("prepare", "execute", "verify", "teardown", "normalize", "narrate", "release", "extract",
           "measure", "render", "archive")
+CLEANUP_STAGES = frozenset(("teardown", "release", "render", "archive"))
 PREREQS = {"execute": ("prepare",), "verify": ("execute",), "teardown": ("prepare",),
            "normalize": ("execute",), "narrate": ("normalize",), "extract": ("narrate",),
            "release": ("prepare",), "measure": ("normalize",), "render": ("measure",), "archive": ("teardown",)}
@@ -43,6 +44,21 @@ TERMINAL = ("done", "error", "interrupted")
 NOT_REDOABLE = ("prepare", "execute")
 NOT_REDOABLE_AFTER_ARCHIVE = ("narrate",)   # resume needs the original cwd and harness config
 CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "credentials", "token.json", "tokens.json")
+
+
+def cleanup_only(stages):
+    return bool(stages) and set(stages) <= CLEANUP_STAGES
+
+
+def _profile_contract(profiles):
+    """Ignore volatile source identities when comparing the matrix's saved inputs."""
+    return json.dumps({
+        "environments": profiles["environments"],
+        "agent_configurations": {
+            name: agent_configuration.resume_contract(profile)
+            for name, profile in profiles["agent_configurations"].items()
+        },
+    }, sort_keys=True)
 
 
 class LockedError(RuntimeError):
@@ -239,6 +255,8 @@ class Run:
     # ------------------------------------------------------------------ stages
 
     def stage_prepare(self):
+        if self.spec.get("_cleanup_only"):
+            raise specmod.SpecError("saved cleanup profiles cannot prepare a new attempt; reload the trial normally")
         if not self.environment_profile and self.runner.name == "local" and not self.harness.available():
             raise RuntimeError(f"harness binary {self.harness.binary!r} not found on PATH")
         root = Path(self.spec["trial"]["workspace_root"])
@@ -762,6 +780,8 @@ class Run:
         return st in ("done", "interrupted") or (stage == "execute" and st == "error")
 
     def go(self, stages=None, keep_workspace=False):
+        if self.spec.get("_cleanup_only") and not cleanup_only(stages):
+            raise specmod.SpecError("saved cleanup profiles allow only teardown, release, render and archive")
         # A release-only request explicitly disposes of the environment. A teardown retry
         # that also names release must still retain the environment if that retry fails.
         self._explicit_release = bool(stages and "release" in stages and "teardown" not in stages)
@@ -846,7 +866,12 @@ class Run:
 
 
 def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=print, dry_run=False, synthesize=True):
+    recovery = bool(spec.get("_cleanup_only"))
+    if recovery and not cleanup_only(stages):
+        raise specmod.SpecError("saved cleanup profiles allow only teardown, release, render and archive")
     out = Path(spec["trial"]["output_dir"])
+    if recovery and not out.is_dir():
+        raise specmod.SpecError("cleanup requires an existing matrix output directory")
     out.mkdir(parents=True, exist_ok=True)
     unknown = [s for s in (stages or []) if s not in STAGES]
     if unknown:
@@ -855,27 +880,44 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
     parallel = int(spec["trial"]["parallel"])
     lock = acquire_lock(out)
     try:
-        runs = [] if dry_run else [Run(spec, c, r, log) for c, r in plan]
         meta = read_json(out / "matrix-plan.json", {}) or {}
-        meta.update({
-            "trial_id": spec["trial"]["id"], "product": spec["trial"]["product"], "trial_file": spec["path"],
-            "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
-            "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
-            "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
-            "wall_clock_comparable": parallel == 1, "planned_at": now(),
-            "configurations": [{
-                "cell": c["id"], "environment": c.get("environment"),
-                "agent_configuration": c.get("agent_configuration"),
-                "environment_profile_sha256": sha256_bytes(json.dumps(
-                    specmod.environment_for(spec, c), sort_keys=True).encode())
-                    if specmod.environment_for(spec, c) else None,
-                "agent_configuration_sha256": sha256_bytes(json.dumps(
-                    specmod.agent_configuration_for(spec, c), sort_keys=True).encode())
-                    if specmod.agent_configuration_for(spec, c) else None,
-            } for c in spec["cells"]],
-        })
-        write_json(out / "matrix-plan.json", meta)
-        shutil.copy2(spec["task"]["prompt_path"], out / "task-prompt.md")
+        profiles = {"schema_version": 1, "environments": spec.get("environments", {}),
+                    "agent_configurations": spec.get("agent_configurations", {})}
+        if not recovery and meta.get("normalized_profiles") and any((out / "runs").glob("*/state.json")):
+            # A subset run must not replace the only saved inputs for another cell's cleanup.
+            if (_profile_contract(meta["normalized_profiles"]) != _profile_contract(profiles)
+                    or meta.get("task_prompt_sha256") != spec["task"]["prompt_sha256"]):
+                raise specmod.SpecError("matrix profiles or task changed; use a new trial output directory "
+                                        "or request only cleanup stages to recover the original attempts")
+        if recovery:
+            # Unstarted repetitions own nothing; never create new attempts during recovery.
+            plan = [(c, r) for c, r in plan
+                    if (out / "runs" / f"{c['id']}-r{r}" / "state.json").is_file()]
+            if not plan:
+                raise specmod.SpecError("no recorded attempts were found for cleanup")
+            log("Recovering original attempts with cleanup and offline rendering only.")
+        runs = [] if dry_run else [Run(spec, c, r, log) for c, r in plan]
+        if not recovery:
+            meta.update({
+                "trial_id": spec["trial"]["id"], "product": spec["trial"]["product"], "trial_file": spec["path"],
+                "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
+                "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
+                "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
+                "wall_clock_comparable": parallel == 1, "planned_at": now(),
+                "normalized_profiles": profiles,
+                "configurations": [{
+                    "cell": c["id"], "environment": c.get("environment"),
+                    "agent_configuration": c.get("agent_configuration"),
+                    "environment_profile_sha256": sha256_bytes(json.dumps(
+                        specmod.environment_for(spec, c), sort_keys=True).encode())
+                        if specmod.environment_for(spec, c) else None,
+                    "agent_configuration_sha256": sha256_bytes(json.dumps(
+                        specmod.agent_configuration_for(spec, c), sort_keys=True).encode())
+                        if specmod.agent_configuration_for(spec, c) else None,
+                } for c in spec["cells"]],
+            })
+            write_json(out / "matrix-plan.json", meta)
+            shutil.copy2(spec["task"]["prompt_path"], out / "task-prompt.md")
         if dry_run:
             return meta
         if parallel == 1:
@@ -884,7 +926,7 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
         else:
             with ThreadPoolExecutor(max_workers=parallel) as pool:
                 list(pool.map(lambda r: r.go(stages, keep_workspace), runs))
-        render.matrix_report(spec, synthesize=synthesize, log=log)
+        render.matrix_report(spec, synthesize=synthesize and not recovery, log=log)
     finally:
         release_lock(lock)
     return meta

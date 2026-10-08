@@ -326,8 +326,8 @@ def _cells(args):
 
 
 def cmd_run(args):
-    spec = specmod.load(args.trial)
     stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
+    spec = specmod.load(args.trial, cleanup_only=runner.cleanup_only(stages))
     log = lambda m: print(f"[{__import__('datetime').datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)  # noqa: E731
     meta = runner.run_matrix(spec, only_cells=_cells(args), stages=stages, keep_workspace=args.keep_workspace,
                              log=log, dry_run=args.dry_run, synthesize=not args.no_synthesis)
@@ -336,12 +336,12 @@ def cmd_run(args):
         return 0
     out = Path(spec["trial"]["output_dir"])
     print(f"\nmatrix report: {out / 'index.html'}\nmarkdown:      {out / 'matrix.md'}")
-    return cmd_status(args)
+    return cmd_status(argparse.Namespace(trial=str(out)))
 
 
 def cmd_status(args):
     path = Path(args.trial)
-    out = Path(specmod.load(path)["trial"]["output_dir"]) if path.is_file() else path
+    out = Path(specmod.load(path, cleanup_only=True)["trial"]["output_dir"]) if path.is_file() else path
     runs = sorted((out / "runs").iterdir()) if (out / "runs").exists() else []
     print(f"{'run':20s} " + " ".join(f"{s[:7]:>7s}" for s in runner.STAGES) + "  verified")
     bad, cleanup = 0, []

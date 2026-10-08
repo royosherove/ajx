@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 
 from . import plugins
-from .util import sha256_bytes, sha256_file
+from .util import read_json, sha256_bytes, sha256_file
 
 CONFIGS = ("clean", "user")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
@@ -24,7 +24,7 @@ def _need(cond, msg):
         raise SpecError(msg)
 
 
-def load(path):
+def load(path, *, cleanup_only=False):
     path = Path(path).resolve()
     _need(path.exists(), f"trial file not found: {path}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -52,12 +52,29 @@ def load(path):
     trial["output_dir"] = str((base / trial["output_dir"]).resolve())
     trial["workspace_root"] = str(Path(trial["workspace_root"]).expanduser().resolve())
 
+    saved_plan = (read_json(Path(trial["output_dir"]) / "matrix-plan.json", {}) or {}) if cleanup_only else {}
+    _need(isinstance(saved_plan, dict), "saved matrix plan must be an object")
+    saved_profiles = saved_plan.get("normalized_profiles")
+    if saved_profiles is not None:
+        _need(isinstance(saved_profiles, dict) and saved_profiles.get("schema_version") == 1
+              and all(isinstance(saved_profiles.get(key), dict)
+                      for key in ("environments", "agent_configurations")),
+              "saved profile contract is invalid; cleanup requires the original matrix plan")
+        _need(saved_plan.get("trial_file") == str(path)
+              and saved_plan.get("trial_id") == trial["id"]
+              and saved_plan.get("product") == trial["product"],
+              "saved profile contract belongs to a different trial")
+
     task = dict(raw.get("task") or {})
     _need(task.get("prompt_file"), "task.prompt_file is required")
-    prompt_path = (base / task["prompt_file"]).resolve()
+    prompt_path = (Path(trial["output_dir"]) / "task-prompt.md" if saved_profiles is not None
+                   else (base / task["prompt_file"]).resolve())
     _need(prompt_path.exists(), f"task prompt not found: {prompt_path}")
     prompt_bytes = prompt_path.read_bytes()
     _need(prompt_bytes.strip(), "task prompt is empty")
+    if saved_profiles is not None:
+        _need(sha256_bytes(prompt_bytes) == saved_plan.get("task_prompt_sha256"),
+              "saved task prompt does not match the original matrix plan")
     task.update(prompt_path=str(prompt_path), prompt_sha256=sha256_bytes(prompt_bytes),
                 prompt_text=prompt_bytes.decode("utf-8"))
     task.setdefault("materials", [])
@@ -72,7 +89,8 @@ def load(path):
     task["identity_cmd"] = ident
     if task.get("fixture_dir"):
         fixture = (base / task["fixture_dir"]).resolve()
-        _need(fixture.is_dir(), f"fixture_dir not found: {fixture}")
+        if not cleanup_only:
+            _need(fixture.is_dir(), f"fixture_dir not found: {fixture}")
         task["fixture_dir"] = str(fixture)
     else:
         task["fixture_dir"] = None
@@ -122,11 +140,11 @@ def load(path):
     from . import agent_configuration, environments
     profiles = {}
     for key, module in (("environments", environments), ("agent_configurations", agent_configuration)):
-        table = raw.get(key, {})
+        table = saved_profiles[key] if saved_profiles is not None else raw.get(key, {})
         _need(isinstance(table, dict), f"{key} must contain named profile tables")
         _need(all(_ID.fullmatch(str(name)) for name in table), f"{key} names must be short lowercase slugs")
         try:
-            profiles[key] = module.normalize_profiles(table, base)
+            profiles[key] = table if saved_profiles is not None else module.normalize_profiles(table, base)
         except (TypeError, ValueError) as exc:
             raise SpecError(str(exc)) from exc
 
@@ -144,6 +162,7 @@ def load(path):
         "adapters": adapters, "auth": auth_profiles, "runner": runner, "cells": [], **profiles,
         "_configuration_environment": environments.normalize_profiles(
             {"ajx-local": {"backend": "local"}}, base)["ajx-local"],
+        "_cleanup_only": cleanup_only,
     }
 
     seen = set()

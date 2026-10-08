@@ -276,6 +276,15 @@ inputs and retry the full sequence in the same environment:
 ajx run trial.toml --cells CELL --stages teardown,release,render,archive
 ```
 
+When the requested stages contain only `teardown`, `release`, `render` and
+`archive`, AJX uses the normalized profiles and task prompt saved in the matrix
+plan. Deleted or changed skill sources, task fixtures and mount fixtures do not
+prevent cleanup of an existing attempt. Recovery preserves the original plan,
+skips repetitions that never started, and renders without model synthesis.
+Saved cleanup profiles cannot prepare, execute or narrate a task. A fresh run
+still validates its source files. If a matrix has no saved profile contract,
+restore its original profile sources before retrying cleanup.
+
 Known staged credential files are still purged; restore any task credentials
 needed for the retry through the trial's declared credential inputs. A container
 keeps its original expiry deadline and is never restarted or recreated for a
