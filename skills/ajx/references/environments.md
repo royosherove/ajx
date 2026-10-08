@@ -179,6 +179,15 @@ required_env = ["KIRO_API_KEY"]
 Select `auth = "kiro"` on the Kiro cell. Required variable values come from the
 caller; do not write credentials into TOML.
 
+Explicit environments reject a variable that is both supplied and matched by
+`auth.unset`, including trailing-star patterns. For example, an
+`env.OPENAI_API_KEY` declaration together with `unset = ["OPENAI_*"]` fails
+validation before preparation. Remove the overlapping unset pattern or remove
+the declaration. This check covers trial, cell and auth variables, including
+variables forwarded through `required_env`. Unrelated caller credentials are
+not inherited, so broad ambient-clearing patterns are usually unnecessary.
+Legacy runners retain their existing override precedence.
+
 Built-in cloud profiles require complete, explicitly declared credential routes
 for both local and container environments:
 
@@ -202,7 +211,8 @@ Selecting a cloud profile does not forward ambient credentials. AWS profile/SSO
 files, default ADC, Azure CLI login, file-based and default identity routes, and
 skip-auth controls are not supplied by these built-ins. Explicit file paths do
 not make caller files available in a container. Unsupported selectors are
-rejected even alongside direct credentials; remove or unset them. A custom auth
+rejected even alongside direct credentials; remove them from explicit env
+declarations. An unset pattern cannot cancel a conflicting declaration. A custom auth
 plugin must stage credentials inside the selected environment and remove them
 before archival. A preconfigured gateway can use `type = "env"` with its complete
 explicit auth contract. Legacy runs without environment profiles retain their

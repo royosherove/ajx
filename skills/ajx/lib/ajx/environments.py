@@ -588,6 +588,11 @@ def validate_for_cell(profile, cell):
         for key in _ISOLATION_ENV:
             if _dropped(key, drops):
                 _fail(field + ".unset_env", f"cannot unset the isolated {key} path")
+        conflicts = sorted(key for key in env if _dropped(key, drops))
+        if conflicts:
+            _fail(field + ".env", "variables are both supplied and unset: "
+                  + ", ".join(conflicts)
+                  + "; remove the overlapping env declarations or narrow auth.unset before running")
 
 
 def _checked_env(overrides, field="environment.env"):

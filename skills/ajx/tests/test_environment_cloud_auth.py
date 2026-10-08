@@ -294,11 +294,14 @@ class EnvironmentCloudAuthTest(unittest.TestCase):
                 values = {**CONFIG[provider], **KEYS[provider], selector: "synthetic-unsupported-route"}
                 with self.assertRaisesRegex(specmod.SpecError, selector):
                     self.load(provider, auth_env=values)
+                with self.assertRaisesRegex(specmod.SpecError, "both supplied and unset"):
+                    self.load(provider, auth_env=values, unset=[selector])
+                values.pop(selector)
                 spec, cell, auth = self.load(provider, auth_env=values, unset=[selector])
                 self.assertEqual(auth.problems(), [])
                 self.assertNotIn(selector, self.launch(spec, cell, auth))
 
-    def test_unset_unused_reference_and_empty_selectors_do_not_block_a_direct_route(self):
+    def test_empty_selectors_are_allowed_but_unset_does_not_cancel_explicit_references(self):
         for provider, selector in (("claude-bedrock", "AWS_PROFILE"),
                                    ("claude-foundry", "AZURE_CONFIG_DIR"),
                                    ("gemini-vertex", "GOOGLE_APPLICATION_CREDENTIALS")):
@@ -307,8 +310,8 @@ class EnvironmentCloudAuthTest(unittest.TestCase):
                 _, _, auth = self.load(provider, auth_env=values)
                 self.assertEqual(auth.problems(), [])
                 values[selector] = "${MISSING_UNUSED_REFERENCE}"
-                _, _, auth = self.load(provider, auth_env=values, unset=[selector])
-                self.assertEqual(auth.problems(), [])
+                with self.assertRaisesRegex(specmod.SpecError, "both supplied and unset"):
+                    self.load(provider, auth_env=values, unset=[selector])
 
     def test_environment_launch_never_inherits_ambient_auth_or_config(self):
         ambient = {
