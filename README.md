@@ -114,6 +114,13 @@ Codex, Claude Code and Kiro CLI profiles can disable optional skills or load
 explicit, content-pinned selections. The [CSV comparison example](skills/ajx/examples/environment-profiles/)
 shows a plain and a guided worker receiving the same task.
 
+For CI jobs with a completed trial and preconfigured credentials, the same CLI
+can [run without a coordinator interview](skills/ajx/references/headless.md).
+Its exit status covers orchestration and cleanup errors; a failed task
+verification can still return zero. Product acceptance policies, JUnit export
+and automatic improvement loops remain
+[proposed CI/CD features](docs/design/ci-and-improvement-loops.md).
+
 ## Run and share deliberately
 
 Workers execute commands with their process permissions and may bypass interactive approvals. Use disposable workspaces and limited credentials, agree on task boundaries, and investigate cleanup failures. Agent and reporting calls may incur provider charges.

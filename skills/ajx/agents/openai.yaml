@@ -1,0 +1,4 @@
+interface:
+  display_name: "AJX"
+  short_description: "Compare agent journeys across tools and environments"
+  default_prompt: "Use $ajx to brief and run a task trial in a chosen execution environment, then return the agent journey, prioritized asks, and matrix report."

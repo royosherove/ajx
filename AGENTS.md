@@ -6,6 +6,10 @@ AJX v1 is the first public version. Keep public docs focused on user needs and
 shipped behavior; exclude private case studies, internal planning, and
 unsupported performance or launch claims.
 
+Name branches by purpose, such as `feature/<topic>`, `bug/<topic>`,
+`docs/<topic>`, or `chore/<topic>`. Do not use `codex/` or other agent-name
+prefixes.
+
 Run `python3 -I -m unittest discover -s skills/ajx/tests -p 'test_*.py'` for relevant code changes.
 Use synthetic fixtures and fake harnesses. Do not run live agent or cloud trials
 as part of ordinary tests.
