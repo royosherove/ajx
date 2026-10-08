@@ -1151,24 +1151,30 @@ class EnvironmentRunner(Runner):
         if status == "prepared":
             data["path_identity"] = {key: [Path(path).stat().st_dev, Path(path).stat().st_ino]
                                      for key, path in handle["paths"].items()}
-        if initial:
-            try:
-                with marker.open("x", encoding="utf-8") as stream:
-                    json.dump(data, stream)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                marker.chmod(0o600)
-            except FileExistsError:
-                raise EnvironmentError("Environment preparation was already attempted; it cannot be replayed") from None
-        else:
+        if not initial:
             self._read_marker(ctx, handle)
-            temporary = marker.with_suffix(".tmp")
-            with temporary.open("x", encoding="utf-8") as stream:
+        # Each write owns a private temporary file. An abrupt process exit may
+        # leave it behind, but cannot block a later lifecycle update or expose
+        # a partially written authoritative marker.
+        fd, name = tempfile.mkstemp(prefix=marker.name + ".", suffix=".tmp", dir=marker.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump(data, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
-            temporary.chmod(0o600)
-            temporary.replace(marker)
+            if initial:
+                try:
+                    # Publish the complete record atomically, without replacing
+                    # an existing attempt's marker (including a symlink).
+                    os.link(temporary, marker)
+                except FileExistsError:
+                    raise EnvironmentError(
+                        "Environment preparation was already attempted; it cannot be replayed") from None
+            else:
+                os.replace(temporary, marker)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _confirmed_preparation(self, ctx, handle):
         marker = self._read_marker(ctx, handle)
