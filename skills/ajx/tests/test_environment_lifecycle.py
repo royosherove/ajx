@@ -395,16 +395,43 @@ class EnvironmentLifecycleTests(unittest.TestCase):
             self.assertFalse((retried.run_dir / "harness-config" / "auth.json").exists())
             self.assertTrue(source.exists())
 
-    def test_only_failed_environment_commands_defer_release(self):
-        for mixed in (False, True):
-            with self.subTest(mixed=mixed), tempfile.TemporaryDirectory() as tmp:
-                _, run, _ = self.copied_auth_run(tmp)
-                host = {**run.spec["teardown"][0], "run": "exit 4", "location": "host"}
-                run.spec["teardown"] = [run.spec["teardown"][0], host] if mixed else [host]
+    def test_host_only_cleanup_failure_does_not_retain_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, run, _ = self.copied_auth_run(tmp)
+            run.spec["teardown"] = [{**run.spec["teardown"][0], "run": "exit 4", "location": "host"}]
+            run.go(["prepare", "execute", "teardown", "release", "archive"])
+            self.assertEqual(run.state["teardown"]["status"], "failed")
+            self.assertTrue(run.state["environment_cleanup"]["confirmed"])
+            self.assertTrue(run.done("archive"))
+
+    def test_mixed_teardown_retains_environment_until_host_step_also_succeeds(self):
+        for host_first in (False, True):
+            with self.subTest(host_first=host_first), tempfile.TemporaryDirectory() as tmp:
+                spec, run, source = self.copied_auth_run(tmp)
+                environment = spec["teardown"][0]
+                host = {**environment, "run": "test -e allow-host-cleanup || exit 4", "location": "host"}
+                spec["teardown"] = [host, environment] if host_first else [environment, host]
                 run.go(["prepare", "execute", "teardown", "release", "archive"])
-                self.assertEqual(run.state["teardown"]["status"], "failed")
-                self.assertTrue(run.state["environment_cleanup"]["confirmed"])
-                self.assertTrue(run.done("archive"))
+                results = json.loads((run.run_dir / "teardown.json").read_text())
+                self.assertEqual(results[1 if host_first else 0]["exit_code"], 0)
+                self.assertEqual(results[0 if host_first else 1]["exit_code"], 4)
+                self.assertEqual(run.state["environment_cleanup"]["status"], "deferred_teardown")
+                self.assertNotIn("archived", run.state)
+                self.assertEqual(run.runner.shell('cat "$HOME/installed-tool"', run.ctx())["stdout"], "ready")
+                handle = dict(run.state["environment"])
+                (Path(run.state["paths"]["workspace"]) / "allow-host-cleanup").touch()
+                retried = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+                with mock.patch.object(retried.harness, "execute") as execute, \
+                        mock.patch.object(retried.runner, "plan") as plan:
+                    retried.go(["teardown", "release", "archive"])
+                execute.assert_not_called()
+                plan.assert_not_called()
+                self.assertEqual(retried.state["teardown"]["status"], "ok")
+                self.assertTrue(retried.state["environment_cleanup"]["confirmed"])
+                self.assertTrue(retried.done("archive"))
+                self.assertEqual(retried.state["environment"], handle)
+                self.assertEqual((retried.run_dir / "workspace" / "executions.txt").read_text(), "one execution")
+                self.assertTrue(source.exists())
 
     def test_handled_interruption_archives_after_already_confirmed_release_without_backend(self):
         with tempfile.TemporaryDirectory() as tmp:

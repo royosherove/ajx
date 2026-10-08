@@ -199,6 +199,12 @@ the host; host file checks inspect collected/bind-mounted output. `file_exists`
 globs must stay beneath the workspace. Only regular files reached without
 symlinks in the workspace or any path component can satisfy a file check.
 
+With a root coordinator, AJX restores the planned non-root worker's ownership
+of its private workspace, home, configuration and cache after staging
+configuration and after each successful host-located setup command. This lets
+the worker modify prepared files without changing ownership of original
+extra-mount sources or unrelated host directories.
+
 Host shell checks use a separate private home and cache, with tools resolved
 from the coordinator's absolute search paths outside worker directories. A
 worker-installed tool cannot replace the host check's executable through its
@@ -218,8 +224,9 @@ commands are no longer available. A root-owned bounded supervisor also expires
 the container if the coordinator disappears.
 Local processes have weaker cancellation guarantees, recorded in their report.
 
-If an environment-located teardown fails, automatic release and archival are
-deferred so you can repair the cleanup inputs and retry in the same environment:
+If teardown includes environment-located commands and any teardown step fails,
+automatic release and archival are deferred so you can repair the cleanup
+inputs and retry the full sequence in the same environment:
 
 ```sh
 ajx run trial.toml --cells CELL --stages teardown,release,render,archive
@@ -230,7 +237,8 @@ needed for the retry through the trial's declared credential inputs. A container
 keeps its original expiry deadline and is never restarted or recreated for a
 retry. To discard the environment while leaving task cleanup recorded as failed,
 explicitly run `--stages release,render,archive` without `teardown`. Host-located
-cleanup failures do not retain the worker environment.
+cleanup failures do not retain the worker environment when the teardown has no
+environment-located commands.
 
 Resume never recreates a missing container or silently repeats a task. Changing
 a recorded profile, cell or prompt requires a new output directory. A failed

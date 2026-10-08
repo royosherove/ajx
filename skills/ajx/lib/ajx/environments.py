@@ -9,7 +9,7 @@ EnvironmentRunner(normalized_profile) extends base.Runner and exposes:
   environment_env(ctx), child_env(overrides=None, unset=()),
   host_env(ctx, overrides=None, unset=()),
   wrap(argv, ctx, env), shell(command, ctx, timeout=600, env=None),
-  abort(ctx), release(ctx).
+  restore_worker_ownership(ctx), abort(ctx), release(ctx).
 
 Persist plan() VERBATIM in ctx["state"]["environment"] before prepare(). Store
 prepare() separately, for example in state["environment_report"]. Its fields
@@ -75,6 +75,13 @@ Independent supervisor expiry stops workers if the coordinator disappears.
 release() is idempotent and preserves host evidence for the caller's archive.
 Cleanup returns {status, confirmed, ...}; an unreachable daemon is not success.
 Local process escape and coordinator-death cleanup cannot be guaranteed.
+
+After staging authentication/configuration and after each successful host-located
+setup command, call restore_worker_ownership() before the next environment command.
+For a root coordinator and a container backend it restores the planned worker
+UID/GID in the original four prepared roots. Symlinks, hardlinked files, special
+files and nested host mounts are left untouched. Changed/missing roots and unsafe
+traversal fail closed. Local backends and nonroot coordinators do nothing.
 
 host_env() is for trusted host checks/lifecycle commands. It retains only
 explicit ctx env/check_env/overrides, rebuilds configuration and package paths
@@ -289,6 +296,55 @@ def _open_directory(path):
     except BaseException:
         os.close(fd)
         raise
+
+
+def _ownership_mount(fd):
+    """Identify the open mount, including same-device Linux bind mounts."""
+    device = os.fstat(fd).st_dev
+    if host_platform.system() != "Linux":
+        return device, None
+    try:
+        for line in Path(f"/proc/self/fdinfo/{fd}").read_text(encoding="ascii").splitlines():
+            if line.startswith("mnt_id:"):
+                return device, int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    raise EnvironmentError("Cannot verify host mount boundaries before restoring worker ownership")
+
+
+def _chown_owned_tree(directory_fd, uid, gid):
+    """Walk open descriptors only; never chown a link, shared inode or another mount."""
+    boundary = _ownership_mount(directory_fd)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+    def visit(fd):
+        info = os.fstat(fd)
+        directory = stat.S_ISDIR(info.st_mode)
+        if not directory and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1):
+            return
+        if _ownership_mount(fd) != boundary:
+            return
+        if (info.st_uid, info.st_gid) != (uid, gid):
+            os.fchown(fd, uid, gid)
+        if not directory:
+            return
+        for name in os.listdir(fd):
+            entry = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            is_directory = stat.S_ISDIR(entry.st_mode)
+            if (entry.st_dev != info.st_dev or
+                    (not is_directory and (not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1))):
+                continue
+            child = os.open(name, flags | (os.O_DIRECTORY if is_directory else 0), dir_fd=fd)
+            try:
+                opened = os.fstat(child)
+                if ((opened.st_dev, opened.st_ino, stat.S_IFMT(opened.st_mode)) !=
+                        (entry.st_dev, entry.st_ino, stat.S_IFMT(entry.st_mode))):
+                    raise EnvironmentError("Attempt tree changed while restoring worker ownership")
+                visit(child)
+            finally:
+                os.close(child)
+
+    visit(directory_fd)
 
 
 def _tree_manifest(root, field, *, fixtures=True, destination=None):
@@ -1198,20 +1254,57 @@ class EnvironmentRunner(Runner):
                 if ":" not in value:
                     Path(value).mkdir(parents=True, exist_ok=True, mode=0o700)
         (Path(handle["paths"]["home_dir"]) / ".local" / "bin").mkdir(parents=True, exist_ok=True, mode=0o700)
-        if self.backend == "container" and os.getuid() == 0:
-            uid, gid = (int(v) for v in handle["worker_user"].split(":"))
-            for root in handle["paths"].values():
-                for current, dirs, files in os.walk(root, followlinks=False):
-                    os.chown(current, uid, gid)
-                    for name in dirs + files:
-                        path = Path(current) / name
-                        if path.is_symlink():
-                            raise EnvironmentError("Starting tree changed to a symlink before preparation")
-                        os.chown(path, uid, gid, follow_symlinks=False)
+        self._restore_worker_roots(handle)
         if self.backend == "container":
             config = Path(handle["docker_config_dir"])
             config.mkdir(mode=0o700, exist_ok=False)
             (config / "config.json").write_text("{}\n", encoding="utf-8")
+
+    def _restore_worker_roots(self, handle, *, identities=None):
+        if self.backend != "container" or os.geteuid() != 0:
+            return
+        uid, gid = (int(v) for v in handle["worker_user"].split(":"))
+        roots = []
+        try:
+            # Open and validate every original root before changing any ownership.
+            # Holding descriptors also prevents a later path/symlink swap redirecting chown.
+            for key in _ROOTS:
+                fd = _open_directory(handle["paths"][key])
+                roots.append(fd)
+                info = os.fstat(fd)
+                if identities is not None and identities.get(key) != [info.st_dev, info.st_ino]:
+                    raise EnvironmentError("Prepared attempt directory identity changed; refusing ownership repair")
+            for fd in roots:
+                _chown_owned_tree(fd, uid, gid)
+        except OSError as exc:
+            raise EnvironmentError("Cannot safely restore worker ownership "
+                                   f"({type(exc).__name__}); attempt paths must remain accessible without symlinks") from None
+        finally:
+            for fd in roots:
+                os.close(fd)
+
+    def restore_worker_ownership(self, ctx):
+        """Repair staged configuration/host setup output; return None or raise.
+
+        Call after staging auth/configuration or successful host setup, before
+        the next environment command. This never provisions/restarts an
+        environment, changes extra mount sources, or selects archived/current
+        paths in place of the plan.
+        """
+        if self.backend != "container" or os.geteuid() != 0:
+            return
+        handle = self._handle(ctx)
+        if self._released or self._preparation_failed:
+            raise EnvironmentError("Environment is released or preparation failed; refusing ownership repair")
+        marker = self._read_marker(ctx, handle)
+        identities = marker.get("path_identity")
+        if marker.get("status") != "prepared" or not isinstance(identities, dict):
+            raise EnvironmentError("Environment preparation was not confirmed; refusing ownership repair")
+        state = ctx.get("state") or {}
+        if "owned_paths" in state and any(
+                not self._caller_owned(ctx, path) for path in handle["paths"].values()):
+            raise EnvironmentError("Prepared attempt paths are no longer recorded as owned; refusing ownership repair")
+        self._restore_worker_roots(handle, identities=identities)
 
     def _create_argv(self, handle):
         left = min(self.profile["limits"]["lifetime_seconds"], int(handle["expires_at"] - time.time()))

@@ -53,6 +53,14 @@ jobs:
           echo "AJX_TEST_CONTAINER_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Exercise real container boundaries and lifecycle
         run: python -I -m unittest discover -s skills/ajx/tests -p 'test_*.py'
+      - name: Exercise root coordinator ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -- env AJX_TEST_CONTAINER_IMAGE="$AJX_TEST_CONTAINER_IMAGE" \
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
+            "$(command -v python)" -I -m unittest discover \
+            -s skills/ajx/tests -p 'test_environment_ownership.py'
 
   security:
     name: Secrets and privacy

@@ -291,6 +291,8 @@ class Run:
             self.save()
             ctx = self.ctx()
         self.auth.prepare(ctx)
+        if self.environment_profile:
+            self.runner.restore_worker_ownership(ctx)
         if self.spec["preflight"]:  # same shell and env as verify/teardown: a run that cannot clean up never starts
             preflight = envcheck.run_preflight(self.spec["preflight"], ctx["workspace"], self._shell_env(ctx),
                                                stop_on_failure=True, executor=lambda cmd: self._command(cmd, ctx))
@@ -307,6 +309,8 @@ class Run:
             write_json(self.run_dir / "setup.json", setup_results)
             if res["exit_code"] != 0:
                 raise RuntimeError(f"setup command failed: {cmd['run']!r} exit={res['exit_code']}")
+            if self.environment_profile and cmd["location"] == "host":
+                self.runner.restore_worker_ownership(ctx)
         write_json(self.run_dir / "setup.json", setup_results)
         if self.environment_profile:
             report = self.state.get("environment_report") or {}
@@ -540,20 +544,15 @@ class Run:
         self.save()
 
     def _teardown_needs_environment(self):
-        """A failed environment command needs the original prepared attempt for an explicit retry."""
+        """A teardown retry repeats every command, including previously successful environment steps."""
         if not self.environment_profile or not self.done("prepare") or self.status("teardown") not in TERMINAL:
             return False
         commands = self.spec["teardown"]
         required = [index for index, cmd in enumerate(commands) if cmd.get("location") == "environment"]
         if not required:
             return False
-        if self.status("teardown") in ("error", "interrupted"):
-            return True
-        if (self.state.get("teardown") or {}).get("status") == "ok":
-            return False
-        results = read_json(self.run_dir / "teardown.json", [])
-        return any(index >= len(results) or results[index].get("exit_code") != 0
-                   or results[index].get("timed_out") or results[index].get("auth_errors") for index in required)
+        return (self.status("teardown") != "done"
+                or (self.state.get("teardown") or {}).get("status") != "ok")
 
     def stage_release(self):
         """Release the worker after narration; reporting consumes exported evidence."""

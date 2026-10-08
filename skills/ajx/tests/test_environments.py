@@ -1232,6 +1232,10 @@ run = 'printf ready > "$HOME/prepared-tool"'
 [[teardown]]
 run = 'test -e allow-cleanup || exit 4; test "$(cat "$HOME/prepared-tool")" = ready && touch "$HOME/teardown-ran"'
 
+[[teardown]]
+location = "host"
+run = 'test -e allow-host-cleanup || exit 4'
+
 [[cells]]
 id = "container"
 harness = "codex"
@@ -1260,6 +1264,12 @@ auth = "test"
         retried = runmod.Run(spec, spec["cells"][0], 1, lambda _: None)
         retried.harness = ShellHarness()
         self.assertEqual(retried.runner._find(handle, retried.ctx())["Id"], original)
+        retried.go(["teardown", "release", "archive"])
+        results = json.loads((retried.run_dir / "teardown.json").read_text())
+        self.assertEqual([result["exit_code"] for result in results], [0, 4])
+        self.assertEqual(retried.state["environment_cleanup"]["status"], "deferred_teardown")
+        self.assertEqual(retried.runner._find(handle, retried.ctx())["Id"], original)
+        (Path(retried.state["paths"]["workspace"]) / "allow-host-cleanup").touch()
         with mock.patch.object(retried.harness, "execute") as execute, \
                 mock.patch.object(retried.runner, "plan") as plan:
             retried.go(["teardown", "release", "archive"])
