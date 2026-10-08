@@ -1,7 +1,7 @@
 """Cell lifecycle orchestration. Each (cell, repetition) is one ordinary AJX run.
 
 Stages (resumable; each writes a marker in state.json):
-  prepare -> execute -> verify -> teardown -> normalize -> narrate -> extract -> measure -> render -> archive
+  prepare -> execute -> verify -> teardown -> normalize -> narrate -> release -> extract -> measure -> render -> archive
 
 Rules:
 - A stage runs once its prerequisites reached a terminal status (done, error, or interrupted);
@@ -11,30 +11,32 @@ Rules:
 - No worker starts unless every [[preflight]] passed in that run's prepare stage.
 - Teardown runs once execute has started, including on a later invocation after a crash. Its
   stage status says it ran; state["teardown"]["status"] says whether it could have cleaned up.
-- Workspaces always end up archived under the run dir (or on prepare failure) so the shared
-  workspace root never reveals sibling runs.
+- Archival moves evidence under the run dir after confirmed environment release.
+  Failed release preserves the original directories for cleanup; --keep-workspace retains them too.
 """
 
 import json
 import os
 import platform
 import secrets
+import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import envcheck, plugins, reporter, render, spec as specmod
+from . import agent_configuration, envcheck, plugins, reporter, render, spec as specmod
 from .evidence import assign_ids, build_digest, isolation_scan, measure_run
-from .util import kill_group, now, read_json, run_shell, skill_fingerprint, write_json
+from .util import context_shell, kill_group, now, read_json, run_shell, sha256_bytes, skill_fingerprint, write_json
 
-STAGES = ("prepare", "execute", "verify", "teardown", "normalize", "narrate", "extract",
+STAGES = ("prepare", "execute", "verify", "teardown", "normalize", "narrate", "release", "extract",
           "measure", "render", "archive")
 PREREQS = {"execute": ("prepare",), "verify": ("execute",), "teardown": ("prepare",),
            "normalize": ("execute",), "narrate": ("normalize",), "extract": ("narrate",),
-           "measure": ("normalize",), "render": ("measure",), "archive": ("teardown",)}
+           "release": ("prepare",), "measure": ("normalize",), "render": ("measure",), "archive": ("teardown",)}
 TERMINAL = ("done", "error", "interrupted")
 NOT_REDOABLE = ("prepare", "execute")
 NOT_REDOABLE_AFTER_ARCHIVE = ("narrate",)   # resume needs the original cwd and harness config
@@ -118,6 +120,18 @@ class Run:
         self.harness = specmod.harness_for(spec, cell["harness"])
         self.auth = specmod.auth_for(spec, cell)
         self.runner = specmod.runner_for(spec, cell)
+        self.environment_profile = specmod.environment_for(spec, cell)
+        self.configuration_profile = specmod.agent_configuration_for(spec, cell)
+        contract = {"environment": self.environment_profile, "agent_configuration": self.configuration_profile,
+                    "cell": cell, "prompt_sha256": spec["task"]["prompt_sha256"]}
+        self.contract_sha256 = sha256_bytes(json.dumps(contract, sort_keys=True).encode())
+        if self.state.get("environment_contract_sha256"):
+            if self.state["environment_contract_sha256"] != self.contract_sha256:
+                raise specmod.SpecError(f"{self.run_id}: environment, agent configuration, or task changed; "
+                                        "use a new trial output directory for a new comparison")
+        elif self.environment_profile and self.state.get("paths"):
+            raise specmod.SpecError(f"{self.run_id}: cannot add environment profiles to an existing attempt; "
+                                    "use a new trial output directory")
 
     # ------------------------------------------------------------------ state
 
@@ -142,33 +156,56 @@ class Run:
             env.update({v: str(Path(paths["cache_dir"]) / v.lower()) for v in CACHE_VARS})
         workspace = archived.get("workspace") or paths.get("workspace") or str(self.run_dir / "workspace")
         config_dir = archived.get("config_dir") or paths.get("config_dir", "")
-        return {
+        ctx = {
             "spec": self.spec, "cell": self.cell, "run_dir": self.run_dir, "workspace": Path(workspace),
             "config_dir": config_dir, "cache_dir": paths.get("cache_dir", ""),
+            "home_dir": archived.get("home_dir") or paths.get("home_dir", ""),
             "run_token": self.state.get("run_token", ""),
             "timeout": int(self.spec["trial"]["timeout_seconds"]),
             "narrate_timeout": int(self.spec["trial"]["narrate_timeout_seconds"]),
             "prompt_text": self.spec["task"]["prompt_text"], "state": self.state, "env": env,
             "unset_env": self.auth.unset(), "runner": self.runner, "auth": self.auth,
             "check_env": {**env, "AJX_RUN_TOKEN": self.state.get("run_token", "")},
+            "environment_profile": self.environment_profile,
+            "agent_configuration_profile": self.configuration_profile,
         }
+        if self.environment_profile and ctx["home_dir"] and not archived:
+            declared_path = env.get("PATH")
+            env.update(self.runner.environment_env(ctx))
+            if declared_path is not None:
+                env["PATH"] = declared_path
+            ctx["check_env"] = {**env, "AJX_RUN_TOKEN": self.state.get("run_token", "")}
+        return ctx
 
     def _shell_env(self, ctx):
+        if self.environment_profile:
+            return self.runner.child_env(ctx["check_env"], ctx["unset_env"])
         return envcheck.command_env(ctx["env"], ctx["unset_env"], ctx["run_token"])
+
+    def _command(self, command, ctx, default_location="environment"):
+        return context_shell(command["run"], ctx, timeout=command["timeout"],
+                             location=command.get("location", default_location))
 
     # ------------------------------------------------------------------ stages
 
     def stage_prepare(self):
-        if self.runner.name == "local" and not self.harness.available():
+        if not self.environment_profile and self.runner.name == "local" and not self.harness.available():
             raise RuntimeError(f"harness binary {self.harness.binary!r} not found on PATH")
         root = Path(self.spec["trial"]["workspace_root"])
         root.mkdir(parents=True, exist_ok=True)
         # Unnamed random dirs: nothing in the path reveals an evaluation, a cell, or a sibling run.
         paths = {"workspace": str((root / _rand()).resolve()), "config_dir": str((root / _rand()).resolve()),
                  "cache_dir": str((root / _rand()).resolve())}
-        for p in paths.values():
-            Path(p).mkdir(parents=True, exist_ok=False)
+        if self.environment_profile:
+            paths["home_dir"] = str((root / _rand()).resolve())
+            self.state["environment_contract_sha256"] = self.contract_sha256
         self.state["paths"] = paths
+        self.state["owned_paths"] = []
+        self.save()
+        for p in paths.values():
+            Path(p).mkdir(mode=0o700, parents=True, exist_ok=False)
+            self.state["owned_paths"].append(p)
+            self.save()
         # A retry after a failed prepare (say, a preflight) must not reuse the first attempt's archive:
         # ctx() prefers archived paths (this worker would land inside the report dir), and a done
         # archive stage would leave these new dirs, and any copied credentials, in workspace_root.
@@ -177,13 +214,36 @@ class Run:
         self.state["run_token"] = _rand()
         self.save()
         if self.spec["task"]["fixture_dir"]:
+            if self.environment_profile:
+                for source in Path(self.spec["task"]["fixture_dir"]).rglob("*"):
+                    mode = source.lstat().st_mode
+                    if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                        raise RuntimeError("environment fixtures must contain only regular files and directories; "
+                                           "symlinks and special files are not copied")
             shutil.copytree(self.spec["task"]["fixture_dir"], paths["workspace"], dirs_exist_ok=True)
         ctx = self.ctx()
-        self.auth.prepare(ctx)
         problems = self.auth.problems()
+        if problems and self.environment_profile:
+            raise RuntimeError(f"environment authentication configuration is not ready: {'; '.join(problems)}")
+        if self.environment_profile:
+            self.state["environment"] = self.runner.plan(ctx)
+            self.save()  # Durable ownership intent precedes any backend side effect.
+            ctx = self.ctx()
+            self.state["environment_report"] = self.runner.prepare(ctx)
+            write_json(self.run_dir / "environment.json",
+                       {"execution_environment": self.state["environment_report"],
+                        "agent_configuration": self.state.get("agent_configuration")})
+            self.save()
+        if self.configuration_profile:
+            manifest = agent_configuration.prepare(self.configuration_profile, ctx, self.harness)
+            self.state["agent_configuration"] = manifest
+            write_json(self.run_dir / "agent-configuration.json", manifest)
+            self.save()
+            ctx = self.ctx()
+        self.auth.prepare(ctx)
         if self.spec["preflight"]:  # same shell and env as verify/teardown: a run that cannot clean up never starts
             preflight = envcheck.run_preflight(self.spec["preflight"], ctx["workspace"], self._shell_env(ctx),
-                                               stop_on_failure=True)
+                                               stop_on_failure=True, executor=lambda cmd: self._command(cmd, ctx))
             write_json(self.run_dir / "preflight.json", preflight)
             failed = [c for c in preflight if not c["passed"]]
             if failed:
@@ -191,21 +251,33 @@ class Run:
                                    "the worker was not started")
         setup_results = []
         for cmd in self.spec["setup"]:
-            res = run_shell(cmd["run"], ctx["workspace"], timeout=cmd["timeout"], env=self._shell_env(ctx))
+            res = self._command(cmd, ctx)
             setup_results.append({k: res[k] for k in ("cmd", "exit_code", "timed_out", "started_at",
-                                                       "stopped_at", "stdout", "stderr")})
+                                                       "stopped_at", "stdout", "stderr", "location")})
             write_json(self.run_dir / "setup.json", setup_results)
             if res["exit_code"] != 0:
                 raise RuntimeError(f"setup command failed: {cmd['run']!r} exit={res['exit_code']}")
         write_json(self.run_dir / "setup.json", setup_results)
-        probes = {k: _probe(v) for k, v in DEFAULT_PROBES.items()}
-        probes["os"] = f"{platform.system()} {platform.release()} {platform.machine()}"
+        if self.environment_profile:
+            report = self.state.get("environment_report") or {}
+            actual_platform = report.get("platform") or {}
+            probes = {"os": " ".join(str(actual_platform.get(key) or "")
+                                     for key in ("system", "release", "machine")).strip()}
+            for tool in (report.get("inventory") or {}).get("tools", []):
+                if tool.get("status") == "observed":
+                    probes[tool["name"]] = (tool.get("stdout") or tool.get("stderr") or "").strip()[:160]
+            harness_facts = self._harness_facts(ctx)
+            if not harness_facts["available"]:
+                raise RuntimeError(f"harness {self.harness.binary!r} is unavailable in the selected environment")
+        else:
+            probes = {k: _probe(v) for k, v in DEFAULT_PROBES.items()}
+            probes["os"] = f"{platform.system()} {platform.release()} {platform.machine()}"
+            harness_facts = {"version_before": self.harness.version(), "available": self.harness.available()}
         checks, view = envcheck.inspect_cell(self.spec, self.cell, self.harness, self.auth, self.runner,
                                              ctx["workspace"], ctx, identities=True)
         snapshot = {
             "taken_at": now(), "probes": probes,
-            "harness": {"name": self.harness.name, "version_before": self.harness.version(),
-                        "available": self.harness.available(), "verified_live": self.harness.verified_live,
+            "harness": {"name": self.harness.name, **harness_facts, "verified_live": self.harness.verified_live,
                         "clean_supported": self.harness.clean_supported, "can_resume": self.harness.can_resume,
                         "telemetry": self.harness.telemetry},
             "product_version_before": self._product_version(ctx),
@@ -222,6 +294,8 @@ class Run:
             "cache_state": "isolated empty per-run package caches" if self.spec["trial"]["cache"] == "isolated"
                            else "shared caller caches (may be warm)",
             "config": self.cell["config"],
+            "execution_environment": self.state.get("environment_report"),
+            "agent_configuration": self.state.get("agent_configuration"),
         }
         write_json(self.run_dir / "environment.json", snapshot)
         if problems:
@@ -237,9 +311,30 @@ class Run:
         cmd = self.spec["trial"].get("product_version_cmd")
         if not cmd:
             return None
-        res = run_shell(cmd, ctx["workspace"], timeout=60, env=self._shell_env(ctx))
+        try:
+            res = context_shell(cmd, ctx, timeout=60, location="environment")
+        except RuntimeError as exc:
+            return f"unavailable ({type(exc).__name__})"
         text = (res["stdout"] or res["stderr"]).strip()
         return text.splitlines()[0][:160] if res["exit_code"] == 0 and text else f"unavailable (exit {res['exit_code']})"
+
+    def _harness_facts(self, ctx, refresh=False):
+        manifest = self.state.get("agent_configuration")
+        if manifest and not refresh:
+            return {"available": True, "version_before": manifest.get("capabilities", {}).get("version"),
+                    "checked_in": "agent environment during profile capability checks"}
+        binary = manifest.get("capabilities", {}).get("binary") if manifest else self.harness.binary
+        if not binary:
+            return {"available": False, "version_before": None}
+        available = context_shell(f"command -v {shlex.quote(binary)}", ctx, timeout=20, location="environment")
+        version = None
+        if available["exit_code"] == 0 and self.harness.version_argv:
+            argv = [binary, *self.harness.version_argv[1:]]
+            result = context_shell(shlex.join(argv), ctx, timeout=20, location="environment")
+            text = (result["stdout"] or result["stderr"]).strip()
+            version = text.splitlines()[0][:160] if result["exit_code"] == 0 and text else None
+        return {"available": available["exit_code"] == 0, "version_before": version,
+                "checked_in": "agent environment"}
 
     def stage_execute(self):
         ctx = self.ctx()
@@ -290,9 +385,9 @@ class Run:
         ran = Path(ctx["workspace"]).exists()
         if ran:
             for cmd in self.spec["teardown"]:
-                res = run_shell(cmd["run"], ctx["workspace"], timeout=cmd["timeout"], env=self._shell_env(ctx))
+                res = self._command(cmd, ctx)
                 results.append({**{k: res[k] for k in ("cmd", "exit_code", "timed_out", "started_at", "stopped_at",
-                                                        "stdout", "stderr")},
+                                                        "stdout", "stderr", "location")},
                                 "auth_errors": [] if cmd.get("allow_auth_errors")
                                 else envcheck.auth_error_lines(res["stdout"], res["stderr"])})
         write_json(self.run_dir / "teardown.json", results)
@@ -302,7 +397,13 @@ class Run:
             self.log(f"[{self.run_id}] teardown {self.state['teardown']['status']}: resources the task created may "
                      f"still exist; see teardown.json, then `ajx run <trial> --cells {self.cell['id']} --stages teardown,render`")
         env = read_json(self.run_dir / "environment.json", {})
-        env["harness_version_after"] = self.harness.version()
+        if self.environment_profile:
+            try:
+                env["harness_version_after"] = self._harness_facts(ctx, refresh=True)["version_before"]
+            except RuntimeError:
+                env["harness_version_after"] = None
+        else:
+            env["harness_version_after"] = self.harness.version()
         env["product_version_after"] = self._product_version(ctx) if Path(ctx["workspace"]).exists() else None
         write_json(self.run_dir / "environment.json", env)
 
@@ -387,6 +488,19 @@ class Run:
         self.state["extract"] = result["proc"]
         self.save()
 
+    def stage_release(self):
+        """Release the worker after narration; reporting consumes exported evidence."""
+        if not self.environment_profile or not self.state.get("environment"):
+            return
+        result = self.runner.release(self.ctx())
+        self.state["environment_cleanup"] = result
+        self.save()
+        environment = read_json(self.run_dir / "environment.json", {})
+        environment["environment_cleanup"] = result
+        write_json(self.run_dir / "environment.json", environment)
+        if result.get("confirmed") is not True:
+            raise RuntimeError(f"environment cleanup was not confirmed: {result.get('status', 'unknown')}")
+
     def stage_measure(self):
         measure_run(self.spec, self.cell, self.run_dir, self.state)
 
@@ -400,25 +514,38 @@ class Run:
         them; purge copied credentials; drop package caches; repoint evidence paths."""
         paths = self.state.get("paths", {})
         moved = dict(self.state.get("archived") or {})
+        if self.environment_profile and self.state.get("environment"):
+            self.stage_release()
         try:
             self.auth.cleanup(self.ctx())
         except Exception as exc:  # noqa: BLE001
             self.log(f"[{self.run_id}] auth cleanup failed: {exc}")
-        for key, dest in (("workspace", "workspace"), ("config_dir", "harness-config")):
+        for key, dest in (("workspace", "workspace"), ("config_dir", "harness-config"), ("home_dir", "agent-home")):
             src = paths.get(key)
-            if src and Path(src).exists():
+            owned = self.state.get("owned_paths")
+            if src and (owned is None or src in owned) and Path(src).exists():
                 target = self.run_dir / dest
                 if target.exists():
                     shutil.rmtree(target)
                 shutil.move(src, target)
                 moved[key] = str(target)
-        config_target = Path(moved.get("config_dir", ""))
-        if moved.get("config_dir") and config_target.exists():
+                self.state["archived"] = dict(moved)
+                self.save()  # Keep moved evidence findable even if a later cleanup step fails.
+        for key in ("config_dir", "home_dir"):
+            config_target = Path(moved.get(key, ""))
+            if not moved.get(key) or not config_target.exists():
+                continue
             for cred in config_target.rglob("*"):
                 if cred.is_file() and cred.name in CREDENTIAL_FILES:
                     cred.unlink()
-        if paths.get("cache_dir") and Path(paths["cache_dir"]).exists():
+        if paths.get("cache_dir") and Path(paths["cache_dir"]).exists() \
+                and (self.state.get("owned_paths") is None or paths["cache_dir"] in self.state["owned_paths"]):
             shutil.rmtree(paths["cache_dir"], ignore_errors=True)
+        host_context = self.run_dir / "host-environment"
+        if self.environment_profile and host_context.exists():
+            if host_context.is_symlink():
+                raise RuntimeError("host check context was replaced by a symlink; refusing to archive it")
+            shutil.rmtree(host_context)
         self.state["archived"] = moved
         self.save()
         # evidence pointers recorded before the move
@@ -446,10 +573,14 @@ class Run:
             self.log(f"[{self.run_id}] execute was interrupted; keeping its evidence, not re-running the task")
 
     def _ready(self, stage):
+        if stage == "execute":
+            return self.done("prepare")
         return all(self.status(p) in TERMINAL for p in PREREQS.get(stage, ()))
 
     def _skip(self, stage):
         st = self.status(stage)
+        if stage == "prepare" and self.environment_profile and st in TERMINAL:
+            return True  # A failed owned attempt is evidence, not permission to allocate a replacement.
         return st in ("done", "interrupted") or (stage == "execute" and st == "error")
 
     def go(self, stages=None, keep_workspace=False):
@@ -469,6 +600,10 @@ class Run:
                     self.log(f"[{self.run_id}] refusing to redo {late} after archive: the session can no longer be "
                              f"resumed from its original workspace; the existing journey is kept")
                     stages = [s for s in stages if s not in late]
+            elif self.state.get("environment_cleanup") and "narrate" in stages:
+                self.log(f"[{self.run_id}] refusing to resume narration after environment release; "
+                         "keeping the existing journey")
+                stages = [s for s in stages if s != "narrate"]
             for s in stages:  # explicitly requested post-processing stages are redone
                 self.state["stages"].pop(s, None)
             self.save()
@@ -495,6 +630,11 @@ class Run:
                 if stage == "prepare":
                     self._safe("archive")
                     break
+            except BaseException:
+                self.mark(stage, "interrupted", note="execution interrupted; keeping captured evidence")
+                if self.environment_profile:
+                    self._safe("release")
+                raise
         return self.state
 
     def _safe(self, stage):
@@ -514,21 +654,31 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
         raise specmod.SpecError(f"unknown stage(s) {unknown}; stages are {list(STAGES)}")
     plan = specmod.run_plan(spec, only_cells)
     parallel = int(spec["trial"]["parallel"])
-    meta = read_json(out / "matrix-plan.json", {}) or {}
-    meta.update({
-        "trial_id": spec["trial"]["id"], "product": spec["trial"]["product"], "trial_file": spec["path"],
-        "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
-        "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
-        "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
-        "wall_clock_comparable": parallel == 1, "planned_at": now(),
-    })
-    write_json(out / "matrix-plan.json", meta)
-    shutil.copy2(spec["task"]["prompt_path"], out / "task-prompt.md")
-    if dry_run:
-        return meta
     lock = acquire_lock(out)
     try:
-        runs = [Run(spec, c, r, log) for c, r in plan]
+        runs = [] if dry_run else [Run(spec, c, r, log) for c, r in plan]
+        meta = read_json(out / "matrix-plan.json", {}) or {}
+        meta.update({
+            "trial_id": spec["trial"]["id"], "product": spec["trial"]["product"], "trial_file": spec["path"],
+            "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
+            "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
+            "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
+            "wall_clock_comparable": parallel == 1, "planned_at": now(),
+            "configurations": [{
+                "cell": c["id"], "environment": c.get("environment"),
+                "agent_configuration": c.get("agent_configuration"),
+                "environment_profile_sha256": sha256_bytes(json.dumps(
+                    specmod.environment_for(spec, c), sort_keys=True).encode())
+                    if specmod.environment_for(spec, c) else None,
+                "agent_configuration_sha256": sha256_bytes(json.dumps(
+                    specmod.agent_configuration_for(spec, c), sort_keys=True).encode())
+                    if specmod.agent_configuration_for(spec, c) else None,
+            } for c in spec["cells"]],
+        })
+        write_json(out / "matrix-plan.json", meta)
+        shutil.copy2(spec["task"]["prompt_path"], out / "task-prompt.md")
+        if dry_run:
+            return meta
         if parallel == 1:
             for run in runs:
                 run.go(stages, keep_workspace)

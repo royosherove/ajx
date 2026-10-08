@@ -2,7 +2,8 @@
 
 A run context `ctx` (dict) handed to plugins contains:
   spec, cell, run_dir (Path), workspace (Path), config_dir (str, per-run, empty),
-  cache_dir, run_token, timeout, prompt_text, state (per-stage results so far),
+  cache_dir, home_dir (explicit environments), run_token, timeout, prompt_text,
+  state (per-stage results so far), environment_profile, agent_configuration_profile,
   env (dict: trial env + cell env + auth env, already resolved), unset_env (list),
   runner (Runner instance), auth (Auth instance or None).
 
@@ -154,13 +155,18 @@ class Harness:
         env = dict(ctx["env"])
         env.update(extra_env or {})
         drop = tuple(self.strip_env) + tuple(ctx.get("unset_env") or ())
-        full_env = child_env(env, drop)
+        environment = bool(ctx.get("environment_profile"))
+        full_env = ctx["runner"].child_env(env, drop) if environment else child_env(env, drop)
         full_argv = ctx["runner"].wrap(argv, ctx, env)
         if stage == "narrate" and timeout is None:
             timeout = ctx.get("narrate_timeout") or 900
         proc = run_streaming(full_argv, ctx["workspace"], ctx["run_dir"] / f"{stage}.raw.jsonl",
                              ctx["run_dir"] / f"{stage}.stderr.txt", timeout or ctx["timeout"],
                              env=full_env, stdin_data=stdin_data, reap_after_exit=(stage != "execute"))
+        if environment and proc["timed_out"]:
+            # Killing a Docker client does not stop the process inside its container.
+            # The provider owns cancellation and must not silently recreate the worker.
+            proc["environment_abort"] = ctx["runner"].abort(ctx)
         proc["argv"] = self.safe_argv(ctx, argv, hide=(stdin_data,))
         return proc
 

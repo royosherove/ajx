@@ -106,6 +106,14 @@ The [annotated trial file](skills/ajx/examples/trial.toml), [jq task](skills/ajx
 ajx report trials/my-cli/trial.toml --no-synthesis
 ```
 
+To compare starting environments or skill enablement, use
+[environment and agent profiles](skills/ajx/references/environments.md).
+Local and container backends support fresh per-attempt directories; container
+profiles enforce supported filesystem, network and resource restrictions.
+Codex, Claude Code and Kiro CLI profiles can disable optional skills or load
+explicit, content-pinned selections. The [CSV comparison example](skills/ajx/examples/environment-profiles/)
+shows a plain and a guided worker receiving the same task.
+
 ## Run and share deliberately
 
 Workers execute commands with their process permissions and may bypass interactive approvals. Use disposable workspaces and limited credentials, agree on task boundaries, and investigate cleanup failures. Agent and reporting calls may incur provider charges.
@@ -117,14 +125,14 @@ Reports and archived workspaces can contain private task content. Keep real runs
 The runtime uses the Python standard library. Offline tests use synthetic fixtures and fake agents:
 
 ```sh
-python3 -I skills/ajx/tests/test_ajx.py
+python3 -I -m unittest discover -s skills/ajx/tests -p 'test_*.py'
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [ARCHITECTURE.md](docs/ARCHITECTURE.md), the [coordinator skill](skills/ajx/SKILL.md), and the [reporting method](skills/ajx/references/reporting.md). The [release checklist](docs/releasing.md) covers later publication.
 
 Proposed future work, not implemented:
 
-- [Agent environments](docs/design/execution-environments.md): configurable local, container, or remote execution, optional AWS hosting, permissions, and per-test skills/plugins/hooks.
+- [Further environment support](docs/design/execution-environments.md): additional permission profiles, selected plugins/hooks, and remote execution with optional AWS hosting.
 - [Live dashboard](docs/design/live-dashboard.md): local or remote viewing of each matrix item's status, trace, and artifacts while a trial is running.
 - [CI/CD and improvement loops](docs/design/ci-and-improvement-loops.md): headless pipeline evaluation, acceptance gates, and bounded product improvement with fresh retests.
 

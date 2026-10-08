@@ -1,6 +1,12 @@
 # Proposal: configurable agent environments
 
-**Status: proposed; not implemented.** Reviewed on 2026-10-07.
+**Status: design, partially implemented.** Reviewed on 2026-10-07.
+
+The initial local/container backends and explicit skill profiles are documented
+in the [implementation guide](../../skills/ajx/references/environments.md).
+That guide and the executable examples define the current supported interface.
+Additional permissions, selected plugins/hooks and remote backends below remain
+future work; the illustrative contract is not a runnable configuration.
 
 AJX should let a product team ask: **Can agents install and use this product
 successfully across the environments and agent configurations our users have?**
@@ -18,10 +24,11 @@ backends. AWS is an optional hosting choice. A profile can attach to an existing
 environment or request a temporary one, with explicit ownership and cleanup.
 The purpose is to compare product usability under declared agent conditions.
 
-Today AJX has local, Docker, and wrapper runners, setup/verification/teardown
-checks, and recorded evidence. It does not provision these proposed environments
-or enforce the policies below. An isolated harness configuration is not a
-filesystem sandbox.
+AJX has local/container environment profiles alongside its legacy local, Docker,
+and wrapper runners. The container backend enforces its supported policy and
+records probes; the local backend remains observational. The broader policies
+and backends in this design are not all implemented. An isolated harness
+configuration is not a filesystem sandbox.
 
 ## Environment profile and execution backend
 
@@ -461,4 +468,5 @@ The pilot is complete only when an authorized live trial demonstrates:
   qualified per adapter, with enabled/disabled behavior, dependency resolution,
   and actual-use telemetry checked where available.
 
-This is a design proposal; it does not create or modify an execution environment.
+This document describes the longer-term design. Use the implementation guide
+for the supported profile schema and runtime boundaries.

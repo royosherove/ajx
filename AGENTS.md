@@ -6,9 +6,11 @@ AJX v1 is the first public version. Keep public docs focused on user needs and
 shipped behavior; exclude private case studies, internal planning, and
 unsupported performance or launch claims.
 
-Run `python3 -I skills/ajx/tests/test_ajx.py` for relevant code changes.
+Run `python3 -I -m unittest discover -s skills/ajx/tests -p 'test_*.py'` for relevant code changes.
 Use synthetic fixtures and fake harnesses. Do not run live agent or cloud trials
 as part of ordinary tests.
+Container integration uses a preloaded image selected by
+`AJX_TEST_CONTAINER_IMAGE`; it runs synthetic processes without model credentials.
 
 Preserve evidence provenance, honest limitations, task/reporting separation,
 resume semantics, and credential cleanup. Keep the runtime standard-library-only

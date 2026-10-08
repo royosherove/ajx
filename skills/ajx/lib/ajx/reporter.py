@@ -32,7 +32,8 @@ def _reporter_ctx(spec, run_dir, stage):
     """Minimal ctx for a reporter harness call (clean, isolated, no project files visible)."""
     rep = spec["reporter"]
     cell = {"id": "reporter", "harness": rep["harness"], "model": rep.get("model"), "effort": rep.get("effort"),
-            "config": "clean", "args": [], "env": {}, "auth": rep.get("auth"), "runner": None}
+            "config": "clean", "args": [], "env": {}, "auth": rep.get("auth"), "runner": None,
+            "environment": None, "agent_configuration": None}
     from . import spec as specmod
     auth = specmod.auth_for(spec, cell)
     runner = plugins.get("runner", "local")()

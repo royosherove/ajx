@@ -24,6 +24,7 @@ Reuse answers already in the conversation. Ask only what changes the trial, usin
 - **Task**: propose 2 or 3 candidate outcomes at different depths (local-only, with a real deploy, end to end with cleanup). Each must have an observable result a script can check. The user picks or edits. Do not add defect hunting, AJX words, or hints to the prompt.
 - **Customer materials**: what the prompt points the agent to (README URL, docs). Only these go in the prompt.
 - **Boundaries**: spend cap, timeout, what must be cleaned up, whether a human can answer questions (default: no, headless).
+- **Environment and skills**: starting tools, filesystem/directory access, network and installation privileges; optional skill selections for each cell. Use named local/container environments and agent profiles from [references/environments.md](references/environments.md). Local profiles are observational; supported container restrictions are enforced and probed. Skill modes are none/selected/snapshot of explicit directories; optional plugins/hooks currently support none only. Reject unsupported controls rather than translating them into prompt instructions. Keep the reporter configuration fixed.
 - **Account the worker acts in** (when the task touches a cloud or SaaS account): profile/project/subscription and region. Before offering a profile as an option, check that it authenticates with the CLI the task uses (`aws sts get-caller-identity --profile <name>`, `gcloud auth list`, `az account show`), and offer only profiles that do, each with the account it resolves to. Never offer an unchecked profile.
 - **Model credentials**, asked separately from the account above: which provider each harness uses for its model (`ajx plugins` lists auth types; trial `[auth.*]` profiles reference env vars as `${VAR}`; nothing secret is stored). When the task and the model use the same cloud (Claude Code on Bedrock testing an AWS product), give the model its own explicit profile (`claude-bedrock` with its own `AWS_PROFILE`) and keep the task account out of `[env]`: name it in the prompt and in `--profile` flags.
 - **Matrix**: which harnesses and, per harness, which models; configs (`clean` vs `user`); repetitions. "Claude Code with sonnet and opus, codex with example-model-a and example-model-b" is two `[[cells]]`, one with `models = ["sonnet", "opus"]` and one with `models = ["example-model-a", "example-model-b"]`: one cell per model, ids `<cell>-<model>`, and `--cells <cell>` selects the group. Pass model names exactly as the user says them; the harness resolves them and fails at run time on an unknown one. A cell without a model runs the harness default, which with `config = "user"` or `auth = "inherit"` can come from the user's own harness settings; say so. Run `ajx plugins` to show what is installed and which adapters are verified live. Prefer one clean cell using the current host's CLI when an adapter is available, with repetitions 1; otherwise choose an installed adapter with the user.
@@ -36,6 +37,14 @@ Do not look up the product's docs, issues, or defects before the run; that knowl
 
 `ajx init <trial-dir> --product <name> --harness <chosen-cli>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the interview (see `examples/trial.toml` for every option). Keep the prompt exactly as the user approved it; its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources.
 
+For explicit environment/agent profiles, see `examples/environment-profiles/`.
+Select `environment` and `agent_configuration` per cell, or set trial defaults.
+Use `config = "clean"` and isolated caches. Keep source skills outside the worker
+fixture; AJX copies their pinned snapshots. Setup/preflight/teardown default to
+the selected environment, while verification defaults to the host. Set shell
+command `location` explicitly when necessary. A check inside the environment
+shares its modified tools and files; report that limit.
+
 For a task that uses an account (see `examples/aws-cloud/`): set `[task] identity_cmd` to show the account the way the agent is told to use it (`aws sts get-caller-identity --profile <task profile>`); add a `[[preflight]]` that authenticates with the credentials verify and teardown use (no worker starts until every preflight passes); have the prompt ask for a tag and tear down by that tag; let teardown commands fail instead of `set +e ... true`. A preflight, verify check or teardown that is meant to hit a denial ("the bucket is private") sets `allow_auth_errors = true` so its credential errors are not counted.
 
 Run `ajx validate trial.toml` then `ajx doctor trial.toml`. Doctor prints, per cell, the harness auth identity (the model's credentials, nothing more), the task identity as the worker's own tool shell resolves it (same env, `$SHELL -c`, harness settings env), the default AWS identity a command without `--profile` acts as (with Bedrock, usually the model's own account), and warnings when an `[env]` value is replaced before the agent sees it or shares variables with the model's credentials; then the task identity and the `[[preflight]]` results in the verify/teardown shell. Show the user the task identity and the run plan and get an explicit go: workers run with all tool permissions auto-approved. Never present the harness auth identity as the account the worker acts in. Do not ask for the go while doctor prints NOT READY. Resolve each env warning in the trial; when one comes from the user's own machine (shell startup files, harness settings), tell the user what the worker will see instead (for example: a command without `--profile` acts as the shell's `AWS_PROFILE`) before asking. Refuse to start against a task identity the user has not confirmed is a sandbox.
@@ -44,15 +53,27 @@ Run `ajx validate trial.toml` then `ajx doctor trial.toml`. Doctor prints, per c
 
 `ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` after editing a prompt; `prepare`/`execute` cannot be redone, add a repetition instead), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
 
+Profiled runs record the actual environment and extension manifest. `doctor`
+checks configuration/backend prerequisites; `prepare` checks the real runtime
+before the worker starts. A missing/expired container is never recreated on
+resume, and a changed profile or prompt requires a new output directory.
+The `release` stage follows narration and precedes extraction; a full run releases
+its container even with `--keep-workspace`. Failed release is a separate error,
+retriable with the unchanged trial and `--stages release,render`.
+
 A teardown that ran is not a teardown that cleaned up: `ajx status` marks one that failed `FAIL`, printed credential or permission errors `AUTH` (even with exit 0), or never ran `SKIP`, and `run`/`status` then exit 1. Tell the user at once that resources may still exist, and after the credentials are fixed rerun it with `ajx run trial.toml --cells <cell> --stages teardown,render` (render refreshes `run.json` and the reports).
 
-Per run the stages are: prepare (fresh unnamed workspace, isolated harness config and caches where supported, `[[preflight]]`, setup, environment snapshot) -> execute (worker gets only the task prompt) -> verify (ajx checks, own window; servers the agent left running are still up) -> teardown (then leftover processes are reaped) -> normalize (events E-###, digest) -> narrate (resume the worker's own session with tools disabled, fed a digest *without* the verification results so its declared outcome stays its own; fallback: labeled reconstruction) -> extract (fresh reporter session with the full digest, schema-validated asks, event refs checked) -> measure -> render -> archive (workspace and harness config moved under the run dir, copied credentials purged).
+Per run the stages are: prepare (fresh directories, environment/profile checks, preflight and setup) -> execute (task prompt only) -> verify (separate check window) -> teardown -> normalize (events and digest) -> narrate (resume with adapter restrictions; labeled reconstruction if unavailable) -> release (owned environment) -> extract (fixed reporter, schema-validated asks and event references) -> measure -> render -> archive (workspace/configuration/home, with copied credentials purged).
 
 One `ajx run` per matrix directory: a `.lock` file refuses a second concurrent run (which would otherwise mark live workers interrupted). A stale lock from a dead process is replaced automatically.
 
 ### 4. Deliver
 
 Open `<output>/index.html` (asks by matrix configuration), `runs/<run>/report.html` (asks and verification), and `runs/<run>/pretty-journey.html` (event map, happenings table, and first-person account). Summarize for the user: verified vs declared outcome per run, wall clock, tool calls, failed calls, tokens (with their coverage status), gates, teardown status, and the top asks with their IDs and evidence anchors. A verify check that printed credential errors measured ajx's credentials, not the agent's work; say so next to its result. Quote the comparability notes (prompt hash, versions, concurrency, tokenizers). State what was not measured. Point to `pretty-journey.html`, `journey.md`, `asks.md`, `run.json`, `measurements.json` per run and `matrix.md`/`matrix.json`.
+
+For profiles, include backend, enforced/observed/unsupported controls, selected
+skill hashes, unknown or observed activation, and environment cleanup. Link
+`environment.json` and `agent-configuration.json`; enabled does not mean used.
 
 Deliver files locally only. Filing tickets, publishing, or re-running paid trials needs the user's scope.
 
@@ -62,7 +83,7 @@ Deliver files locally only. Filing tickets, publishing, or re-running paid trial
 - **Reporter adapter**: implement `Harness.report(ctx, prompt, schema)` and set `can_report = True`. It must start a fresh session with restricted tools and return `{proc, text, structured}`. AJX validates the bundled response schemas and cleans up copied reporter credentials.
 - **New auth target**: `@register("auth", "<name>")` subclass of `Auth` (env/unset/args/identity, plus `model_env` for the variables its provider reads so doctor can flag collisions), or use `type = "env"` in a `[auth.*]` profile. Secrets are referenced as `${VAR}`; recorded argv and environment snapshots carry names only.
 - Plugin files are ordinary Python executed by `ajx` (including `<trial-dir>/plugins/`); treat a trial directory from someone else like any other code you run.
-- **New execution environment**: `@register("runner", ...)` (local, docker, wrapper exist).
+- **New execution environment**: extend the profile/capability lifecycle in `lib/ajx/environments.py`. Legacy `@register("runner", ...)` wrappers remain available separately.
 - **New verification type**: `@register("check", ...)` (shell, file_exists, http exist).
 
 Built-in harnesses: `claude-code` and `kiro-cli` are verified live; `codex`, `gemini-cli`, `cursor-agent`, `copilot-cli` follow their documented headless JSON output and are marked unverified until a live run confirms them (run.json records this).

@@ -10,7 +10,7 @@ from pathlib import Path
 from ..base import (AWS_CREDENTIAL_ENV, Auth, Check, Harness, Runner, auth_args, empty_telemetry, fill, read_jsonl,
                     resolve, version_of, which)
 from ..plugins import names as plugin_names, register
-from ..util import fill_all, run_shell
+from ..util import context_shell, fill_all, run_shell
 
 
 # ----------------------------------------------------------------------------- auth
@@ -273,7 +273,7 @@ class ShellCheck(Check):
     """run = "<shell command>"; expect_exit (default 0); expect_stdout = "<regex>" (optional)."""
 
     def run(self, check, ctx):
-        res = run_shell(check["run"], ctx["workspace"], timeout=check["timeout"], env=_env_for_checks(ctx))
+        res = context_shell(check["run"], ctx, timeout=check["timeout"], location=check.get("location", "host"))
         passed = (not res["timed_out"]) and res["exit_code"] == int(check.get("expect_exit", 0))
         if passed and check.get("expect_stdout"):
             passed = re.search(check["expect_stdout"], res["stdout"], re.M) is not None

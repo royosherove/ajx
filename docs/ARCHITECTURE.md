@@ -21,6 +21,34 @@ One registry (`plugins.py`) with four kinds, all discovered from `lib/ajx/builti
 
 Auth values reference the caller's environment as `${VAR}`; only variable names are ever recorded.
 
+## Environment and agent profiles
+
+Named `[environments.NAME]` and `[agent_configurations.NAME]` profiles are
+selected by each cell or by trial defaults. `environments.py` validates supported
+permissions and manages a local process environment or a persistent local Docker
+container. It persists ownership before creation, records capability probes,
+keeps the environment through narration, and releases only its own resources.
+Local profiles do not enforce a filesystem or network sandbox. Container profiles
+use pinned images, bounded lifetimes and explicit mounts.
+
+`agent_configuration.py` snapshots and hashes explicitly selected skill trees,
+checks harness controls in the execution environment, and verifies prepared
+content before worker/narrator launches. Optional plugins/hooks currently support
+`none`. Reporter contexts have no worker profile. Runtime manifests distinguish
+installed/enabled configuration from unknown or observed activation.
+
+Profiled workers receive a minimal process environment plus declared variables
+and required auth variables. Setup, preflight and teardown default to the
+environment; verification defaults to the host. Shell commands can explicitly
+select `location`. Host commands get private configuration directories and
+coordinator tool lookup, excluding worker-writable search paths. Legacy runner
+behavior remains unchanged.
+
+`doctor` checks profiles and backend prerequisites without provisioning.
+`prepare` performs actual inventory and permission checks before the task.
+The [implementation guide](../skills/ajx/references/environments.md) describes the
+supported schema, auth requirements and limits.
+
 ## Credentials: three environments (`envcheck.py`)
 
 A cloud task's credentials pass through three environments that can disagree, and a trial is only sound when doctor shows what each one resolves to:
@@ -35,18 +63,19 @@ A cloud task's credentials pass through three environments that can disagree, an
 
 ## Run lifecycle (resumable, per run dir `runs/<cell>-r<n>/state.json`)
 
-Rules: a stage runs once its prerequisites reached a terminal status (`done`, `error`, `interrupted`) and degrades gracefully, so a failed or cut-off task still yields `journey.md` (possibly a labeled stub), `asks.md` (with an explicit extraction status), `run.json` and `measurements.json`. `execute` is never retried implicitly; a worker found `running` on resume is marked `interrupted` and its evidence kept. `prepare`/`execute` cannot be redone with `--stages`. Recorded argv is redacted (prompt marker, auth values). Session ids are chosen before launch where the harness allows, so a crash still leaves a findable transcript.
+Rules: post-processing stages can run once their prerequisites reached a terminal status (`done`, `error`, `interrupted`) and degrade gracefully. Execution requires successful preparation. A failed or cut-off task can still yield `journey.md` (possibly a labeled stub), `asks.md` (with an explicit extraction status), `run.json` and `measurements.json`. `execute` is never retried implicitly; a worker found `running` on resume is marked `interrupted` and its evidence kept. `prepare`/`execute` cannot be redone with `--stages`; a failed profiled preparation is also preserved on resume. Recorded argv is redacted (prompt marker, auth values). Session ids are chosen before launch where the harness allows, so a crash still leaves a findable transcript.
 
-1. **prepare**: random unnamed `workspace`, `config_dir`, `cache_dir` under `workspace_root`; fixture copy; `[[preflight]]` in the verify/teardown env (exit 0 and no credential errors, or the stage fails and no worker starts; `preflight.json`); `[[setup]]`; environment snapshot (tool probes, harness and product versions, auth description and model identity under the harness's effective env, task identity from the agent's tool shell, env overrides and collisions by name and source, runner, cache state, caller env var names that look credential-like).
-2. **execute**: `harness.plan()` facts (session id) saved first; worker launch with the prompt on stdin or argv; stdout lines stamped with arrival time (`execute.raw.jsonl`), stdin fed from a thread; process group kill on timeout and again after exit so leftover servers die; stop reason (`exit`, `exit_N`, `timeout`, `interrupted`) recorded separately from outcome.
-3. **verify**: `[[verify]]` checks in their own time window -> `verify.json` (k/m passed; outcome succeeded/partial/failed/not_run). Checks whose stderr shows credential or permission errors are listed in `checks_with_auth_errors`, labeled in the digest and in `run.json` limitations: pass or fail, they measured ajx's credentials (stdout is left alone: it is often the product's own output). Verify, preflight and teardown share one env (the caller's, minus the auth profile's `unset`, plus ajx's). Any of them can set `allow_auth_errors = true` for a command that expects a denial.
+1. **prepare**: random unnamed `workspace`, `config_dir`, `cache_dir` under `workspace_root`, plus `home_dir` for explicit environments; fixture copy; durable environment plan, preparation and skill snapshots; auth preparation; `[[preflight]]` at its declared location (exit 0 and no credential errors, or no worker starts); `[[setup]]`; environment snapshot with tool and version probes, profile evidence and credential checks.
+2. **execute**: `harness.plan()` facts (session id) saved first; worker launch with the prompt on stdin or argv; stdout lines stamped with arrival time (`execute.raw.jsonl`), stdin fed from a thread; process group kill on timeout, with container-wide cancellation for managed containers. Servers started by the worker may survive a normal exit for verification; teardown reaps local descendants and environment release removes container workers. Stop reason (`exit`, `exit_N`, `timeout`, `interrupted`) is recorded separately from outcome.
+3. **verify**: `[[verify]]` checks in their own time window -> `verify.json` (k/m passed; outcome succeeded/partial/failed/not_run). Checks whose stderr shows credential or permission errors are listed in `checks_with_auth_errors`, labeled in the digest and in `run.json` limitations (stdout is left alone: it is often the product's own output). Explicit environments use declared variables and required auth variables; verification defaults to the host, while preflight and teardown default to the environment. Legacy runners retain their inherited check environment. Any command can set `allow_auth_errors = true` when a denial is expected.
 4. **teardown**: always; `$AJX_RUN_TOKEN` exported; versions re-probed for drift. Also forced on the next invocation if a crash skipped it. Output is scanned for credential errors (heuristic phrases from cloud and SaaS CLIs), so `state.json`/`run.json` record `teardown.status` = ok | failed | auth_errors | skipped regardless of exit code; `ajx status` shows `FAIL`/`AUTH`/`SKIP` instead of `ok`, `run`/`status` exit 1, and the report carries a "Cleanup not confirmed" banner. `--stages teardown,render` redoes it and refreshes `run.json` and the reports (the worker's process group is signalled only once, then marked `reaped`, so a redo never hits a reused pid). A prepare retried after a failure (a preflight, a setup command) clears the first attempt's archive state, so the retry gets fresh dirs and is archived in turn.
 5. **normalize**: harness adapter -> normalized telemetry; `E-###` ids by timestamp; isolation scan of tool inputs (own paths scrubbed first); `digest.md` (factual timeline bounded to ~300 rows for long tasks, final message verbatim, verification results labeled as reporter work, limitations).
 6. **narrate**: resume with the adapter's tool restrictions, prompt = `prompts/narrate.md` + `digest.narrator.md` (the digest without verification results or isolation flags, so the agent's "outcome I declared" is not colored by checks it never ran) -> `journey.md` with a provenance header identifying the restrictions. Codex uses its read-only sandbox; this is not a guarantee that no tool runs. Narrate tokens are a separate measurement session (new message ids only). Cannot be redone after archive (the original cwd and config are gone).
-7. **extract**: one configured reporter harness (Claude Code, Codex, Kiro CLI, or a plugin), with a fresh restricted session. Native schema output is requested where supported; every response is also validated locally against `schemas/asks.schema.json`. Event refs are validated; costs are attached per ask by `evidence.ask_costs` (shared events listed, counted once); errata is appended to the journey, never merged. Copied reporter credentials are cleaned up even when a call fails. A reporter failure is recorded as `extraction_status` and rendered as a reporting failure, never as a clean run.
-8. **measure**: `measure.py` validates a manifest with sessions execute(task), verify(verification), narrate(report), extract(report) -> `measurements.json`. Reconciled results are in `phase_measurements`; calculation failures are recorded in `measurement_error`.
-9. **render**: `run.json` (schema_version 1, including auth/runner/stages), `asks.md` (prioritized table, alternative rankings by measured metrics with unranked-missing, detail, strengths, gates, method), `report.html` (asks first), and `pretty-journey.html` (SVG event map, filterable happenings, and the original account). `report_ui.py` escapes evidence and renders both views; `assets/report.css` and `assets/report.js` are embedded so reports work offline. The map uses cited narrative/ask annotations and recorded event order; it does not infer unseen branches. All vocabulary labels remain available in the legend.
-10. **archive**: `auth.cleanup()` removes credentials an auth profile copied for the run; workspace and harness config moved under the run dir; known credential files purged from the moved config; caches deleted; evidence paths repointed; `workspace_root` left empty so later workers cannot discover siblings.
+7. **release**: for environment profiles, stop/remove the owned environment after narration. Independent reporting uses captured evidence. Cleanup failure is recorded separately from task success. Missing containers are never recreated on resume. Legacy runners have no managed resource to release.
+8. **extract**: one configured reporter harness (Claude Code, Codex, Kiro CLI, or a plugin), with a fresh restricted session. Native schema output is requested where supported; every response is also validated locally against `schemas/asks.schema.json`. Event refs are validated; costs are attached per ask by `evidence.ask_costs` (shared events listed, counted once); errata is appended to the journey, never merged. Copied reporter credentials are cleaned up after each call. A reporter failure stays an incomplete review.
+9. **measure**: `measure.py` validates sessions execute(task), verify(verification), narrate(report), extract(report) -> `measurements.json`. Reconciled results are in `phase_measurements`; calculation failures are recorded in `measurement_error`.
+10. **render**: `run.json`, `asks.md`, `report.html` and `pretty-journey.html` include environment and agent-profile evidence alongside asks, measurements, the event map and happenings table. Reports remain self-contained and escape untrusted content; no unseen branches or skill invocations are inferred.
+11. **archive**: release any remaining owned environment; remove copied credentials; move workspace, harness config and agent home under the run directory; purge known credential files; delete caches; update evidence paths. Local isolation limits remain recorded.
 
 A `.lock` (pid, host) in the matrix dir makes `ajx run` single-instance per matrix; stale locks from dead pids are replaced. `report_instructions_visible_during_task` is derived, not assumed: a Claude Code `config="user"` worker whose session lists an `ajx*` skill is recorded as evaluation-aware.
 
@@ -75,9 +104,8 @@ A cell may list `models = [...]`: it becomes one cell per model (`<id>-<model>`,
 ## Proposed extensions
 
 [Configurable agent environments](design/execution-environments.md) describes
-future local, container, or remote execution profiles, optional AWS hosting,
-permissions, per-test skills/plugins/hooks, and independent completion checks.
-Environment profiles, extension controls, and sandbox enforcement are proposed.
+the longer-term design beyond the initial implementation: additional permission
+profiles, selected plugins/hooks, remote backends and optional AWS hosting.
 
 [Live run dashboard](design/live-dashboard.md) describes a future local or remote
 view of matrix progress, incremental traces, and artifacts before completion,

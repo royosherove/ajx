@@ -1,5 +1,6 @@
 """Trial file (trial.toml) loading, validation and plugin resolution."""
 
+import os
 import random
 import re
 import shlex
@@ -35,7 +36,7 @@ def load(path):
     _need(trial.get("product"), "trial.product is required")
     defaults = {"product_version_cmd": None, "workspace_root": "/tmp", "repetitions": 1, "parallel": 1,
                 "timeout_seconds": 1800, "max_budget_usd": None, "order_seed": 0, "cache": "isolated",
-                "narrate_timeout_seconds": 900}
+                "narrate_timeout_seconds": 900, "environment": None, "agent_configuration": None}
     for k, v in defaults.items():
         trial.setdefault(k, v)
     trial.setdefault("output_dir", str(base / "ajx-reports" / trial["product"] / trial["id"]))
@@ -96,6 +97,11 @@ def load(path):
             if key == "verify":
                 _need(entry["type"] in plugins.names("check"),
                       f"verify[{i}].type {entry['type']!r} unknown; available {plugins.names('check')}")
+            entry.setdefault("location", "host" if key == "verify" else "environment")
+            _need(entry["location"] in ("host", "environment"),
+                  f"{key}[{i}].location must be host|environment")
+            _need(entry["type"] == "shell" or entry["location"] == "host",
+                  f"{key}[{i}]: only shell checks can use location='environment'")
             out.append(entry)
         return out
 
@@ -108,6 +114,16 @@ def load(path):
         _need(conf.get("type") in plugins.names("auth"),
               f"auth.{name}.type must be one of {plugins.names('auth')}")
     runner = dict(raw.get("runner") or {"type": "local"})
+    from . import agent_configuration, environments
+    profiles = {}
+    for key, module in (("environments", environments), ("agent_configurations", agent_configuration)):
+        table = raw.get(key, {})
+        _need(isinstance(table, dict), f"{key} must contain named profile tables")
+        _need(all(_ID.fullmatch(str(name)) for name in table), f"{key} names must be short lowercase slugs")
+        try:
+            profiles[key] = module.normalize_profiles(table, base)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(str(exc)) from exc
 
     reporter = dict(raw.get("reporter") or {})
     reporter.setdefault("harness", None)
@@ -120,7 +136,9 @@ def load(path):
         "setup": commands("setup"), "verify": commands("verify"), "teardown": commands("teardown"),
         "preflight": commands("preflight"),
         "reporter": reporter, "env": {str(k): str(v) for k, v in (raw.get("env") or {}).items()},
-        "adapters": adapters, "auth": auth_profiles, "runner": runner, "cells": [],
+        "adapters": adapters, "auth": auth_profiles, "runner": runner, "cells": [], **profiles,
+        "_configuration_environment": environments.normalize_profiles(
+            {"ajx-local": {"backend": "local"}}, base)["ajx-local"],
     }
 
     seen = set()
@@ -130,10 +148,21 @@ def load(path):
         _need(cell.get("harness") in harness_names(spec),
               f"cells[{i}].harness {cell.get('harness')!r} unknown; available {harness_names(spec)}")
         for k, v in {"model": None, "effort": None, "config": "clean", "args": [], "env": {},
-                     "auth": None, "runner": None}.items():
+                     "auth": None, "runner": None, "environment": trial["environment"],
+                     "agent_configuration": trial["agent_configuration"]}.items():
             cell.setdefault(k, v)
         _need(cell["config"] in CONFIGS, f"cells[{i}].config must be clean|user")
-        _need(isinstance(cell["args"], list), f"cells[{i}].args must be a list")
+        _need(isinstance(cell["args"], list) and all(isinstance(a, str) for a in cell["args"]),
+              f"cells[{i}].args must be a list of strings")
+        for key, table in (("environment", "environments"), ("agent_configuration", "agent_configurations")):
+            ref = cell[key]
+            _need(ref is None or (isinstance(ref, str) and ref in spec[table]),
+                  f"cells[{i}].{key} must name a [{table}.NAME] profile")
+        if cell["environment"] or cell["agent_configuration"]:
+            _need(not cell["runner"] and "runner" not in raw,
+                  f"cells[{i}]: environment/agent profiles and legacy runner settings cannot be combined")
+            _need(trial["cache"] == "isolated", f"cells[{i}]: environments require trial.cache='isolated'")
+            _need(cell["config"] == "clean", f"cells[{i}]: environments require config='clean'")
         for one in _expand_models(cell, i):
             _need(one["id"] not in seen, f"duplicate cell id {one['id']}")
             seen.add(one["id"])
@@ -150,7 +179,18 @@ def load(path):
           f"reporter.harness {reporter['harness']!r} has no restricted reporter adapter; "
           "choose claude-code, codex, kiro-cli, or a plugin implementing report()")
     for cell in spec["cells"]:
-        auth_for(spec, cell)  # validates
+        auth = auth_for(spec, cell)
+        environment = environment_for(spec, cell)
+        configuration = agent_configuration_for(spec, cell)
+        try:
+            if environment:
+                environments.validate_for_cell(
+                    environment, {**cell, "env": worker_env(spec, cell, auth), "unset_env": auth.unset()})
+            if configuration:
+                agent_configuration.validate_for_cell(
+                    configuration, cell, harness_for(spec, cell["harness"]), auth, environment)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(f"cell {cell['id']}: {exc}") from exc
     auth_for(spec, {"id": "reporter", "harness": reporter["harness"], "auth": reporter.get("auth")})
     return spec
 
@@ -182,6 +222,12 @@ def worker_env(spec, cell, auth):
     env = dict(spec["env"])
     env.update({k: str(v) for k, v in (cell.get("env") or {}).items()})
     env.update(auth.env())
+    if environment_for(spec, cell):
+        # Selecting an auth profile authorizes its explicitly required variables,
+        # without inheriting unrelated caller credentials or harness settings.
+        for name in auth.required_env:
+            if name not in env and name in os.environ:
+                env[name] = os.environ[name]
     return env
 
 
@@ -212,10 +258,28 @@ def auth_for(spec, cell, override=None):
 
 
 def runner_for(spec, cell):
+    environment = environment_for(spec, cell)
+    if environment:
+        from .environments import EnvironmentRunner
+        return EnvironmentRunner(environment)
     conf = cell.get("runner") or spec.get("runner") or {"type": "local"}
     if isinstance(conf, str):
         conf = {"type": conf}
     return plugins.get("runner", conf.get("type", "local"))(conf)
+
+
+def environment_for(spec, cell):
+    ref = cell.get("environment", spec["trial"].get("environment"))
+    if ref:
+        return (spec.get("environments") or {}).get(ref)
+    if cell.get("agent_configuration", spec["trial"].get("agent_configuration")):
+        return spec.get("_configuration_environment")
+    return None
+
+
+def agent_configuration_for(spec, cell):
+    ref = cell.get("agent_configuration", spec["trial"].get("agent_configuration"))
+    return (spec.get("agent_configurations") or {}).get(ref) if ref else None
 
 
 def run_plan(spec, only_cells=None):

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from ..base import (AWS_CREDENTIAL_ENV, auth_args, Auth, Harness, empty_telemetry, excerpt, read_jsonl, stream_records,
                     summarize_input)
+from ..agent_configuration import (configuration, ensure_reporter_context, launch_args, launch_binary,
+                                   launch_context, launch_env)
 from ..plugins import register
 
 MANAGED_SETTINGS = (Path("/Library/Application Support/ClaudeCode/managed-settings.json") if sys.platform == "darwin"
@@ -39,10 +41,14 @@ class ClaudeCode(Harness):
                  "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SAFE_MODE", "CLAUDE_CODE_SIMPLE")
 
     def _isolated(self, ctx):
+        if configuration(ctx):
+            return True
         auth = ctx.get("auth")
         return ctx["cell"]["config"] == "clean" and (auth is None or auth.isolates_config)
 
     def clean_env(self, ctx):
+        if configuration(ctx):
+            return launch_env(ctx, self)
         env = {"DISABLE_AUTOUPDATER": "1"}
         if self._isolated(ctx):
             env["CLAUDE_CONFIG_DIR"] = ctx["config_dir"]
@@ -81,9 +87,9 @@ class ClaudeCode(Harness):
             args += ["--model", cell["model"]]
         if cell.get("effort"):
             args += ["--effort", cell["effort"]]
-        if cell["config"] == "clean":
+        if cell["config"] == "clean" and not configuration(ctx):
             args += ["--safe-mode", "--strict-mcp-config"]
-        return args + auth_args(ctx)
+        return args + auth_args(ctx) + launch_args(ctx, self)
 
     def plan(self, ctx):
         """Session id is chosen up front so a crash mid-run still leaves a findable transcript."""
@@ -91,22 +97,22 @@ class ClaudeCode(Harness):
 
     def execute(self, ctx):
         sid = self.stage_state(ctx, "execute").get("session_id") or str(uuid.uuid4())
-        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--session-id", sid,
+        argv = [launch_binary(ctx, self), "-p", "--output-format", "stream-json", "--verbose", "--session-id", sid,
                 "--permission-mode", ctx["cell"].get("permission_mode") or "bypassPermissions"]
         argv += self._common(ctx)
         budget = ctx["spec"]["trial"].get("max_budget_usd")
         if budget:
             argv += ["--max-budget-usd", str(budget)]
         argv += list(ctx["cell"].get("args") or [])
-        proc = self.run(ctx, argv, "execute", stdin_data=ctx["prompt_text"], extra_env=self.clean_env(ctx))
+        proc = self.run(launch_context(ctx), argv, "execute", stdin_data=ctx["prompt_text"], extra_env=self.clean_env(ctx))
         proc.update(session_id=sid, config_isolated=self._isolated(ctx))
         return proc
 
     def narrate(self, ctx, prompt):
         sid = self.stage_state(ctx, "execute").get("session_id")
-        argv = ["claude", "-p", "--resume", sid, "--fork-session", "--tools", "",
+        argv = [launch_binary(ctx, self), "-p", "--resume", sid, "--fork-session", "--tools", "",
                 "--output-format", "stream-json", "--verbose"] + self._common(ctx)
-        proc = self.run(ctx, argv, "narrate", stdin_data=prompt, extra_env=self.clean_env(ctx))
+        proc = self.run(launch_context(ctx), argv, "narrate", stdin_data=prompt, extra_env=self.clean_env(ctx))
         proc.update(tools_disabled=True)
         for _, ev, _ in stream_records(ctx["run_dir"] / "narrate.raw.jsonl"):
             if ev and ev.get("type") == "system" and ev.get("subtype") == "init":
@@ -114,6 +120,7 @@ class ClaudeCode(Harness):
         return proc
 
     def report(self, ctx, prompt, schema=None):
+        ensure_reporter_context(ctx)
         argv = ["claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--tools", "", "--session-id", str(uuid.uuid4())] + self._common(ctx)
         if schema:
