@@ -343,19 +343,25 @@ class HttpCheck(Check):
     def run(self, check, ctx):
         from ..util import now
         started = now()
+        isolated = bool(ctx.get("environment_profile"))
+        proxy_policy = "disabled" if isolated else "urllib_default"
+        # A fresh opener avoids both ambient proxy discovery and any global opener
+        # another coordinator component installed. Never mutate urllib's global state.
+        open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+                    if isolated else urllib.request.urlopen)
         try:
-            with urllib.request.urlopen(resolve(check["url"]), timeout=check["timeout"]) as resp:
+            with open_url(resolve(check["url"]), timeout=check["timeout"]) as resp:
                 status, body = resp.status, resp.read(65536).decode(errors="replace")
         except urllib.error.HTTPError as exc:
             status, body = exc.code, ""
         except Exception as exc:  # noqa: BLE001
             return {"passed": False, "detail": f"request failed: {type(exc).__name__}: {exc}",
-                    "started_at": started, "stopped_at": now()}
+                    "proxy_policy": proxy_policy, "started_at": started, "stopped_at": now()}
         passed = status == int(check.get("expect_status", 200))
         if passed and check.get("expect_body"):
             passed = re.search(check["expect_body"], body) is not None
         return {"passed": passed, "detail": f"status={status}", "stdout": body[:2000],
-                "started_at": started, "stopped_at": now()}
+                "proxy_policy": proxy_policy, "started_at": started, "stopped_at": now()}
 
 
 __all__ = ["Declarative", "version_of", "which"]

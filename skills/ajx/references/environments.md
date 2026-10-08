@@ -164,7 +164,7 @@ profiles require a qualified adapter.
 | Harness | Authentication for explicit profiles |
 |---|---|
 | Codex | Copied `codex-chatgpt` login or a configured API/provider auth profile |
-| Claude Code | API-key or cloud-provider auth; subscription/OAuth account skill syncing is not supported |
+| Claude Code | API-key or supported cloud-provider credentials below; subscription/OAuth account skill syncing is not supported |
 | Kiro CLI | Explicit `env` auth declaring `KIRO_API_KEY`; the image/local install needs its chat companion executable |
 
 For example, Kiro can use:
@@ -178,6 +178,35 @@ required_env = ["KIRO_API_KEY"]
 
 Select `auth = "kiro"` on the Kiro cell. Required variable values come from the
 caller; do not write credentials into TOML.
+
+Built-in cloud profiles require complete, explicitly declared credential routes
+for both local and container environments:
+
+| Auth type | Supported route |
+|---|---|
+| `claude-bedrock` | `AWS_REGION` plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or `AWS_BEARER_TOKEN_BEDROCK`. Declare `AWS_SESSION_TOKEN` too when using temporary keys. |
+| `claude-foundry` | `ANTHROPIC_FOUNDRY_RESOURCE` or `ANTHROPIC_FOUNDRY_BASE_URL`, plus `ANTHROPIC_FOUNDRY_API_KEY` or all of `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_CLIENT_SECRET`. |
+| `gemini-vertex` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_API_KEY`. |
+| `claude-vertex` | Built-in file-based ADC is unsupported in explicit environments; use a custom auth plugin with credential staging and cleanup. |
+
+Declare credentials in the trial, cell, or auth environment. Prefer `auth.env`
+with `${VAR}` references so secrets stay outside the trial:
+
+```toml
+[auth.bedrock]
+type = "claude-bedrock"
+env = { AWS_REGION = "${AJX_AWS_REGION}", AWS_BEARER_TOKEN_BEDROCK = "${AJX_BEDROCK_TOKEN}" }
+```
+
+Selecting a cloud profile does not forward ambient credentials. AWS profile/SSO
+files, default ADC, Azure CLI login, file-based and default identity routes, and
+skip-auth controls are not supplied by these built-ins. Explicit file paths do
+not make caller files available in a container. Unsupported selectors are
+rejected even alongside direct credentials; remove or unset them. A custom auth
+plugin must stage credentials inside the selected environment and remove them
+before archival. A preconfigured gateway can use `type = "env"` with its complete
+explicit auth contract. Legacy runs without environment profiles retain their
+existing credential behavior.
 
 Optional plugins and hooks currently support **`none` only**. Their controls
 are separate from skills; selecting plugins/hooks is rejected until their
@@ -198,6 +227,11 @@ Shell checks can explicitly select either location. File and HTTP checks run on
 the host; host file checks inspect collected/bind-mounted output. `file_exists`
 globs must stay beneath the workspace. Only regular files reached without
 symlinks in the workspace or any path component can satisfy a file check.
+
+HTTP checks use a fresh direct connection with ambient and global-opener proxies
+disabled, recorded as `proxy_policy = "disabled"` in verification results.
+The coordinator's normal TLS certificate trust still applies. An HTTP check
+that needs a proxy must use an explicitly configured host shell check.
 
 With a root coordinator, AJX restores the planned non-root worker's ownership
 of its private workspace, home, configuration and cache after staging

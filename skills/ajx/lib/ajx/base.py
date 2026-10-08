@@ -157,6 +157,10 @@ class Harness:
         drop = tuple(self.strip_env) + tuple(ctx.get("unset_env") or ())
         environment = bool(ctx.get("environment_profile"))
         full_env = ctx["runner"].child_env(env, drop) if environment else child_env(env, drop)
+        if environment and ctx.get("auth"):
+            problems = ctx["auth"].environment_problems(full_env, ctx["environment_profile"])
+            if problems:
+                raise RuntimeError(f"environment authentication configuration is not ready: {'; '.join(problems)}")
         full_argv = ctx["runner"].wrap(argv, ctx, env)
         if stage == "narrate" and timeout is None:
             timeout = ctx.get("narrate_timeout") or 900
@@ -251,6 +255,7 @@ class Auth:
             self.isolates_config = bool(self.conf["isolates_config"])
         self.profile = self.plugin_name
         self.harness = None       # set by spec.auth_for to the cell's harness
+        self.environment_check = None  # optional readiness callback bound by spec.auth_for
 
     @property
     def name(self):
@@ -274,14 +279,22 @@ class Auth:
     def cleanup(self, ctx):
         """Hook to remove what prepare() placed in the per-run dirs before they are archived."""
 
-    def problems(self):
-        env = {**os.environ, **self.env()}
+    def problems(self, env=None):
+        """Check credentials, optionally against an explicit worker environment only."""
+        explicit = env is not None
+        env = {**os.environ, **self.env()} if env is None else env
         out = [f"missing env var {v}" for v in self.required_env if not env.get(v)]
         for key, raw in (self.conf.get("env") or {}).items():
+            if explicit and key not in env:
+                continue
             for ref in re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", str(raw)):
                 if not os.environ.get(ref):
                     out.append(f"env {key} references ${{{ref}}} which is empty in the caller's environment")
         return out
+
+    def environment_problems(self, env, environment):
+        """Provider-specific checks before using a fresh HOME; never provision credentials."""
+        return []
 
     def describe(self):
         """Non-secret record: type, var names, check command output (identity)."""

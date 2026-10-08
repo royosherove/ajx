@@ -10,6 +10,7 @@ from ..base import (AWS_CREDENTIAL_ENV, auth_args, Auth, Harness, empty_telemetr
                     summarize_input)
 from ..agent_configuration import (configuration, ensure_reporter_context, launch_args, launch_binary,
                                    launch_context, launch_env)
+from ..cloud_auth import CloudAuth
 from ..plugins import register
 
 MANAGED_SETTINGS = (Path("/Library/Application Support/ClaudeCode/managed-settings.json") if sys.platform == "darwin"
@@ -278,11 +279,18 @@ class AnthropicApi(Auth):
 
 
 @register("auth", "claude-bedrock")
-class ClaudeBedrock(Auth):
+class ClaudeBedrock(CloudAuth):
     harnesses = ("claude-code",)
     description = "Amazon Bedrock (CLAUDE_CODE_USE_BEDROCK=1 + AWS credentials/region)"
     required_env = ("AWS_REGION",)
     model_env = ("CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_BEDROCK_*", "CLAUDE_CODE_SKIP_BEDROCK_AUTH") + AWS_CREDENTIAL_ENV
+    provider_env = "CLAUDE_CODE_USE_BEDROCK"
+    credential_routes = (("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), ("AWS_BEARER_TOKEN_BEDROCK",))
+    optional_env = ("AWS_SESSION_TOKEN",)
+    unsupported_env = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+                       "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_CONTAINER_*",
+                       "CLAUDE_CODE_SKIP_BEDROCK_AUTH")
+    home_credentials = "AWS profiles, SSO, and default provider-chain credentials"
 
     def env(self):
         return {"CLAUDE_CODE_USE_BEDROCK": "1", **super().env()}
@@ -292,12 +300,16 @@ class ClaudeBedrock(Auth):
 
 
 @register("auth", "claude-vertex")
-class ClaudeVertex(Auth):
+class ClaudeVertex(CloudAuth):
     harnesses = ("claude-code",)
     description = "Google Vertex AI (CLAUDE_CODE_USE_VERTEX=1, CLOUD_ML_REGION, ANTHROPIC_VERTEX_PROJECT_ID)"
     required_env = ("CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
     model_env = ("CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_VERTEX_*", "VERTEX_REGION_*", "GOOGLE_APPLICATION_CREDENTIALS",
                  "CLOUDSDK_*")
+    provider_env = "CLAUDE_CODE_USE_VERTEX"
+    unsupported_env = ("GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "CLOUDSDK_AUTH_*",
+                       "CLAUDE_CODE_SKIP_VERTEX_AUTH")
+    home_credentials = "file-backed Google Application Default Credentials (ADC)"
 
     def env(self):
         return {"CLAUDE_CODE_USE_VERTEX": "1", **super().env()}
@@ -307,10 +319,16 @@ class ClaudeVertex(Auth):
 
 
 @register("auth", "claude-foundry")
-class ClaudeFoundry(Auth):
+class ClaudeFoundry(CloudAuth):
     harnesses = ("claude-code",)
     description = "Microsoft Foundry (CLAUDE_CODE_USE_FOUNDRY=1, ANTHROPIC_FOUNDRY_RESOURCE or _BASE_URL)"
     model_env = ("CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_*", "AZURE_*")
+    provider_env = "CLAUDE_CODE_USE_FOUNDRY"
+    credential_routes = (("ANTHROPIC_FOUNDRY_API_KEY",), ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_CLIENT_SECRET"))
+    endpoint_routes = ("ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_BASE_URL")
+    unsupported_env = ("AZURE_CONFIG_DIR", "AZURE_CLIENT_CERTIFICATE_PATH", "AZURE_FEDERATED_TOKEN_FILE",
+                       "AZURE_TOKEN_CREDENTIALS", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH", "ANTHROPIC_FOUNDRY_AUTH_TOKEN")
+    home_credentials = "Azure CLI login and default identity credentials"
 
     def env(self):
         return {"CLAUDE_CODE_USE_FOUNDRY": "1", **super().env()}

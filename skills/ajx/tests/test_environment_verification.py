@@ -1,15 +1,18 @@
 """Synthetic regressions for host verification and isolated-environment auth validation."""
 
+import http.server
 import os
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from ajx import spec as specmod
-from ajx.builtin.generic import FileExistsCheck
+from ajx.builtin.generic import FileExistsCheck, HttpCheck
 
 
 class WorkspaceFileVerificationTest(unittest.TestCase):
@@ -106,6 +109,76 @@ class WorkspaceFileVerificationTest(unittest.TestCase):
         for pattern in ("../outside/*.txt", str(self.outside / "result.txt"), ""):
             with self.subTest(pattern=pattern):
                 self.assertFalse(self.check(pattern)["passed"])
+
+
+class HostHttpVerificationTest(unittest.TestCase):
+    def server(self, body):
+        calls = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                calls.append(("GET", self.path))
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_CONNECT(self):
+                calls.append(("CONNECT", self.path))
+                self.send_error(502)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def close():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(close)
+        return f"http://127.0.0.1:{server.server_port}", calls
+
+    def test_explicit_environment_http_cannot_be_satisfied_by_ambient_proxy(self):
+        origin, origin_calls = self.server(b"origin-proof")
+        proxy, proxy_calls = self.server(b"proxy-proof")
+        env = {"http_proxy": proxy, "https_proxy": proxy, "HTTP_PROXY": proxy, "HTTPS_PROXY": proxy,
+               "NO_PROXY": "", "no_proxy": ""}
+        check = {"url": origin + "/result", "timeout": 2, "expect_body": "proxy-proof"}
+        checker = HttpCheck()
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(urllib.request, "_opener", None):
+            legacy = checker.run(check, {})
+            global_opener = urllib.request._opener
+            isolated = checker.run(check, {"environment_profile": {"backend": "local"}})
+            direct = checker.run({**check, "expect_body": "origin-proof"},
+                                 {"environment_profile": {"backend": "container"}})
+            self.assertIs(urllib.request._opener, global_opener)
+        self.assertTrue(legacy["passed"], legacy)
+        self.assertEqual(legacy["proxy_policy"], "urllib_default")
+        self.assertFalse(isolated["passed"], isolated)
+        self.assertEqual(isolated["stdout"], "origin-proof")
+        self.assertTrue(direct["passed"], direct)
+        self.assertEqual(direct["proxy_policy"], "disabled")
+        self.assertEqual(len(proxy_calls), 1)
+        self.assertEqual(origin_calls, [("GET", "/result"), ("GET", "/result")])
+
+    def test_explicit_environment_https_failure_does_not_contact_ambient_proxy(self):
+        origin, _ = self.server(b"plain-http-only")
+        proxy, proxy_calls = self.server(b"proxy-proof")
+        # A plain HTTP origin cannot complete TLS. The failure must come from the
+        # direct connection, without a CONNECT request to the ambient proxy.
+        with mock.patch.dict(os.environ, {"https_proxy": proxy, "HTTPS_PROXY": proxy,
+                                          "NO_PROXY": "", "no_proxy": ""}, clear=True):
+            result = HttpCheck().run(
+                {"url": origin.replace("http:", "https:") + "/result", "timeout": 1},
+                {"environment_profile": {"backend": "local"}},
+            )
+        self.assertFalse(result["passed"], result)
+        self.assertEqual(result["proxy_policy"], "disabled")
+        self.assertEqual(proxy_calls, [])
 
 
 class EnvironmentAuthValidationTest(unittest.TestCase):

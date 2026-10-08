@@ -192,8 +192,11 @@ def load(path):
                 _need(auth.isolates_config,
                       f"auth {auth.profile!r} cannot use fresh HOME/config directories; "
                       "environments require an auth profile that supplies credentials to isolated configuration")
-                environments.validate_for_cell(
-                    environment, {**cell, "env": worker_env(spec, cell, auth), "unset_env": auth.unset()})
+                env = worker_env(spec, cell, auth)
+                environments.validate_for_cell(environment, {**cell, "env": env, "unset_env": auth.unset()})
+                problems = auth.environment_problems(env, environment)
+                _need(not problems, f"auth {auth.profile!r} is not ready for the selected environment: "
+                      + "; ".join(problems))
             if configuration:
                 agent_configuration.validate_for_cell(
                     configuration, cell, harness_for(spec, cell["harness"]), auth, environment)
@@ -262,6 +265,11 @@ def auth_for(spec, cell, override=None):
     auth = cls(conf)
     auth.profile = ref
     auth.harness = cell["harness"]
+    if cell.get("environment") or cell.get("agent_configuration"):
+        environment = environment_for(spec, cell)
+        # Resolve again at preparation, without caching secrets or binding host reporters
+        # to the trial's worker environment.
+        auth.environment_check = lambda: auth.environment_problems(worker_env(spec, cell, auth), environment)
     return auth
 
 
