@@ -133,12 +133,37 @@ def no_model_extract(run):
 
 
 class EnvironmentLifecycleTests(unittest.TestCase):
-    def interrupted_prepare(self, root):
+    def copied_auth_run(self, root):
         spec = trial_at(root)
         source = Path(root) / "synthetic-login.json"
         source.write_text('{"token": "synthetic-offline-credential"}')
         spec["auth"]["test"] = {"type": "environment-copy", "source": str(source)}
         run = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+        return spec, run, source
+
+    def interrupt_with_evidence(self, run, source, interruption):
+        def interrupt(*args, **kwargs):
+            paths = run.state["paths"]
+            self.assertEqual((Path(paths["config_dir"]) / "auth.json").read_text(), source.read_text())
+            (Path(paths["workspace"]) / "partial-evidence.txt").write_text("keep the interrupted attempt")
+            (Path(paths["config_dir"]) / "transcript.jsonl").write_text('{"event": "synthetic partial evidence"}\n')
+            cached = Path(paths["home_dir"]) / ".synthetic"
+            cached.mkdir(exist_ok=True)
+            (cached / "credentials.json").write_text("synthetic cached credential")
+            raise interruption
+        return interrupt
+
+    def assert_purged_evidence(self, paths, source):
+        self.assertEqual(source.read_text(), '{"token": "synthetic-offline-credential"}')
+        self.assertFalse((Path(paths["config_dir"]) / "auth.json").exists())
+        self.assertFalse((Path(paths["home_dir"]) / ".synthetic" / "credentials.json").exists())
+        self.assertEqual((Path(paths["workspace"]) / "partial-evidence.txt").read_text(),
+                         "keep the interrupted attempt")
+        self.assertEqual((Path(paths["config_dir"]) / "transcript.jsonl").read_text(),
+                         '{"event": "synthetic partial evidence"}\n')
+
+    def interrupted_prepare(self, root):
+        spec, run, source = self.copied_auth_run(root)
         run.mark("prepare", "running")
         # Bypass go's exception handler to leave the same durable state as coordinator death.
         with mock.patch.object(run, "_command", side_effect=KeyboardInterrupt("synthetic coordinator crash")):
@@ -149,6 +174,178 @@ class EnvironmentLifecycleTests(unittest.TestCase):
         (Path(run.state["paths"]["workspace"]) / "partial-evidence.txt").write_text("keep preparation evidence")
         (Path(run.state["paths"]["home_dir"]) / "credentials.json").write_text("synthetic cached credential")
         return spec, run, source
+
+    def test_handled_interruption_archives_evidence_and_purges_auth_without_replay(self):
+        for stage in ("prepare", "execute", "verify", "narrate"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                spec, run, source = self.copied_auth_run(tmp)
+                interruption = KeyboardInterrupt("synthetic user interruption")
+                target, method = {
+                    "prepare": (run, "_command"),
+                    "execute": (run.harness, "execute"),
+                    "verify": (run, "stage_verify"),
+                    "narrate": (run.harness, "narrate"),
+                }[stage]
+                with mock.patch.object(target, method,
+                                       side_effect=self.interrupt_with_evidence(run, source, interruption)), \
+                        mock.patch.object(run.runner, "abort", side_effect=AssertionError("adapter owns cancellation")) as abort:
+                    with self.assertRaises(KeyboardInterrupt) as raised:
+                        run.go()
+                self.assertIs(raised.exception, interruption)
+                abort.assert_not_called()
+                self.assertEqual(run.status(stage), "interrupted", run.state)
+                self.assertEqual(read_json(run.state_path)["stages"][stage]["status"], "interrupted")
+                self.assertTrue(run.done("archive"), run.state)
+                self.assertTrue(run.state["environment_cleanup"]["confirmed"])
+                self.assert_purged_evidence(run.state["archived"], source)
+                paths, owned, environment = (dict(run.state["paths"]), list(run.state["owned_paths"]),
+                                             dict(run.state["environment"]))
+                self.assertTrue(all(not Path(path).exists() for path in paths.values()))
+                if stage == "prepare":
+                    self.assertIsNone(run.status("execute"))
+                    self.assertIsNone(run.status("teardown"))
+                else:
+                    self.assertTrue(run.done("teardown"), run.state)
+                    self.assertEqual(run.state["teardown"]["status"], "ok")
+                    self.assertTrue((run.run_dir / "agent-home" / "teardown-ran").exists())
+                if stage == "execute":
+                    self.assertEqual(run.state["execute"]["stop_reason"], "interrupted")
+                    self.assertTrue(run.state["execute"]["interrupted"])
+                    self.assertIsNotNone(run.state["execute"]["stopped_at"])
+                resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+                with mock.patch.object(resumed.runner, "plan") as plan, \
+                        mock.patch.object(resumed.runner, "prepare") as prepare, \
+                        mock.patch.object(resumed.harness, "execute") as execute:
+                    resumed.go(["execute"])
+                    resumed.go(["archive"])
+                plan.assert_not_called()
+                prepare.assert_not_called()
+                execute.assert_not_called()
+                self.assertEqual(resumed.state["paths"], paths)
+                self.assertEqual(resumed.state["owned_paths"], owned)
+                self.assertEqual(resumed.state["environment"], environment)
+                self.assert_purged_evidence(resumed.state["archived"], source)
+
+    def test_handled_interruption_keeps_requested_workspace_but_purges_credentials(self):
+        for stage in ("prepare", "execute"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                spec, run, source = self.copied_auth_run(tmp)
+                interruption = KeyboardInterrupt("synthetic user interruption")
+                target, method = (run, "_command") if stage == "prepare" else (run.harness, "execute")
+                with mock.patch.object(target, method,
+                                       side_effect=self.interrupt_with_evidence(run, source, interruption)):
+                    with self.assertRaises(KeyboardInterrupt) as raised:
+                        run.go(keep_workspace=True)
+                self.assertIs(raised.exception, interruption)
+                self.assertEqual(run.status(stage), "interrupted")
+                self.assertIsNone(run.status("archive"))
+                self.assertNotIn("archived", run.state)
+                self.assertTrue(run.state["environment_cleanup"]["confirmed"])
+                if stage == "execute":
+                    self.assertTrue(run.done("teardown"), run.state)
+                self.assertEqual(run.state["interruption_cleanup"]["steps"]["credentials"]["status"], "done")
+                self.assertTrue(all(Path(path).is_dir() for path in run.state["paths"].values()))
+                self.assert_purged_evidence(run.state["paths"], source)
+                resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+                with mock.patch.object(resumed.runner, "plan") as plan, \
+                        mock.patch.object(resumed.runner, "prepare") as prepare, \
+                        mock.patch.object(resumed.harness, "execute") as execute:
+                    resumed.go([stage], keep_workspace=True)
+                plan.assert_not_called()
+                prepare.assert_not_called()
+                execute.assert_not_called()
+                self.assertNotIn("archived", resumed.state)
+                self.assertTrue(all(Path(path).is_dir() for path in resumed.state["paths"].values()))
+                self.assert_purged_evidence(resumed.state["paths"], source)
+
+    def test_handled_interruption_retains_failed_release_paths_and_purges_auth_before_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec, run, source = self.copied_auth_run(tmp)
+            interruption = KeyboardInterrupt("synthetic user interruption")
+            with mock.patch.object(run.harness, "execute",
+                                   side_effect=self.interrupt_with_evidence(run, source, interruption)), \
+                    mock.patch.object(run.runner, "release", return_value={
+                        "status": "failed", "confirmed": False, "error": "synthetic backend outage"}) as release:
+                with self.assertRaises(KeyboardInterrupt) as raised:
+                    run.go()
+            self.assertIs(raised.exception, interruption)
+            release.assert_called_once()
+            self.assertEqual(run.status("release"), "error")
+            self.assertEqual(run.status("archive"), "error")
+            self.assertFalse(run.state["environment_cleanup"]["confirmed"])
+            self.assertNotIn("archived", run.state)
+            paths, owned, environment = (dict(run.state["paths"]), list(run.state["owned_paths"]),
+                                         dict(run.state["environment"]))
+            self.assertTrue(all(Path(path).is_dir() for path in paths.values()))
+            self.assert_purged_evidence(paths, source)
+            resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            with mock.patch.object(resumed.runner, "release", wraps=resumed.runner.release) as release, \
+                    mock.patch.object(resumed.runner, "plan") as plan, \
+                    mock.patch.object(resumed.runner, "prepare") as prepare, \
+                    mock.patch.object(resumed.harness, "execute") as execute:
+                resumed.go(["release", "archive"])
+                resumed.go(["execute"])
+            release.assert_called_once()
+            self.assertEqual(release.call_args.args[0]["state"]["paths"], paths)
+            plan.assert_not_called()
+            prepare.assert_not_called()
+            execute.assert_not_called()
+            self.assertTrue(resumed.done("archive"), resumed.state)
+            self.assertTrue(resumed.state["environment_cleanup"]["confirmed"])
+            self.assertEqual(resumed.state["paths"], paths)
+            self.assertEqual(resumed.state["owned_paths"], owned)
+            self.assertEqual(resumed.state["environment"], environment)
+            self.assertTrue(all(not Path(path).exists() for path in paths.values()))
+            self.assert_purged_evidence(resumed.state["archived"], source)
+
+    def test_cleanup_interruption_preserves_original_exception_and_purges_known_credentials(self):
+        for failed_cleanup in ("teardown", "release", "auth"):
+            with self.subTest(cleanup=failed_cleanup), tempfile.TemporaryDirectory() as tmp:
+                _, run, source = self.copied_auth_run(tmp)
+                interruption = KeyboardInterrupt("original synthetic interruption")
+                target, method = {
+                    "teardown": (run, "stage_teardown"),
+                    "release": (run.runner, "release"),
+                    "auth": (run.auth, "cleanup"),
+                }[failed_cleanup]
+                with mock.patch.object(run.harness, "execute",
+                                       side_effect=self.interrupt_with_evidence(run, source, interruption)), \
+                        mock.patch.object(target, method, side_effect=SystemExit("synthetic cleanup interruption")):
+                    with self.assertRaises(KeyboardInterrupt) as raised:
+                        run.go()
+                self.assertIs(raised.exception, interruption)
+                self.assertEqual(run.status("execute"), "interrupted")
+                if failed_cleanup == "teardown":
+                    self.assertEqual(run.status("teardown"), "interrupted")
+                    self.assertTrue(run.done("archive"), run.state)
+                elif failed_cleanup == "release":
+                    self.assertEqual(run.status("release"), "interrupted")
+                    self.assertEqual(run.status("archive"), "error")
+                    self.assertNotIn("archived", run.state)
+                    self.assertIsNot((run.state.get("environment_cleanup") or {}).get("confirmed"), True)
+                else:
+                    self.assertEqual(run.status("archive"), "interrupted")
+                    self.assertEqual(run.state["interruption_cleanup"]["steps"]["credentials"]["status"], "interrupted")
+                self.assert_purged_evidence(run.state.get("archived") or run.state["paths"], source)
+
+    def test_handled_interruption_archives_after_already_confirmed_release_without_backend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, run, source = self.copied_auth_run(tmp)
+            run.go(["prepare", "execute", "verify", "teardown", "normalize", "narrate", "release"])
+            confirmed = dict(run.state["environment_cleanup"])
+            self.assertTrue(confirmed["confirmed"])
+            interruption = KeyboardInterrupt("synthetic reporting interruption")
+            with mock.patch.object(run, "stage_measure",
+                                   side_effect=self.interrupt_with_evidence(run, source, interruption)), \
+                    mock.patch.object(run.runner, "release", side_effect=AssertionError("backend unavailable")) as release:
+                with self.assertRaises(KeyboardInterrupt) as raised:
+                    run.go(["measure"])
+            self.assertIs(raised.exception, interruption)
+            release.assert_not_called()
+            self.assertEqual(run.status("measure"), "interrupted")
+            self.assertTrue(run.done("archive"), run.state)
+            self.assertEqual(run.state["environment_cleanup"], confirmed)
+            self.assert_purged_evidence(run.state["archived"], source)
 
     def test_interrupted_prepare_cleans_original_credentials_without_replaying(self):
         for stages in (None, ["prepare"]):
@@ -196,7 +393,9 @@ class EnvironmentLifecycleTests(unittest.TestCase):
                 self.assertEqual(resumed.state["paths"], paths)
                 self.assertNotIn("archived", resumed.state)
                 self.assertTrue(all(Path(path).exists() for path in paths.values()))
-                self.assertEqual((Path(paths["config_dir"]) / "auth.json").read_text(), source.read_text())
+                self.assertFalse((Path(paths["config_dir"]) / "auth.json").exists())
+                self.assertFalse((Path(paths["home_dir"]) / "credentials.json").exists())
+                self.assertEqual(source.read_text(), '{"token": "synthetic-offline-credential"}')
                 cleanup.assert_not_called()
             recovered = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
             with mock.patch.object(EnvironmentProbe, "execute", side_effect=AssertionError("must not execute")) as execute:
@@ -207,6 +406,94 @@ class EnvironmentLifecycleTests(unittest.TestCase):
             self.assertTrue(recovered.state["environment_cleanup"]["confirmed"])
             self.assertTrue(all(not Path(path).exists() for path in paths.values()))
             self.assertFalse((recovered.run_dir / "harness-config" / "auth.json").exists())
+
+    def test_archive_failed_release_purges_known_credentials_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, run, source = self.copied_auth_run(tmp)
+            run.go(["prepare", "teardown"])
+            paths = dict(run.state["paths"])
+            config = Path(paths["config_dir"])
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            original = outside / "auth.json"
+            original.write_text("synthetic original outside owned roots")
+            nested = config / "nested"
+            nested.mkdir()
+            (nested / "tokens.json").write_text("synthetic staged token")
+            (nested / "transcript.jsonl").write_text("retain evidence")
+            (config / "redirected-directory").symlink_to(outside, target_is_directory=True)
+            (config / "credentials.json").symlink_to(original)
+            with mock.patch.object(run.runner, "release", return_value={"status": "failed", "confirmed": False}) as release, \
+                    mock.patch.object(run.auth, "cleanup") as cleanup:
+                run.go(["archive"])
+            release.assert_called_once()
+            cleanup.assert_not_called()
+            self.assertEqual(run.status("archive"), "error")
+            self.assertFalse(run.state["environment_cleanup"]["confirmed"])
+            self.assertEqual(run.state["paths"], paths)
+            self.assertNotIn("archived", run.state)
+            self.assertFalse((config / "auth.json").exists())
+            self.assertFalse((nested / "tokens.json").exists())
+            self.assertFalse((config / "credentials.json").is_symlink())
+            self.assertTrue((config / "redirected-directory").is_symlink())
+            self.assertEqual((nested / "transcript.jsonl").read_text(), "retain evidence")
+            self.assertEqual(original.read_text(), "synthetic original outside owned roots")
+            self.assertEqual(source.read_text(), '{"token": "synthetic-offline-credential"}')
+
+    def test_archive_failed_release_purge_stays_anchored_during_directory_replacement(self):
+        for replacement in ("root", "ancestor", "descendant"):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as tmp:
+                _, run, source = self.copied_auth_run(tmp)
+                run.go(["prepare", "teardown"])
+                paths, owned = dict(run.state["paths"]), list(run.state["owned_paths"])
+                config = Path(paths["config_dir"])
+                outside = Path(tmp) / "outside"
+                outside.mkdir()
+                if replacement == "root":
+                    watched, relative = config, Path()
+                elif replacement == "ancestor":
+                    watched, relative = config.parent, Path(config.name)
+                else:
+                    watched, relative = config / "nested", Path()
+                    watched.mkdir()
+                    (watched / "auth.json").write_text("synthetic staged credential")
+                (watched / relative / "transcript.jsonl").write_text("retain evidence")
+                target = outside / relative
+                target.mkdir(parents=True, exist_ok=True)
+                original = target / "auth.json"
+                original.write_text("synthetic original outside owned roots")
+                (target / "transcript.jsonl").write_text("outside evidence must remain untouched")
+                retained = watched.with_name(watched.name + "-retained")
+                identity = watched.stat()
+                original_open = os.open
+                swapped = False
+
+                def replace_after_open(path, flags, *args, **kwargs):
+                    nonlocal swapped
+                    fd = original_open(path, flags, *args, **kwargs)
+                    opened = os.fstat(fd)
+                    if not swapped and (opened.st_dev, opened.st_ino) == (identity.st_dev, identity.st_ino):
+                        watched.rename(retained)
+                        watched.symlink_to(outside, target_is_directory=True)
+                        swapped = True
+                    return fd
+
+                with mock.patch.object(run.runner, "release", return_value={"status": "failed", "confirmed": False}), \
+                        mock.patch.object(run.auth, "cleanup") as cleanup, \
+                        mock.patch.object(os, "open", side_effect=replace_after_open):
+                    run.go(["archive"])
+                self.assertTrue(swapped, "the race must occur after opening the intended directory")
+                cleanup.assert_not_called()
+                self.assertEqual(run.status("archive"), "error")
+                self.assertFalse(run.state["environment_cleanup"]["confirmed"])
+                self.assertEqual(run.state["paths"], paths)
+                self.assertEqual(run.state["owned_paths"], owned)
+                self.assertNotIn("archived", run.state)
+                self.assertFalse((retained / relative / "auth.json").exists())
+                self.assertEqual((retained / relative / "transcript.jsonl").read_text(), "retain evidence")
+                self.assertEqual(original.read_text(), "synthetic original outside owned roots")
+                self.assertEqual((target / "transcript.jsonl").read_text(), "outside evidence must remain untouched")
+                self.assertEqual(source.read_text(), '{"token": "synthetic-offline-credential"}')
 
     def test_local_task_timeout_still_runs_default_environment_teardown(self):
         def timeout_worker(harness, ctx):

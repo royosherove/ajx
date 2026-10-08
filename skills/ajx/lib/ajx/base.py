@@ -160,9 +160,17 @@ class Harness:
         full_argv = ctx["runner"].wrap(argv, ctx, env)
         if stage == "narrate" and timeout is None:
             timeout = ctx.get("narrate_timeout") or 900
-        proc = run_streaming(full_argv, ctx["workspace"], ctx["run_dir"] / f"{stage}.raw.jsonl",
-                             ctx["run_dir"] / f"{stage}.stderr.txt", timeout or ctx["timeout"],
-                             env=full_env, stdin_data=stdin_data, reap_after_exit=(stage != "execute"))
+        try:
+            proc = run_streaming(full_argv, ctx["workspace"], ctx["run_dir"] / f"{stage}.raw.jsonl",
+                                 ctx["run_dir"] / f"{stage}.stderr.txt", timeout or ctx["timeout"],
+                                 env=full_env, stdin_data=stdin_data, reap_after_exit=(stage != "execute"))
+        except BaseException as interrupted:
+            if environment:
+                try:
+                    ctx["runner"].abort(ctx)
+                except BaseException as cleanup_error:
+                    interrupted.add_note(f"Worker cancellation did not finish: {type(cleanup_error).__name__}")
+            raise
         if environment and proc["timed_out"]:
             # Killing a Docker client does not stop the process inside its container.
             # The provider owns cancellation and must not silently recreate the worker.

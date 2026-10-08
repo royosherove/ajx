@@ -15,6 +15,7 @@ Rules:
   Failed release preserves the original directories for cleanup; --keep-workspace retains them too.
 """
 
+import errno
 import json
 import os
 import platform
@@ -26,6 +27,7 @@ import stat
 import subprocess
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 
 from . import agent_configuration, envcheck, plugins, reporter, render, spec as specmod
@@ -106,6 +108,47 @@ def _probe(argv):
 
 def _rand():
     return secrets.token_hex(5)
+
+
+def _open_directory_nofollow(path):
+    """Open every component relative to its pinned parent; never resolve a symlink."""
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts:
+        raise RuntimeError("credential roots must be absolute owned paths without parent traversal")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path.anchor, flags)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _purge_credential_tree(fd):
+    """Unlink known names only inside pinned directories, including a symlink entry itself."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
+    for name in os.listdir(fd):
+        try:
+            child = os.open(name, flags, dir_fd=fd)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
+                raise
+            if name in CREDENTIAL_FILES:
+                try:
+                    os.unlink(name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+        else:
+            try:
+                _purge_credential_tree(child)
+            finally:
+                os.close(child)
 
 
 class Run:
@@ -516,6 +559,51 @@ class Run:
                               self.runner)
         render.run_report(self.run_dir)
 
+    def _purge_credentials(self):
+        """Purge known files through owned directory fds; defer hooks until confirmed release."""
+        paths = self.state.get("paths", {})
+        archived = self.state.get("archived") or {}
+        owned = self.state.get("owned_paths")
+        confirmed = (not self.environment_profile or not self.state.get("environment")
+                     or (self.state.get("environment_cleanup") or {}).get("confirmed") is True)
+        with ExitStack() as descriptors:
+            roots, errors = {}, []
+            for key in ("config_dir", "home_dir"):
+                original = paths.get(key)
+                if not original or (owned is not None and original not in owned):
+                    continue
+                root = archived.get(key) or original
+                try:
+                    fd = _open_directory_nofollow(root)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    errors.append(f"{key}: {type(exc).__name__}")
+                else:
+                    descriptors.callback(os.close, fd)
+                    roots[key] = (root, fd)
+            try:
+                # Hooks take filesystem paths, not fds. Never give a still-active worker
+                # the opportunity to redirect those paths during unconfirmed release.
+                if confirmed and "config_dir" in roots and not errors:
+                    ctx = self.ctx()
+                    ctx["config_dir"] = roots["config_dir"][0]
+                    ctx["home_dir"] = roots["home_dir"][0] if "home_dir" in roots else ""
+                    try:
+                        self.auth.cleanup(ctx)
+                    except Exception as exc:  # noqa: BLE001
+                        self.log(f"[{self.run_id}] auth cleanup failed: {exc}")
+            finally:
+                # Also runs if an auth hook is interrupted; descriptors stay pinned if a
+                # worker replaces a root, ancestor, or descendant with a symlink.
+                for key, (_, fd) in roots.items():
+                    try:
+                        _purge_credential_tree(fd)
+                    except OSError as exc:
+                        errors.append(f"{key}: {type(exc).__name__}")
+            if errors:
+                raise RuntimeError(f"credential purge could not safely complete: {'; '.join(errors)}")
+
     def stage_archive(self):
         """Move the workspace and harness config under the run dir so later workers cannot discover
         them; purge copied credentials; drop package caches; repoint evidence paths."""
@@ -523,12 +611,18 @@ class Run:
         moved = dict(self.state.get("archived") or {})
         # A confirmed release is durable; archiving no longer needs the backend to be available.
         cleanup = self.state.get("environment_cleanup") or {}
-        if self.environment_profile and self.state.get("environment") and cleanup.get("confirmed") is not True:
-            self.stage_release()
         try:
-            self.auth.cleanup(self.ctx())
-        except Exception as exc:  # noqa: BLE001
-            self.log(f"[{self.run_id}] auth cleanup failed: {exc}")
+            if self.environment_profile and self.state.get("environment") and cleanup.get("confirmed") is not True:
+                self.stage_release()
+        except BaseException as exc:
+            # Keep the original ownership and paths for retry, but never retain known
+            # staged credentials just because the backend cannot confirm release.
+            try:
+                self._purge_credentials()
+            except BaseException as cleanup_exc:
+                exc.add_note(f"Credential purge also failed: {type(cleanup_exc).__name__}")
+            raise
+        self._purge_credentials()
         for key, dest in (("workspace", "workspace"), ("config_dir", "harness-config"), ("home_dir", "agent-home")):
             src = paths.get(key)
             owned = self.state.get("owned_paths")
@@ -540,13 +634,6 @@ class Run:
                 moved[key] = str(target)
                 self.state["archived"] = dict(moved)
                 self.save()  # Keep moved evidence findable even if a later cleanup step fails.
-        for key in ("config_dir", "home_dir"):
-            config_target = Path(moved.get(key, ""))
-            if not moved.get(key) or not config_target.exists():
-                continue
-            for cred in config_target.rglob("*"):
-                if cred.is_file() and cred.name in CREDENTIAL_FILES:
-                    cred.unlink()
         if paths.get("cache_dir") and Path(paths["cache_dir"]).exists() \
                 and (self.state.get("owned_paths") is None or paths["cache_dir"] in self.state["owned_paths"]):
             shutil.rmtree(paths["cache_dir"], ignore_errors=True)
@@ -572,6 +659,58 @@ class Run:
                 write_json(self.run_dir / name, data)
 
     # ------------------------------------------------------------------ driver
+
+    def _cleanup_interrupted(self, stage, keep_workspace):
+        """Try each cleanup step once; keep failed release recoverable and the interruption intact."""
+        cleanup = self.state["interruption_cleanup"] = {"stage": stage, "at": now(), "steps": {}}
+
+        def attempt(name, action):
+            tracked = name in STAGES and name != stage
+            try:
+                if tracked:
+                    self.mark(name, "running")
+                action()
+            except BaseException as exc:
+                result = {"status": "error" if isinstance(exc, Exception) else "interrupted",
+                          "error": f"{type(exc).__name__}: {exc}"}
+            else:
+                result = {"status": "done"}
+            cleanup["steps"][name] = result
+            if tracked:
+                self.mark(name, **result)
+            else:
+                self.save()
+
+        def stop_processes():
+            execution = self.state.get("execute") or {}
+            if execution.get("pid") and not execution.get("reaped"):
+                kill_group(int(execution["pid"]))
+                execution["reaped"] = True
+                self.save()
+
+        def released():
+            return (not self.environment_profile or not self.state.get("environment")
+                    or (self.state.get("environment_cleanup") or {}).get("confirmed") is True)
+
+        try:
+            # Harness.run reaps an interrupted launch and cancels container workers.
+            # A completed execution can still have descendants retained for verification.
+            attempt("stop_processes", stop_processes)
+            if self.done("prepare") and self.status("execute") in TERMINAL \
+                    and not self.done("teardown") and stage != "teardown":
+                attempt("teardown", self.stage_teardown)
+            if not released():
+                attempt("release", self.stage_release)
+            if not keep_workspace and self.state.get("paths"):
+                if released():
+                    attempt("archive", self.stage_archive)
+                elif stage != "archive":
+                    self.mark("archive", "error", error="environment release was not confirmed; "
+                              "retaining original owned paths for cleanup retry")
+        finally:
+            if not self.done("archive"):
+                # Failed release and --keep-workspace retain evidence roots, never copied auth.
+                attempt("credentials", self._purge_credentials)
 
     def _detect_interrupted(self):
         if self.environment_profile and self.status("prepare") == "running":
@@ -606,7 +745,10 @@ class Run:
             # As with failed preparation, release before archiving and purging credentials.
             # Retry unconfirmed cleanup against the same paths, even with --stages prepare.
             if not self.done("archive"):
-                self._safe("archive")
+                if keep_workspace:
+                    self._cleanup_interrupted("prepare", keep_workspace=True)
+                else:
+                    self._safe("archive")
             return self.state
         if stages:
             blocked = [s for s in stages if s in NOT_REDOABLE and self.status(s) in TERMINAL]
@@ -650,10 +792,18 @@ class Run:
                 if stage == "prepare":
                     self._safe("archive")
                     break
-            except BaseException:
-                self.mark(stage, "interrupted", note="execution interrupted; keeping captured evidence")
-                if self.environment_profile:
-                    self._safe("release")
+            except BaseException as exc:
+                try:
+                    if stage == "execute":
+                        execution = self.state.get("execute") or {}
+                        self.state["execute"] = {**execution, "stop_reason": "interrupted", "interrupted": True,
+                                                 "stopped_at": execution.get("stopped_at") or now()}
+                    try:
+                        self.mark(stage, "interrupted", note="execution interrupted; keeping captured evidence")
+                    finally:
+                        self._cleanup_interrupted(stage, keep_workspace)
+                except BaseException as cleanup_exc:
+                    exc.add_note(f"AJX interruption cleanup also failed: {type(cleanup_exc).__name__}")
                 raise
         return self.state
 

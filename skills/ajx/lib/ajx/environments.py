@@ -65,6 +65,8 @@ NEVER create, restart, or replay a missing/expired attempt. Ownership labels are
 checked before removal, then removal uses the full immutable container ID.
 Call abort(ctx) immediately after a wrapped harness timeout: killing the Docker
 client alone does not kill docker-exec workers. shell() does this automatically.
+Container abort stops non-root worker processes while retaining the original
+container for teardown; unconfirmed cancellation falls back to removal.
 Local abort relies on the caller to reap process groups and keeps the prepared
 environment available for cleanup commands until final release().
 For wrapped launches, pass environment_env(ctx) plus declared/auth overrides to
@@ -119,6 +121,34 @@ _PATH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 _MANAGER_PATH = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 _BASE_ENV = {"PATH": _PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
              "TZ": "UTC", "SHELL": "/bin/sh", "TERM": "dumb", "HOME": "/nonexistent"}
+# Run only through Docker inside an ownership-checked, private PID namespace.
+# The non-root control process cannot signal the root-owned lifetime supervisor.
+_STOP_WORKERS = r"""
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    live=
+    for entry in /proc/[0-9]*/status; do
+        pid=${entry#/proc/}
+        pid=${pid%/status}
+        [ "$pid" = "$$" ] && continue
+        uid= state=
+        if ! {
+            while read -r key value rest; do
+                case "$key" in Uid:) uid=$value;; State:) state=$value;; esac
+            done
+        } 2>/dev/null < "$entry"; then
+            [ -e "$entry" ] && exit 1
+            continue
+        fi
+        [ "$uid" = "$1" ] || continue
+        case "$state" in Z|X) continue;; esac
+        live=1
+        kill -s KILL "$pid" 2>/dev/null || :
+    done
+    [ -z "$live" ] && exit 0
+    /bin/sleep 0.05 || exit 1
+done
+exit 1
+"""
 _ROOTS = ("workspace", "config_dir", "cache_dir", "home_dir")
 _LIMITS = {"cpus": 1.0, "memory_mb": 1024, "pids": 256, "tmpfs_mb": 64, "lifetime_seconds": 3600}
 _REQUIRED = {"filesystem_isolation", "network_isolation", "non_root", "resource_limits", "lifetime"}
@@ -624,7 +654,7 @@ def _tail_process(argv, cwd, timeout, env):
         result["timed_out"] = True
     finally:
         # Even after a normal shell exit, do not leave local shell descendants.
-        # This kills the Docker client only; the runner separately aborts its container.
+        # This kills the Docker client only; the runner separately stops container workers.
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
@@ -1462,13 +1492,33 @@ class EnvironmentRunner(Runner):
         return report
 
     def abort(self, ctx):
-        """Stop container workers; local callers reap processes while retaining cleanup access."""
+        """Stop workers while retaining cleanup access; remove containers if stopping is unconfirmed."""
         if self.backend == "local":
             return {"status": "caller_managed", "confirmed": False, "backend": "local",
                     "worker_stop": "caller-managed",
                     "limitations": ["The caller must reap local process groups; abort keeps the prepared "
                                     "environment available for cleanup until final release."]}
-        return self.release(ctx)
+        try:
+            handle = self._handle(ctx, cleanup=True)
+            data = self._find(handle, ctx)
+            if data is None or self._released or time.time() >= handle["expires_at"]:
+                raise EnvironmentError("Environment is absent, released, or expired")
+            # Verify the private PID namespace and non-root identity before any signal.
+            self._check_container(data, handle)
+            stopped = self._docker(
+                ["exec", "--user", handle["worker_user"], "--workdir", "/", data["Id"],
+                 "/usr/bin/env", "-i", "PATH=" + _PATH, "HOME=/nonexistent",
+                 "/bin/sh", "-c", _STOP_WORKERS, "ajx-stop-workers", handle["worker_user"].split(":")[0]],
+                ctx=ctx, handle=handle, timeout=5,
+            )
+            if stopped["code"]:
+                raise EnvironmentError("Worker termination could not be confirmed")
+            self._check_container(self._find(handle, ctx) or {}, handle)
+            return {"status": "workers_stopped", "confirmed": True, "backend": "container",
+                    "name": handle["name"], "container_id": data["Id"], "environment_retained": True}
+        except (EnvironmentError, ValueError, OSError) as exc:
+            cleanup = self.release(ctx)
+            return {**cleanup, "environment_retained": False, "cancellation_error": str(exc)}
 
     def release(self, ctx):
         """Remove only an ownership-verified container; retain bounded host evidence for archive."""

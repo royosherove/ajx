@@ -211,8 +211,11 @@ credentials and stop conditions before running the matrix.
 
 AJX records ownership before creating an environment and keeps it through
 narration. The `release` stage then removes the environment before independent
-reporting. Container timeout cancellation removes the entire owned container;
-a root-owned bounded supervisor also expires it if the coordinator disappears.
+reporting. Container timeout cancellation stops the non-root worker processes
+and retains the same environment for teardown. If cancellation cannot be
+confirmed, AJX removes the owned container and records that environment cleanup
+commands are no longer available. A root-owned bounded supervisor also expires
+the container if the coordinator disappears.
 Local processes have weaker cancellation guarantees, recorded in their report.
 
 Resume never recreates a missing container or silently repeats a task. Changing
@@ -226,6 +229,12 @@ trial using `--stages release,render`.
 `--keep-workspace` retains local files for inspection; a full run still releases
 its container. Known copied credentials are removed during archival. Real
 outputs can contain sensitive data and require review before sharing.
+
+On a handled interruption, AJX attempts pending task teardown and environment
+release, then archives partial evidence unless `--keep-workspace` was requested.
+Known staged credential files are purged even when release is unconfirmed or the
+workspace is retained. Failed release keeps the original ownership records and
+directories for retry; custom auth cleanup hooks wait for confirmed release.
 
 Inspect `environment.json`, `agent-configuration.json` and `run.json`. The report,
 journey and matrix show profile identities, hashes, capabilities, extension

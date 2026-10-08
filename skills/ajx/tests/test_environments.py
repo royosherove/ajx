@@ -25,7 +25,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
-from ajx import environments as envmod  # noqa: E402
+from ajx import base as basemod, environments as envmod  # noqa: E402
 from ajx.environments import EnvironmentError, EnvironmentRunner, normalize_profiles, validate_for_cell  # noqa: E402
 
 
@@ -76,6 +76,7 @@ class FakeDocker:
                      "MemoryLimit": True, "SwapLimit": True, "CpuCfsQuota": True, "PidsLimit": True,
                      "SecurityOptions": ["name=seccomp,profile=builtin", "name=cgroupns"]}
         self.fail_create = False
+        self.fail_cancel = False
         self.fail_remove = False
         self.unreachable = False
         self.replace_at_remove = False
@@ -153,6 +154,9 @@ class FakeDocker:
                 wanted = criterion.removeprefix("name=^/").removesuffix("$")
                 matches = [c for name, c in self.containers.items() if name == wanted]
             return {"code": 0, "stdout": "\n".join(c["Id"] for c in matches), "stderr": ""}
+        if args[:1] == ["exec"]:
+            assert envmod._STOP_WORKERS in args, args
+            return {"code": 1 if self.fail_cancel else 0, "stdout": "", "stderr": ""}
         if args[:3] == ["container", "rm", "--force"]:
             identity = args[3]
             found = next((name for name, c in self.containers.items() if c["Id"] == identity), None)
@@ -866,20 +870,73 @@ class ContainerEnvironmentTest(TempTest):
             data[section][key] = original
         self.assertEqual(self.engine.count(["run"]), 1)
 
-    def test_timeout_aborts_entire_owned_container_not_only_exec_client(self):
+    def test_timeout_stops_workers_and_preserves_the_same_environment_for_teardown(self):
         runner, ctx, handle, report = self.prepared()
         identity = self.engine.containers[handle["name"]]["Id"]
         self.process.side_effect = lambda *a, **kw: result("partial", exit_code=None, timed_out=True)
         response = runner.shell("sleep 600", ctx, timeout=0.1)
         self.assertTrue(response["timed_out"])
         self.assertTrue(response["environment_abort"]["confirmed"])
-        self.assertIn(["container", "rm", "--force", identity], self.engine.calls)
+        self.assertTrue(response["environment_abort"]["environment_retained"])
+        stop = next(args for args in self.engine.calls if args[:1] == ["exec"])
+        self.assertEqual(self.engine._option(stop, "--user"), handle["worker_user"])
+        self.assertEqual(self.engine._option(stop, "--workdir"), "/")
+        self.assertIn(identity, stop)
+        self.assertIn(envmod._STOP_WORKERS, stop)
+        self.assertEqual(stop[-1], handle["worker_user"].split(":")[0])
+        self.assertNotIn(["container", "rm", "--force", identity], self.engine.calls)
+        self.process.side_effect = self.fake_process
+        self.assertEqual(runner.shell("perform-declared-teardown", ctx)["exit_code"], 0)
+        recovered = FakeRunner(runner.profile, self.engine)
+        self.assertIn(identity, recovered.wrap(["tool"], ctx, {}))
+        self.assertTrue(runner.release(ctx)["confirmed"])
         self.assertEqual(self.engine.containers, {})
-        with self.assertRaisesRegex(EnvironmentError, "released"):
-            runner.wrap(["tool"], ctx, {})
-        with self.assertRaisesRegex(EnvironmentError, "missing|expired"):
-            FakeRunner(runner.profile, self.engine).wrap(["tool"], ctx, {})
         self.assertEqual(self.engine.count(["run"]), 1)
+
+    def test_harness_timeout_stops_workers_without_releasing_cleanup_environment(self):
+        runner, ctx, handle, _ = self.prepared()
+        ctx.update(runner=runner, environment_profile=runner.profile, env=runner.environment_env(ctx))
+        with mock.patch.object(basemod, "run_streaming", return_value=result(timed_out=True)):
+            response = basemod.Harness().run(ctx, ["synthetic-worker"], "execute")
+        self.assertTrue(response["environment_abort"]["environment_retained"])
+        self.assertEqual(runner.shell("perform-declared-teardown", ctx)["exit_code"], 0)
+        self.assertEqual(self.engine.count(["exec"]), 1)
+        self.assertEqual(self.engine.count(["container", "rm"]), 0)
+
+    def test_harness_interruption_stops_workers_before_returning_control(self):
+        runner, ctx, handle, _ = self.prepared()
+        ctx.update(runner=runner, environment_profile=runner.profile, env=runner.environment_env(ctx))
+        interruption = KeyboardInterrupt("synthetic interruption")
+        with mock.patch.object(basemod, "run_streaming", side_effect=interruption):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                basemod.Harness().run(ctx, ["synthetic-worker"], "execute")
+        self.assertIs(raised.exception, interruption)
+        self.assertEqual(self.engine.count(["exec"]), 1)
+        self.assertEqual(runner.shell("perform-declared-teardown", ctx)["exit_code"], 0)
+        self.assertEqual(self.engine.count(["container", "rm"]), 0)
+        with mock.patch.object(basemod, "run_streaming", side_effect=interruption), \
+                mock.patch.object(runner, "abort", side_effect=RuntimeError("synthetic cancellation failure")):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                basemod.Harness().run(ctx, ["synthetic-worker"], "execute")
+        self.assertIs(raised.exception, interruption)
+        self.assertIn("RuntimeError", raised.exception.__notes__[-1])
+
+    def test_unconfirmed_worker_stop_falls_back_to_owned_container_removal(self):
+        runner, ctx, handle, _ = self.prepared()
+        self.engine.fail_cancel = True
+        stopped = runner.abort(ctx)
+        self.assertTrue(stopped["confirmed"])
+        self.assertFalse(stopped["environment_retained"])
+        self.assertIn("could not be confirmed", stopped["cancellation_error"])
+        self.assertEqual(self.engine.containers, {})
+
+    def test_failed_stop_and_removal_never_claim_confirmed_cleanup(self):
+        runner, ctx, handle, _ = self.prepared()
+        self.engine.fail_cancel = self.engine.fail_remove = True
+        stopped = runner.abort(ctx)
+        self.assertFalse(stopped["confirmed"])
+        self.assertFalse(stopped["environment_retained"])
+        self.assertIn(handle["name"], self.engine.containers)
 
     def test_expiry_at_execution_stops_owned_container_and_does_not_extend_deadline(self):
         runner, ctx, handle, report = self.prepared()
@@ -900,6 +957,8 @@ class ContainerEnvironmentTest(TempTest):
     def test_foreign_same_name_container_is_never_removed_or_executed(self):
         runner, ctx, handle, report = self.prepared()
         self.engine.containers[handle["name"]]["Config"]["Labels"] = {}
+        self.assertFalse(runner.abort(ctx)["confirmed"])
+        self.assertEqual(self.engine.count(["exec"]), 0)
         cleanup = runner.release(ctx)
         self.assertFalse(cleanup["confirmed"])
         self.assertIn("ownership", cleanup["error"])
@@ -1094,13 +1153,50 @@ class RealDockerIntegrationTest(TempTest):
         self.assertIsNone(second._find(plan_b, b))
         self.assertEqual((a["workspace"] / "installed-during-setup.txt").read_text(), "persistent")
 
-    def test_timeout_stops_background_workers_and_preserves_evidence(self):
+    def test_timeout_stops_detached_workers_and_keeps_environment_for_teardown(self):
         runner, ctx, handle, _ = self.make_real("timeout")
-        response = runner.shell("printf evidence > before-timeout; sleep 120 & wait", ctx, timeout=0.3)
+        worker = ("from pathlib import Path; import time\n"
+                  "while True:\n"
+                  " with Path('heartbeat').open('a') as out: out.write('alive\\n')\n"
+                  " time.sleep(0.02)\n")
+        launch = ("import subprocess,time\n"
+                  "from pathlib import Path\n"
+                  f"subprocess.Popen(['python3','-c',{worker!r}],start_new_session=True)\n"
+                  "Path('before-timeout').write_text('evidence')\n"
+                  "time.sleep(120)\n")
+        response = runner.shell("python3 -c " + shlex.quote(launch), ctx, timeout=1)
         self.assertTrue(response["timed_out"], response)
         self.assertTrue(response["environment_abort"]["confirmed"], response)
-        self.assertIsNone(runner._find(handle, ctx))
+        self.assertTrue(response["environment_abort"]["environment_retained"], response)
+        self.assertIsNotNone(runner._find(handle, ctx))
+        heartbeat = (ctx["workspace"] / "heartbeat").read_bytes()
+        self.assertTrue(heartbeat)
+        time.sleep(0.1)
+        self.assertEqual((ctx["workspace"] / "heartbeat").read_bytes(), heartbeat)
         self.assertEqual((ctx["workspace"] / "before-timeout").read_text(), "evidence")
+        cleanup = runner.shell('printf cleaned > "$HOME/teardown-ran"', ctx)
+        self.assertEqual(cleanup["exit_code"], 0, cleanup)
+        self.assertEqual((ctx["home_dir"] / "teardown-ran").read_text(), "cleaned")
+        self.assertTrue(runner.release(ctx)["confirmed"])
+        self.assertIsNone(runner._find(handle, ctx))
+
+    def test_harness_timeout_retains_prepared_tools_for_teardown(self):
+        runner, ctx, handle, _ = self.make_real("harness-timeout")
+        ctx.update(runner=runner, environment_profile=runner.profile, env=runner.environment_env(ctx))
+        prepared = runner.shell('printf ready > "$HOME/prepared-tool"', ctx)
+        self.assertEqual(prepared["exit_code"], 0, prepared)
+        response = basemod.Harness().run(
+            ctx, ["/bin/sh", "-c", "printf evidence > before-timeout; sleep 120 & wait"],
+            "execute", timeout=1,
+        )
+        self.assertTrue(response["timed_out"], response)
+        self.assertTrue(response["environment_abort"]["environment_retained"], response)
+        cleanup = runner.shell('test "$(cat "$HOME/prepared-tool")" = ready && '
+                               'printf cleaned > "$HOME/teardown-ran"', ctx)
+        self.assertEqual(cleanup["exit_code"], 0, cleanup)
+        self.assertEqual((ctx["home_dir"] / "teardown-ran").read_text(), "cleaned")
+        self.assertEqual((ctx["workspace"] / "before-timeout").read_text(), "evidence")
+        self.assertTrue(runner.release(ctx)["confirmed"])
 
     def test_lifetime_expiry_without_release_or_a_coordinator_timer(self):
         runner, ctx, handle, _ = self.make_real("expiry", limits={"lifetime_seconds": 12})
