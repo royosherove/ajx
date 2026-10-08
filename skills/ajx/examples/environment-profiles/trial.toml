@@ -1,0 +1,54 @@
+[trial]
+id = "csv-skills"
+product = "Python CSV tools"
+environment = "developer"
+workspace_root = "/tmp"
+output_dir = "ajx-reports"
+repetitions = 1
+parallel = 1
+timeout_seconds = 300
+narrate_timeout_seconds = 300
+cache = "isolated"
+
+[task]
+prompt_file = "task.md"
+fixture_dir = "fixture"
+human = "unavailable"
+
+[environments.developer]
+backend = "local"
+tools = [{ name = "python", argv = ["python3", "--version"], required = true }]
+
+[agent_configurations.plain]
+skills = { mode = "none" }
+plugins = { mode = "none" }
+hooks = { mode = "none" }
+
+[agent_configurations.guided]
+skills = { mode = "selected", paths = ["skills/csv-guide"] }
+plugins = { mode = "none" }
+hooks = { mode = "none" }
+
+[reporter]
+harness = "codex"
+auth = "codex-chatgpt"
+
+[[verify]]
+name = "CSV values"
+type = "shell"
+location = "host"
+run = '''python3 -I -c 'import csv,hashlib,json; from pathlib import Path; raw=Path("orders.json").read_bytes(); assert hashlib.sha256(raw).hexdigest()=="ad757ce2b5e6f3fb0a8a76ad171780cb31f64eef144c8ffc8d66f963ee9f5df3"; expected=json.loads(raw); reader=csv.DictReader(Path("orders.csv").open(newline="")); rows=list(reader); assert reader.fieldnames==["id","item","quantity"]; assert rows == [{k: str(v) for k,v in row.items()} for row in expected]' '''
+
+[[cells]]
+id = "plain"
+harness = "codex"
+auth = "codex-chatgpt"
+config = "clean"
+agent_configuration = "plain"
+
+[[cells]]
+id = "guided"
+harness = "codex"
+auth = "codex-chatgpt"
+config = "clean"
+agent_configuration = "guided"

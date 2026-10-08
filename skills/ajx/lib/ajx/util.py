@@ -179,6 +179,10 @@ def run_streaming(argv, cwd, out_path, err_path, timeout, env=None, stdin_data=N
                 if threads[0].is_alive():
                     _killpg(proc.pid, signal.SIGKILL)
                     threads[0].join(grace)
+        except BaseException:
+            _killpg(proc.pid, signal.SIGTERM)
+            _killpg(proc.pid, signal.SIGKILL)
+            raise
         finally:
             if timer:
                 timer.cancel()
@@ -207,3 +211,21 @@ def run_shell(cmd, cwd, timeout=600, env=None, shell=None):
         code, timed_out, out, err = None, False, "", f"{type(exc).__name__}: {exc}"
     return {"cmd": cmd, "exit_code": code, "timed_out": timed_out, "stdout": out[-8000:],
             "stderr": err[-4000:], "started_at": started, "stopped_at": now()}
+
+
+def context_shell(cmd, ctx, timeout=600, location="host"):
+    """Run a trusted lifecycle/check command at its declared execution location.
+
+    Host verification is deliberately independent of the worker's process and
+    container. An environment-located check has that environment's trust limits.
+    Legacy runners retain their original host-side lifecycle behavior.
+    """
+    runner = ctx.get("runner")
+    managed = bool(ctx.get("environment_profile"))
+    extra = dict(ctx.get("check_env") or ctx.get("env") or {})
+    if managed and location == "environment":
+        result = runner.shell(cmd, ctx, timeout, env=extra)
+        return {**result, "location": "environment"}
+    env = (runner.host_env(ctx, extra, ctx.get("unset_env") or ()) if managed else
+           child_env(extra, ctx.get("unset_env") or ()))
+    return {**run_shell(cmd, ctx["workspace"], timeout=timeout, env=env), "location": "host"}

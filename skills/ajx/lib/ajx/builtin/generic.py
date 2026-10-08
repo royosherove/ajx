@@ -2,15 +2,17 @@
 
 import os
 import re
+import stat
 import urllib.error
 import urllib.request
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 from ..base import (AWS_CREDENTIAL_ENV, Auth, Check, Harness, Runner, auth_args, empty_telemetry, fill, read_jsonl,
                     resolve, version_of, which)
 from ..plugins import names as plugin_names, register
-from ..util import fill_all, run_shell
+from ..util import context_shell, fill_all, run_shell
 
 
 # ----------------------------------------------------------------------------- auth
@@ -273,7 +275,7 @@ class ShellCheck(Check):
     """run = "<shell command>"; expect_exit (default 0); expect_stdout = "<regex>" (optional)."""
 
     def run(self, check, ctx):
-        res = run_shell(check["run"], ctx["workspace"], timeout=check["timeout"], env=_env_for_checks(ctx))
+        res = context_shell(check["run"], ctx, timeout=check["timeout"], location=check.get("location", "host"))
         passed = (not res["timed_out"]) and res["exit_code"] == int(check.get("expect_exit", 0))
         if passed and check.get("expect_stdout"):
             passed = re.search(check["expect_stdout"], res["stdout"], re.M) is not None
@@ -285,15 +287,51 @@ class ShellCheck(Check):
 class FileExistsCheck(Check):
     """path = "<glob relative to workspace>"; min_count (default 1); contains = "<regex>" (optional)."""
 
+    @staticmethod
+    def _matches(root_fd, relative, regex):
+        """Open every component beneath the workspace without following worker-created links."""
+        if not relative.parts or any(part in (".", "..") for part in relative.parts):
+            return False
+        try:
+            with ExitStack() as opened:
+                parent_fd = root_fd
+                for part in relative.parts[:-1]:
+                    parent_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                        dir_fd=parent_fd)
+                    opened.callback(os.close, parent_fd)
+                fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=parent_fd)
+                opened.callback(os.close, fd)
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    return False
+                with os.fdopen(fd, encoding="utf-8", errors="replace", closefd=False) as stream:
+                    return regex is None or regex.search(stream.read()) is not None
+        except (OSError, ValueError):
+            return False
+
     def run(self, check, ctx):
         from ..util import now
         started = now()
-        hits = [p for p in Path(ctx["workspace"]).glob(check["path"]) if p.is_file()]
-        if check.get("contains"):
-            rx = re.compile(check["contains"], re.M)
-            hits = [p for p in hits if rx.search(p.read_text(errors="replace"))]
+        workspace, pattern = Path(ctx["workspace"]), check.get("path")
+        if not isinstance(pattern, str) or not pattern or "\x00" in pattern \
+                or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            return {"passed": False, "detail": "file_exists requires a glob beneath the workspace",
+                    "started_at": started, "stopped_at": now()}
+        regex = re.compile(check["contains"], re.M) if check.get("contains") else None
+        hits = []
+        try:
+            root_fd = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                for path in workspace.glob(pattern):
+                    relative = path.relative_to(workspace)
+                    if self._matches(root_fd, relative, regex):
+                        hits.append(path)
+            finally:
+                os.close(root_fd)
+        except OSError:
+            pass  # Missing, replaced, or inaccessible workspaces cannot supply file evidence.
         passed = len(hits) >= int(check.get("min_count", 1))
-        rel = [str(p.relative_to(ctx["workspace"])) for p in hits[:20]]
+        rel = [str(p.relative_to(workspace)) for p in hits[:20]]
         return {"passed": passed, "detail": f"{len(hits)} match(es): {rel}", "started_at": started,
                 "stopped_at": now()}
 
@@ -305,19 +343,25 @@ class HttpCheck(Check):
     def run(self, check, ctx):
         from ..util import now
         started = now()
+        isolated = bool(ctx.get("environment_profile"))
+        proxy_policy = "disabled" if isolated else "urllib_default"
+        # A fresh opener avoids both ambient proxy discovery and any global opener
+        # another coordinator component installed. Never mutate urllib's global state.
+        open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+                    if isolated else urllib.request.urlopen)
         try:
-            with urllib.request.urlopen(resolve(check["url"]), timeout=check["timeout"]) as resp:
+            with open_url(resolve(check["url"]), timeout=check["timeout"]) as resp:
                 status, body = resp.status, resp.read(65536).decode(errors="replace")
         except urllib.error.HTTPError as exc:
             status, body = exc.code, ""
         except Exception as exc:  # noqa: BLE001
             return {"passed": False, "detail": f"request failed: {type(exc).__name__}: {exc}",
-                    "started_at": started, "stopped_at": now()}
+                    "proxy_policy": proxy_policy, "started_at": started, "stopped_at": now()}
         passed = status == int(check.get("expect_status", 200))
         if passed and check.get("expect_body"):
             passed = re.search(check["expect_body"], body) is not None
         return {"passed": passed, "detail": f"status={status}", "stdout": body[:2000],
-                "started_at": started, "stopped_at": now()}
+                "proxy_policy": proxy_policy, "started_at": started, "stopped_at": now()}
 
 
 __all__ = ["Declarative", "version_of", "which"]

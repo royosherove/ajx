@@ -1,0 +1,316 @@
+# Configure an agent environment
+
+An environment describes where the task agent runs, its starting tools and
+permissions. An agent configuration selects its skills and optional extensions.
+Select both per matrix cell. The initial implementation supports local processes
+and local Docker containers; AWS and other remote hosts can be added as backends.
+
+## Try a skill comparison
+
+From an AJX checkout, copy the example into the ignored trials directory:
+
+```sh
+mkdir -p trials
+cp -R skills/ajx/examples/environment-profiles trials/environment-profiles
+ajx validate trials/environment-profiles/trial.toml
+ajx doctor trials/environment-profiles/trial.toml
+```
+
+The example compares a plain Codex worker with one given a small CSV skill. Both
+receive the same task and synthetic input. Review the plan and credentials, then
+run the trial:
+
+```sh
+ajx run trials/environment-profiles/trial.toml
+```
+
+Agent and reporter calls use the configured provider. Validation, capability
+checks and the repository's synthetic tests do not run paid agent tasks.
+
+## Select named profiles
+
+```toml
+[environments.developer]
+backend = "local"
+tools = [{ name = "python", argv = ["python3", "--version"], required = true }]
+
+[agent_configurations.plain]
+skills = { mode = "none" }
+plugins = { mode = "none" }
+hooks = { mode = "none" }
+
+[agent_configurations.guided]
+skills = { mode = "selected", paths = ["skills/csv-guide"] }
+plugins = { mode = "none" }
+hooks = { mode = "none" }
+
+[[cells]]
+id = "guided"
+harness = "codex"
+config = "clean"
+environment = "developer"
+agent_configuration = "guided"
+```
+
+`trial.environment` and `trial.agent_configuration` supply defaults for cells.
+An agent profile without an environment uses an implicit local environment.
+Profiles require `config = "clean"` and isolated caches, and cannot be combined
+with legacy `[runner]` settings.
+
+Each attempt gets separate workspace, home, harness configuration and cache
+directories. The worker receives a minimal environment plus explicitly declared
+variables and the selected auth profile's required variables. Other caller
+credentials, proxies and startup variables are not inherited. Declare any extra
+provider or task variables in the trial or auth profile. An explicit `PATH` can
+select additional local tools; otherwise the environment uses its own install
+paths and a small system path.
+
+Authentication must work with these fresh directories even when no agent skill
+profile is selected. AJX rejects auth profiles that depend on the caller's home
+or stored login without staging credentials. Use a supported credential-copying
+profile, such as `codex-chatgpt`, or explicitly configured environment-based
+authentication; a successful login in the caller's terminal is insufficient.
+
+Local profiles isolate starting directories and configuration. They **do not
+enforce a filesystem, network or privilege sandbox**. Required restrictions that
+this backend cannot enforce are rejected.
+
+## Run inside a container
+
+Prepare a Linux image containing the chosen harness and the initial tools. Pull
+or build it explicitly, inspect its immutable image ID, and use that ID or a
+repository digest in the profile:
+
+```sh
+docker image inspect YOUR-IMAGE --format '{{.Id}}'
+```
+
+The image value below is a placeholder that must be replaced:
+
+```toml
+[environments.container]
+backend = "container"
+image = "sha256:REPLACE_WITH_THE_FULL_IMAGE_ID"
+network = "bridge"
+required = ["filesystem_isolation", "non_root", "resource_limits", "lifetime"]
+permissions = { filesystem = "isolated", root = "forbid", package_install = "user" }
+limits = { cpus = 1, memory_mb = 1024, pids = 256, tmpfs_mb = 64, lifetime_seconds = 3600 }
+```
+
+Images must already exist on the local Linux Docker daemon. Mutable tags,
+implicit pulls, privileged containers, arbitrary Docker arguments and remote
+daemon endpoints are unsupported. `docker_host` can select an explicit local
+Unix socket.
+
+The worker runs as a numeric non-root user with a read-only root filesystem,
+dropped capabilities and no privilege escalation. It can install user-level
+tools in its own writable directories. Those installations survive setup,
+execution and narration in the same container. System package installation as
+root is not supported in this initial backend.
+
+`network = "none"` is the default and leaves only loopback. `bridge` permits
+outbound access, including reachable host/LAN services; it is not an endpoint
+allowlist. A provider-backed harness normally needs outbound access.
+
+Only the attempt's declared directories are mounted. Reports, verifier files,
+other attempts, caller credentials and the Docker socket are not automatically
+mounted. The image must contain ordinary Linux `sh`, `env`, `sleep`, `uname` and
+`id` utilities. AJX checks runtime identity, resource settings and synthetic
+allowed/denied operations before launching the agent.
+
+### Additional directories
+
+Declare bounded fixture directories under the trial directory:
+
+```toml
+[[environments.container.mounts]]
+source = "reference-data"
+target = "/reference-data"
+access = "read"
+
+[[environments.container.mounts]]
+source = "starting-project"
+target = "/project"
+access = "write"
+```
+
+Read mounts are read-only. Write mounts use a fresh copy stored with the attempt,
+so the original directory is preserved. Overlapping mounts, traversal, symlinks,
+special files and credential/configuration/report directories are rejected.
+Recorded hashes describe the starting data; read-mount sources must remain fixed
+while a trial runs.
+
+## Select skills without changing your installation
+
+Skills support `none`, `selected` and `snapshot`. Both `selected` and `snapshot`
+require explicit local directories containing `SKILL.md`; snapshot mode never
+imports a live user configuration directory. AJX copies the complete supported
+skill tree, records content hashes, and checks for source changes during copying.
+An optional `pins = { "csv-guide" = "FULL_SHA256" }` table asserts expected hashes.
+
+The initial parser accepts portable name/description frontmatter and supported
+descriptive metadata. Unsupported execution/dependency fields, hidden caches,
+credential-like filenames, symlinks and ambiguous trees fail validation. This
+structural check does not scan arbitrary file contents for secrets. Snapshot copies are
+checked again before execution and narration. Setup or a previous turn cannot
+silently add a different skill or modify the pinned profile.
+
+Codex, Claude Code and Kiro CLI have explicit profile controls. AJX checks the
+installed CLI's version, required flags and supported configuration before use,
+inside the selected environment. Unsupported versions fail before the task.
+Other harnesses can still use existing worker adapters, but explicit skill
+profiles require a qualified adapter.
+
+| Harness | Authentication for explicit profiles |
+|---|---|
+| Codex | Copied `codex-chatgpt` login or a configured API/provider auth profile |
+| Claude Code | API-key or supported cloud-provider credentials below; subscription/OAuth account skill syncing is not supported |
+| Kiro CLI | Explicit `env` auth declaring `KIRO_API_KEY`; the image/local install needs its chat companion executable |
+
+For example, Kiro can use:
+
+```toml
+[auth.kiro]
+type = "env"
+isolates_config = true
+required_env = ["KIRO_API_KEY"]
+```
+
+Select `auth = "kiro"` on the Kiro cell. Required variable values come from the
+caller; do not write credentials into TOML.
+
+Explicit environments reject a variable that is both supplied and matched by
+`auth.unset`, including trailing-star patterns. For example, an
+`env.OPENAI_API_KEY` declaration together with `unset = ["OPENAI_*"]` fails
+validation before preparation. Remove the overlapping unset pattern or remove
+the declaration. This check covers trial, cell and auth variables, including
+variables forwarded through `required_env`. Unrelated caller credentials are
+not inherited, so broad ambient-clearing patterns are usually unnecessary.
+Legacy runners retain their existing override precedence.
+
+Built-in cloud profiles require complete, explicitly declared credential routes
+for both local and container environments:
+
+| Auth type | Supported route |
+|---|---|
+| `claude-bedrock` | `AWS_REGION` plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or `AWS_BEARER_TOKEN_BEDROCK`. Declare `AWS_SESSION_TOKEN` too when using temporary keys. |
+| `claude-foundry` | `ANTHROPIC_FOUNDRY_RESOURCE` or `ANTHROPIC_FOUNDRY_BASE_URL`, plus `ANTHROPIC_FOUNDRY_API_KEY` or all of `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_CLIENT_SECRET`. |
+| `gemini-vertex` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_API_KEY`. |
+| `claude-vertex` | Built-in file-based ADC is unsupported in explicit environments; use a custom auth plugin with credential staging and cleanup. |
+
+Declare credentials in the trial, cell, or auth environment. Prefer `auth.env`
+with `${VAR}` references so secrets stay outside the trial:
+
+```toml
+[auth.bedrock]
+type = "claude-bedrock"
+env = { AWS_REGION = "${AJX_AWS_REGION}", AWS_BEARER_TOKEN_BEDROCK = "${AJX_BEDROCK_TOKEN}" }
+```
+
+Selecting a cloud profile does not forward ambient credentials. AWS profile/SSO
+files, default ADC, Azure CLI login, file-based and default identity routes, and
+skip-auth controls are not supplied by these built-ins. Explicit file paths do
+not make caller files available in a container. Unsupported selectors are
+rejected even alongside direct credentials; remove them from explicit env
+declarations. An unset pattern cannot cancel a conflicting declaration. A custom auth
+plugin must stage credentials inside the selected environment and remove them
+before archival. A preconfigured gateway can use `type = "env"` with its complete
+explicit auth contract. Legacy runs without environment profiles retain their
+existing credential behavior.
+
+Optional plugins and hooks currently support **`none` only**. Their controls
+are separate from skills; selecting plugins/hooks is rejected until their
+dependencies and permissions have an implemented adapter. Managed policy and
+harness built-ins may remain and are reported separately. `require_absence`
+is not supported: disabled activation is not a claim that arbitrary content is
+unreadable or that every built-in was removed.
+
+Installed, discoverable, enabled, loaded and invoked are separate report states.
+Without activation telemetry, loaded/invoked remain `unknown`. No skill-use or
+usability improvement is inferred merely from enabling a skill.
+
+## Setup, verification and cleanup
+
+Setup, preflight and teardown default to `location = "environment"`. Verification
+defaults to `location = "host"`, using trusted check code outside the container.
+Shell checks can explicitly select either location. File and HTTP checks run on
+the host; host file checks inspect collected/bind-mounted output. `file_exists`
+globs must stay beneath the workspace. Only regular files reached without
+symlinks in the workspace or any path component can satisfy a file check.
+
+HTTP checks use a fresh direct connection with ambient and global-opener proxies
+disabled, recorded as `proxy_policy = "disabled"` in verification results.
+The coordinator's normal TLS certificate trust still applies. An HTTP check
+that needs a proxy must use an explicitly configured host shell check.
+
+With a root coordinator, AJX restores the planned non-root worker's ownership
+of its private workspace, home, configuration and cache after staging
+configuration and after each successful host-located setup command. This lets
+the worker modify prepared files without changing ownership of original
+extra-mount sources or unrelated host directories.
+
+Host shell checks use a separate private home and cache, with tools resolved
+from the coordinator's absolute search paths outside worker directories. A
+worker-installed tool cannot replace the host check's executable through its
+`PATH`. Checks still read worker-controlled output; use trusted validation code
+and an isolated interpreter mode when applicable, such as Python's `-I`.
+
+A shell check inside the environment shares its potentially modified tools and
+files. Its result has that trust limit. Specify the task's success checks,
+credentials and stop conditions before running the matrix.
+
+AJX records ownership before creating an environment and keeps it through
+narration. The `release` stage then removes the environment before independent
+reporting. Container timeout cancellation stops the non-root worker processes
+and retains the same environment for teardown. If cancellation cannot be
+confirmed, AJX removes the owned container and records that environment cleanup
+commands are no longer available. A root-owned bounded supervisor also expires
+the container if the coordinator disappears.
+Local processes have weaker cancellation guarantees, recorded in their report.
+
+If teardown includes environment-located commands and any teardown step fails,
+automatic release and archival are deferred so you can repair the cleanup
+inputs and retry the full sequence in the same environment:
+
+```sh
+ajx run trial.toml --cells CELL --stages teardown,release,render,archive
+```
+
+When the requested stages contain only `teardown`, `release`, `render` and
+`archive`, AJX uses the normalized profiles and task prompt saved in the matrix
+plan. Deleted or changed skill sources, task fixtures and mount fixtures do not
+prevent cleanup of an existing attempt. Recovery preserves the original plan,
+skips repetitions that never started, and renders without model synthesis.
+Saved cleanup profiles cannot prepare, execute or narrate a task. A fresh run
+still validates its source files. If a matrix has no saved profile contract,
+restore its original profile sources before retrying cleanup.
+
+Known staged credential files are still purged; restore any task credentials
+needed for the retry through the trial's declared credential inputs. A container
+keeps its original expiry deadline and is never restarted or recreated for a
+retry. To discard the environment while leaving task cleanup recorded as failed,
+explicitly run `--stages release,render,archive` without `teardown`. Host-located
+cleanup failures do not retain the worker environment when the teardown has no
+environment-located commands.
+
+Resume never recreates a missing container or silently repeats a task. Changing
+a recorded profile, cell or prompt requires a new output directory. A failed
+preparation is preserved too; fix the configuration and start a new attempt
+instead of silently replacing its environment. Failed
+release remains an error with evidence preserved; it cannot become successful
+cleanup merely because the task succeeded. Retry release with the unchanged
+trial using `--stages release,render`.
+
+`--keep-workspace` retains local files for inspection; a full run still releases
+its container. Known copied credentials are removed during archival. Real
+outputs can contain sensitive data and require review before sharing.
+
+On a handled interruption, AJX attempts pending task teardown and environment
+release, then archives partial evidence unless `--keep-workspace` was requested.
+Known staged credential files are purged even when release is unconfirmed or the
+workspace is retained. Failed release keeps the original ownership records and
+directories for retry; custom auth cleanup hooks wait for confirmed release.
+
+Inspect `environment.json`, `agent-configuration.json` and `run.json`. The report,
+journey and matrix show profile identities, hashes, capabilities, extension
+states and cleanup status alongside the asks.

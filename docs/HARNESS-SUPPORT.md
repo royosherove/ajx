@@ -14,7 +14,8 @@ needs file access and a shell that can run Python 3.11+.
 | Kiro CLI | `~/.kiro/skills/ajx` | `/ajx` |
 | Another Agent Skills host | Its documented skill directory | Its skill picker or “Use the AJX skill…” |
 
-The README includes installation commands. Start a new session after installing.
+Start with the [README installation commands](../README.md#1-get-the-skill) and
+[first-run guide](GETTING-STARTED.md). Start a new session after installing.
 The host's skill mechanism loads the coordinator instructions; the worker's
 headless CLI is selected separately in the trial.
 
@@ -73,6 +74,25 @@ Copied reporter credentials are cleaned up after success or failure.
 Codex's reporter sandbox permits read-only commands. Kiro retains user
 configuration and reports that limit. A fresh session or restricted tool policy
 is not a guarantee of complete filesystem or context isolation.
+
+## Explicit worker skill profiles
+
+[Environment and agent profiles](../skills/ajx/references/environments.md) add
+`none`, `selected` and explicit `snapshot` skill modes for Codex, Claude Code and
+Kiro CLI workers. They use fresh configuration directories and capability checks
+inside the selected local/container environment. They do not change the fixed
+reporter's configuration.
+
+These controls require supported CLI versions and isolated authentication.
+Codex can copy its login; Claude profiles use API/cloud-provider auth; Kiro
+profiles require an explicit `KIRO_API_KEY` and the chat companion executable.
+Unsupported controls fail before execution. Optional plugins and hooks support
+`none`; selected entries remain future work.
+
+Profiles record content hashes and separate installed/enabled state from
+loaded/invoked telemetry. Built-in and managed sources retain explicit
+limitations. This feature does not upgrade an adapter's live-validation status
+in the table above.
 
 ## Extend an adapter
 

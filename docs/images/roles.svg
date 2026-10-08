@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 458" role="img" aria-labelledby="title desc">
+<title id="title">Who does what</title><desc id="desc">The coordinator has the discussion and prepares a neutral task. The worker receives the task and attempts it. After verification and cleanup, narration and a fixed reporter turn evidence into asks.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M1 1L7 4L1 7" fill="none" stroke="#77dacf" stroke-width="1.5"/></marker></defs>
+<rect width="640" height="458" rx="12" fill="#0d1728"/>
+<style>text{font-family:system-ui,-apple-system,sans-serif;fill:#e8edf4}.label{font-size:27px;font-weight:650}.small{font-size:23px;fill:#a6b4c8}.cap{font-size:21px;letter-spacing:2px;fill:#77dacf}.rule{fill:none;stroke:#77dacf;stroke-width:2;marker-end:url(#arrow)}</style>
+<text x="32" y="42" class="cap" >WHO DOES WHAT</text>
+<circle cx="57" cy="91" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="100" class="label" text-anchor="middle">1</text>
+<text x="102" y="87" class="label" >You and the coordinator</text>
+<text x="102" y="122" class="small" >Define the outcome and allowed access</text>
+<path class="rule" d="M57 145V165"/>
+<circle cx="57" cy="202" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="211" class="label" text-anchor="middle">2</text>
+<text x="102" y="198" class="label" >A fresh task worker</text>
+<text x="102" y="233" class="small" >Receives the task, without defect hints</text>
+<path class="rule" d="M57 256V276"/>
+<circle cx="57" cy="313" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="322" class="label" text-anchor="middle">3</text>
+<text x="102" y="309" class="label" >Checks and reporting</text>
+<text x="102" y="344" class="small" >Verify output; analyze recorded evidence</text>
+<path d="M32 396H608" stroke="#30415a"/><text x="32" y="432" class="small" >Keep the task separate from its evaluation.</text>
+</svg>

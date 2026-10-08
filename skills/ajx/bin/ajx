@@ -75,6 +75,8 @@ harness = "{harness}"
 # model = "your-model"            # or models = ["model-a", "model-b"]: one cell per model
 config = "clean"                  # request supported isolation; inspect doctor/report limits; user = normal config
 # auth = "inherit"                # or a [auth.*] profile name, or an auth type (ajx plugins)
+# environment = "developer"      # named [environments.developer] profile
+# agent_configuration = "plain"  # named [agent_configurations.plain] profile
 '''
 
 PROMPT_TEMPLATE = '''I want to try {product}.
@@ -140,9 +142,16 @@ def cmd_doctor(args):
     print(f"python {sys.version.split()[0]}")
     names = specmod.harness_names(spec) if spec else plugins.names("harness")
     wanted = {c["harness"] for c in spec["cells"]} | {spec["reporter"]["harness"]} if spec else set(names)
+    host_required = ({spec["reporter"]["harness"]} | {
+        c["harness"] for c in spec["cells"]
+        if (specmod.environment_for(spec, c) or {}).get("backend") != "container"
+    }) if spec else wanted
     ok = True
     for name in names:
         if name not in wanted:
+            continue
+        if name not in host_required:
+            print(f"harness {name:14s} availability will be checked inside the selected container during prepare")
             continue
         h = specmod.harness_for(spec, name) if spec else plugins.get("harness", name)()
         avail = h.available()
@@ -157,9 +166,8 @@ def cmd_doctor(args):
         print(f"workspace_root={spec['trial']['workspace_root']} output_dir={spec['trial']['output_dir']}")
         if not ok:
             print("NOT READY: fix the FAILED/PROBLEMS lines above before `ajx run`.")
-        print("Workers run with all tool permissions auto-approved. Show the user the TASK identity (the account "
-              "the worker acts in) and get confirmation that it is a sandbox before `ajx run`. The harness auth "
-              "identity is only the model's credentials.")
+        print("Review the declared permissions and TASK identity before running. Model authentication and "
+              "task access are separate. Environment profiles report which restrictions are enforced.")
     return 0 if ok else 1
 
 
@@ -190,6 +198,24 @@ def _doctor_cells(spec, tmp):
         auth = specmod.auth_for(spec, cell)
         rn = specmod.runner_for(spec, cell)
         probs = auth.problems()
+        profile = specmod.environment_for(spec, cell)
+        if profile:
+            print(f"cell {cell['id']:16s} harness={cell['harness']} model={cell.get('model') or 'harness default'}")
+            print(f"    environment={cell.get('environment') or 'ajx-local'} backend={profile['backend']} "
+                  f"agent_configuration={cell.get('agent_configuration') or 'legacy clean settings'}")
+            backend_check = rn.doctor()
+            healthy = backend_check.get("status") == "available"
+            print("    backend prerequisites: " + ("available" if healthy else "FAILED"))
+            if backend_check.get("error"):
+                print(f"    {backend_check['error']}")
+            ok &= healthy
+            if probs:
+                print(f"    PROBLEMS: {probs}")
+                ok = False
+            print("    Profile schema and adapter controls validated. Runtime inventory, permissions, and "
+                  "environment-located preflight commands are checked during prepare.")
+            print("    Setup/teardown use their declared location; verification defaults to the host.")
+            continue
         ctx = envcheck.placeholder_ctx(spec, cell, auth, rn, tmp)
         checks, view = envcheck.inspect_cell(spec, cell, harness, auth, rn, ws, ctx)
         eff = view["effective"]
@@ -273,7 +299,10 @@ def cmd_validate(args):
     print(f"cells={len(spec['cells'])} repetitions={spec['trial']['repetitions']} runs={len(plan)} parallel={spec['trial']['parallel']}")
     for c, r in plan:
         print(f"  {c['id']}-r{r}: {c['harness']} model={c.get('model') or 'harness default'} config={c['config']} "
-              f"auth={c.get('auth') or 'default'}")
+              f"auth={c.get('auth') or 'default'}"
+              + (f" environment={c.get('environment') or 'ajx-local'} "
+                 f"agent_configuration={c.get('agent_configuration') or 'legacy'}"
+                 if specmod.environment_for(spec, c) else ""))
     print(f"verify checks={len(spec['verify'])} setup={len(spec['setup'])} teardown={len(spec['teardown'])} "
           f"preflight={len(spec['preflight'])} task identity_cmd={'set' if spec['task'].get('identity_cmd') else 'unset'}")
     print(f"output_dir={spec['trial']['output_dir']}")
@@ -281,6 +310,9 @@ def cmd_validate(args):
     with tempfile.TemporaryDirectory() as tmp:  # probes the agent's tool shell; runs no identity commands
         ws = envcheck.scratch_workspace(spec, tmp)
         for cell in (c for c in spec["cells"] if c["id"] in wanted):
+            if specmod.environment_for(spec, cell):
+                print(f"PROFILE {cell['id']}: configuration validated; actual environment checks run during prepare")
+                continue
             auth, rn = specmod.auth_for(spec, cell), specmod.runner_for(spec, cell)
             checks, view = envcheck.inspect_cell(spec, cell, specmod.harness_for(spec, cell["harness"]), auth, rn, ws,
                                                  envcheck.placeholder_ctx(spec, cell, auth, rn, tmp))
@@ -294,8 +326,8 @@ def _cells(args):
 
 
 def cmd_run(args):
-    spec = specmod.load(args.trial)
     stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
+    spec = specmod.load(args.trial, cleanup_only=runner.cleanup_only(stages))
     log = lambda m: print(f"[{__import__('datetime').datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)  # noqa: E731
     meta = runner.run_matrix(spec, only_cells=_cells(args), stages=stages, keep_workspace=args.keep_workspace,
                              log=log, dry_run=args.dry_run, synthesize=not args.no_synthesis)
@@ -304,12 +336,12 @@ def cmd_run(args):
         return 0
     out = Path(spec["trial"]["output_dir"])
     print(f"\nmatrix report: {out / 'index.html'}\nmarkdown:      {out / 'matrix.md'}")
-    return cmd_status(args)
+    return cmd_status(argparse.Namespace(trial=str(out)))
 
 
 def cmd_status(args):
     path = Path(args.trial)
-    out = Path(specmod.load(path)["trial"]["output_dir"]) if path.is_file() else path
+    out = Path(specmod.load(path, cleanup_only=True)["trial"]["output_dir"]) if path.is_file() else path
     runs = sorted((out / "runs").iterdir()) if (out / "runs").exists() else []
     print(f"{'run':20s} " + " ".join(f"{s[:7]:>7s}" for s in runner.STAGES) + "  verified")
     bad, cleanup = 0, []

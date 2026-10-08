@@ -1,5 +1,6 @@
 """Trial file (trial.toml) loading, validation and plugin resolution."""
 
+import os
 import random
 import re
 import shlex
@@ -7,7 +8,7 @@ import tomllib
 from pathlib import Path
 
 from . import plugins
-from .util import sha256_bytes, sha256_file
+from .util import read_json, sha256_bytes, sha256_file
 
 CONFIGS = ("clean", "user")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
@@ -23,7 +24,7 @@ def _need(cond, msg):
         raise SpecError(msg)
 
 
-def load(path):
+def load(path, *, cleanup_only=False):
     path = Path(path).resolve()
     _need(path.exists(), f"trial file not found: {path}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -35,7 +36,7 @@ def load(path):
     _need(trial.get("product"), "trial.product is required")
     defaults = {"product_version_cmd": None, "workspace_root": "/tmp", "repetitions": 1, "parallel": 1,
                 "timeout_seconds": 1800, "max_budget_usd": None, "order_seed": 0, "cache": "isolated",
-                "narrate_timeout_seconds": 900}
+                "narrate_timeout_seconds": 900, "environment": None, "agent_configuration": None}
     for k, v in defaults.items():
         trial.setdefault(k, v)
     trial.setdefault("output_dir", str(base / "ajx-reports" / trial["product"] / trial["id"]))
@@ -51,12 +52,29 @@ def load(path):
     trial["output_dir"] = str((base / trial["output_dir"]).resolve())
     trial["workspace_root"] = str(Path(trial["workspace_root"]).expanduser().resolve())
 
+    saved_plan = (read_json(Path(trial["output_dir"]) / "matrix-plan.json", {}) or {}) if cleanup_only else {}
+    _need(isinstance(saved_plan, dict), "saved matrix plan must be an object")
+    saved_profiles = saved_plan.get("normalized_profiles")
+    if saved_profiles is not None:
+        _need(isinstance(saved_profiles, dict) and saved_profiles.get("schema_version") == 1
+              and all(isinstance(saved_profiles.get(key), dict)
+                      for key in ("environments", "agent_configurations")),
+              "saved profile contract is invalid; cleanup requires the original matrix plan")
+        _need(saved_plan.get("trial_file") == str(path)
+              and saved_plan.get("trial_id") == trial["id"]
+              and saved_plan.get("product") == trial["product"],
+              "saved profile contract belongs to a different trial")
+
     task = dict(raw.get("task") or {})
     _need(task.get("prompt_file"), "task.prompt_file is required")
-    prompt_path = (base / task["prompt_file"]).resolve()
+    prompt_path = (Path(trial["output_dir"]) / "task-prompt.md" if saved_profiles is not None
+                   else (base / task["prompt_file"]).resolve())
     _need(prompt_path.exists(), f"task prompt not found: {prompt_path}")
     prompt_bytes = prompt_path.read_bytes()
     _need(prompt_bytes.strip(), "task prompt is empty")
+    if saved_profiles is not None:
+        _need(sha256_bytes(prompt_bytes) == saved_plan.get("task_prompt_sha256"),
+              "saved task prompt does not match the original matrix plan")
     task.update(prompt_path=str(prompt_path), prompt_sha256=sha256_bytes(prompt_bytes),
                 prompt_text=prompt_bytes.decode("utf-8"))
     task.setdefault("materials", [])
@@ -71,7 +89,8 @@ def load(path):
     task["identity_cmd"] = ident
     if task.get("fixture_dir"):
         fixture = (base / task["fixture_dir"]).resolve()
-        _need(fixture.is_dir(), f"fixture_dir not found: {fixture}")
+        if not cleanup_only:
+            _need(fixture.is_dir(), f"fixture_dir not found: {fixture}")
         task["fixture_dir"] = str(fixture)
     else:
         task["fixture_dir"] = None
@@ -96,6 +115,16 @@ def load(path):
             if key == "verify":
                 _need(entry["type"] in plugins.names("check"),
                       f"verify[{i}].type {entry['type']!r} unknown; available {plugins.names('check')}")
+                if entry["type"] == "file_exists":
+                    pattern = entry.get("path")
+                    _need(isinstance(pattern, str) and bool(pattern) and "\x00" not in pattern
+                          and not Path(pattern).is_absolute() and ".." not in Path(pattern).parts,
+                          f"verify[{i}].path must be a non-empty glob beneath the workspace, without '..'")
+            entry.setdefault("location", "host" if key == "verify" else "environment")
+            _need(entry["location"] in ("host", "environment"),
+                  f"{key}[{i}].location must be host|environment")
+            _need(entry["type"] == "shell" or entry["location"] == "host",
+                  f"{key}[{i}]: only shell checks can use location='environment'")
             out.append(entry)
         return out
 
@@ -108,6 +137,16 @@ def load(path):
         _need(conf.get("type") in plugins.names("auth"),
               f"auth.{name}.type must be one of {plugins.names('auth')}")
     runner = dict(raw.get("runner") or {"type": "local"})
+    from . import agent_configuration, environments
+    profiles = {}
+    for key, module in (("environments", environments), ("agent_configurations", agent_configuration)):
+        table = saved_profiles[key] if saved_profiles is not None else raw.get(key, {})
+        _need(isinstance(table, dict), f"{key} must contain named profile tables")
+        _need(all(_ID.fullmatch(str(name)) for name in table), f"{key} names must be short lowercase slugs")
+        try:
+            profiles[key] = table if saved_profiles is not None else module.normalize_profiles(table, base)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(str(exc)) from exc
 
     reporter = dict(raw.get("reporter") or {})
     reporter.setdefault("harness", None)
@@ -120,7 +159,10 @@ def load(path):
         "setup": commands("setup"), "verify": commands("verify"), "teardown": commands("teardown"),
         "preflight": commands("preflight"),
         "reporter": reporter, "env": {str(k): str(v) for k, v in (raw.get("env") or {}).items()},
-        "adapters": adapters, "auth": auth_profiles, "runner": runner, "cells": [],
+        "adapters": adapters, "auth": auth_profiles, "runner": runner, "cells": [], **profiles,
+        "_configuration_environment": environments.normalize_profiles(
+            {"ajx-local": {"backend": "local"}}, base)["ajx-local"],
+        "_cleanup_only": cleanup_only,
     }
 
     seen = set()
@@ -130,10 +172,21 @@ def load(path):
         _need(cell.get("harness") in harness_names(spec),
               f"cells[{i}].harness {cell.get('harness')!r} unknown; available {harness_names(spec)}")
         for k, v in {"model": None, "effort": None, "config": "clean", "args": [], "env": {},
-                     "auth": None, "runner": None}.items():
+                     "auth": None, "runner": None, "environment": trial["environment"],
+                     "agent_configuration": trial["agent_configuration"]}.items():
             cell.setdefault(k, v)
         _need(cell["config"] in CONFIGS, f"cells[{i}].config must be clean|user")
-        _need(isinstance(cell["args"], list), f"cells[{i}].args must be a list")
+        _need(isinstance(cell["args"], list) and all(isinstance(a, str) for a in cell["args"]),
+              f"cells[{i}].args must be a list of strings")
+        for key, table in (("environment", "environments"), ("agent_configuration", "agent_configurations")):
+            ref = cell[key]
+            _need(ref is None or (isinstance(ref, str) and ref in spec[table]),
+                  f"cells[{i}].{key} must name a [{table}.NAME] profile")
+        if cell["environment"] or cell["agent_configuration"]:
+            _need(not cell["runner"] and "runner" not in raw,
+                  f"cells[{i}]: environment/agent profiles and legacy runner settings cannot be combined")
+            _need(trial["cache"] == "isolated", f"cells[{i}]: environments require trial.cache='isolated'")
+            _need(cell["config"] == "clean", f"cells[{i}]: environments require config='clean'")
         for one in _expand_models(cell, i):
             _need(one["id"] not in seen, f"duplicate cell id {one['id']}")
             seen.add(one["id"])
@@ -150,7 +203,24 @@ def load(path):
           f"reporter.harness {reporter['harness']!r} has no restricted reporter adapter; "
           "choose claude-code, codex, kiro-cli, or a plugin implementing report()")
     for cell in spec["cells"]:
-        auth_for(spec, cell)  # validates
+        auth = auth_for(spec, cell)
+        environment = environment_for(spec, cell)
+        configuration = agent_configuration_for(spec, cell)
+        try:
+            if environment:
+                _need(auth.isolates_config,
+                      f"auth {auth.profile!r} cannot use fresh HOME/config directories; "
+                      "environments require an auth profile that supplies credentials to isolated configuration")
+                env = worker_env(spec, cell, auth)
+                environments.validate_for_cell(environment, {**cell, "env": env, "unset_env": auth.unset()})
+                problems = auth.environment_problems(env, environment)
+                _need(not problems, f"auth {auth.profile!r} is not ready for the selected environment: "
+                      + "; ".join(problems))
+            if configuration:
+                agent_configuration.validate_for_cell(
+                    configuration, cell, harness_for(spec, cell["harness"]), auth, environment)
+        except (TypeError, ValueError) as exc:
+            raise SpecError(f"cell {cell['id']}: {exc}") from exc
     auth_for(spec, {"id": "reporter", "harness": reporter["harness"], "auth": reporter.get("auth")})
     return spec
 
@@ -182,6 +252,12 @@ def worker_env(spec, cell, auth):
     env = dict(spec["env"])
     env.update({k: str(v) for k, v in (cell.get("env") or {}).items()})
     env.update(auth.env())
+    if environment_for(spec, cell):
+        # Selecting an auth profile authorizes its explicitly required variables,
+        # without inheriting unrelated caller credentials or harness settings.
+        for name in auth.required_env:
+            if name not in env and name in os.environ:
+                env[name] = os.environ[name]
     return env
 
 
@@ -208,14 +284,37 @@ def auth_for(spec, cell, override=None):
     auth = cls(conf)
     auth.profile = ref
     auth.harness = cell["harness"]
+    if cell.get("environment") or cell.get("agent_configuration"):
+        environment = environment_for(spec, cell)
+        # Resolve again at preparation, without caching secrets or binding host reporters
+        # to the trial's worker environment.
+        auth.environment_check = lambda: auth.environment_problems(worker_env(spec, cell, auth), environment)
     return auth
 
 
 def runner_for(spec, cell):
+    environment = environment_for(spec, cell)
+    if environment:
+        from .environments import EnvironmentRunner
+        return EnvironmentRunner(environment)
     conf = cell.get("runner") or spec.get("runner") or {"type": "local"}
     if isinstance(conf, str):
         conf = {"type": conf}
     return plugins.get("runner", conf.get("type", "local"))(conf)
+
+
+def environment_for(spec, cell):
+    ref = cell.get("environment", spec["trial"].get("environment"))
+    if ref:
+        return (spec.get("environments") or {}).get(ref)
+    if cell.get("agent_configuration", spec["trial"].get("agent_configuration")):
+        return spec.get("_configuration_environment")
+    return None
+
+
+def agent_configuration_for(spec, cell):
+    ref = cell.get("agent_configuration", spec["trial"].get("agent_configuration"))
+    return (spec.get("agent_configurations") or {}).get(ref) if ref else None
 
 
 def run_plan(spec, only_cells=None):

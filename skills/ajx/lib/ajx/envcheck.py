@@ -144,8 +144,9 @@ def worker_view(spec, harness, auth, ctx):
         extra = harness.clean_env(ctx) or {}
     except Exception as exc:  # noqa: BLE001 - a plugin's clean_env must not break doctor or prepare
         extra, errors = {}, [f"{harness.name}.clean_env failed: {type(exc).__name__}: {exc}"]
-    process = child_env({**ctx["env"], **extra}, tuple(harness.strip_env) + tuple(auth.unset()))
-    layers = harness.settings_env(process, spec["task"].get("fixture_dir"))
+    make_env = ctx["runner"].child_env if ctx.get("environment_profile") else child_env
+    process = make_env({**ctx["env"], **extra}, tuple(harness.strip_env) + tuple(auth.unset()))
+    layers = harness.settings_env(process, ctx["workspace"])
     effective, source = dict(process), {}
     for label, values in layers:
         effective.update(values)
@@ -257,7 +258,7 @@ def uses_aws(spec, auth, view):
 def inspect_cell(spec, cell, harness, auth, runner, cwd, ctx, identities=False):
     """What doctor, validate and prepare report about one cell's environment. Returns (report, view);
     the report holds no env values except identity output, the view holds secrets."""
-    local = runner.name == "local"
+    local = runner.name == "local" or (ctx.get("environment_profile") or {}).get("backend") == "local"
     view = worker_view(spec, harness, auth, ctx)
     if not local:  # the worker's env is rebuilt elsewhere; its harness settings and shell are unknown here
         view.update(effective=dict(view["process"]), settings=[], source={})
@@ -275,7 +276,8 @@ def inspect_cell(spec, cell, harness, auth, runner, cwd, ctx, identities=False):
         "errors": view["errors"],
     }
     if identities:
-        report["auth_identity"] = auth_identity(auth, view["effective"])
+        report["auth_identity"] = (auth_identity(auth, view["effective"])
+                                   if local or not ctx.get("environment_profile") else None)
         cmd = spec["task"].get("identity_cmd")
         shell = view["shell"]
         report["task_identity"] = identity_result(cmd, cwd, view["effective"], shell) if cmd and local else None
@@ -332,15 +334,17 @@ def recorded_notes(environment):
     return out
 
 
-def run_preflight(commands, cwd, env, stop_on_failure=False):
+def run_preflight(commands, cwd, env, stop_on_failure=False, executor=None):
     """A preflight passes when it exits 0 within its timeout and prints no credential errors (unless the
     entry sets allow_auth_errors, e.g. for a check that expects access to be denied)."""
     results = []
     for cmd in commands:
-        res = run_shell(cmd["run"], cwd, timeout=cmd["timeout"], env=env)
+        res = executor(cmd) if executor else run_shell(cmd["run"], cwd, timeout=cmd["timeout"], env=env)
         rec = {"name": cmd["name"], **{k: res[k] for k in ("cmd", "exit_code", "timed_out", "started_at",
                                                             "stopped_at", "stdout", "stderr")},
                "auth_errors": [] if cmd.get("allow_auth_errors") else auth_error_lines(res["stdout"], res["stderr"])}
+        if "location" in res:
+            rec["location"] = res["location"]
         rec["passed"] = res["exit_code"] == 0 and not res["timed_out"] and not rec["auth_errors"]
         results.append(rec)
         if stop_on_failure and not rec["passed"]:

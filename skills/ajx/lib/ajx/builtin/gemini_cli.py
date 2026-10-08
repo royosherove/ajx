@@ -7,6 +7,7 @@ result{status,stats{total_tokens,input_tokens,output_tokens,duration_ms,tool_cal
 """
 
 from ..base import auth_args, Auth, Harness, empty_telemetry, finish_tool, stream_records, text_event, tool_event
+from ..cloud_auth import CloudAuth
 from ..plugins import register
 
 
@@ -126,11 +127,15 @@ class GeminiApi(Auth):
 
 
 @register("auth", "gemini-vertex")
-class GeminiVertex(Auth):
+class GeminiVertex(CloudAuth):
     harnesses = ("gemini-cli",)
     description = "Vertex AI (GOOGLE_GENAI_USE_VERTEXAI=true, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION; ADC or GOOGLE_API_KEY)"
     required_env = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
     model_env = ("GOOGLE_*", "CLOUDSDK_*")
+    provider_env = "GOOGLE_GENAI_USE_VERTEXAI"
+    credential_routes = (("GOOGLE_API_KEY",),)
+    unsupported_env = ("GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "CLOUDSDK_AUTH_*", "GEMINI_API_KEY")
+    home_credentials = "Google Application Default Credentials (ADC)"
 
     def env(self):
         return {"GOOGLE_GENAI_USE_VERTEXAI": "true", **super().env()}
