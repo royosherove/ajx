@@ -356,6 +356,27 @@ class LocalEnvironmentTest(TempTest):
     def local_runner(self, **options):
         return EnvironmentRunner(normalize_profiles({"local": {"backend": "local", **options}}, self.base)["local"])
 
+    def test_empty_argument_values_reach_the_process_and_tool_probe(self):
+        argv = [sys.executable, "-I", "-c",
+                "import json, sys; assert sys.argv[1:] == ['--tools', '']; print(json.dumps(sys.argv[1:]))",
+                "--tools", ""]
+        runner = self.local_runner(tools=[{"name": "arguments", "argv": argv}])
+        ctx = context(self.root)
+        persist(runner, ctx)
+        runner.prepare(ctx)
+        self.addCleanup(runner.release, ctx)
+        worker_env = runner._worker_env(ctx)
+        proc = subprocess.run(runner.wrap(tuple(argv), ctx, worker_env), cwd=ctx["workspace"],
+                              env=worker_env, capture_output=True, text=True, check=True, timeout=10)
+        self.assertEqual(json.loads(proc.stdout), ["--tools", ""])
+
+    def test_invalid_command_arguments_are_rejected(self):
+        runner, ctx = self.local_runner(), context(self.root)
+        for argv in (None, "echo", [], [""], ["--invalid"], [None], ["echo", None], ["echo", "\0"]):
+            with self.subTest(argv=argv):
+                with self.assertRaisesRegex(ValueError, "environment.argv"):
+                    runner.wrap(argv, ctx, {})
+
     def test_plan_has_no_side_effects_and_requires_durable_state(self):
         runner = self.local_runner()
         ctx = context(self.root, create=False)
@@ -754,6 +775,12 @@ class ContainerEnvironmentTest(TempTest):
         self.assertEqual(self.engine.count(["run"]), 1)
         self.assertTrue(recovered.release(ctx)["confirmed"])
 
+    def test_exec_preserves_empty_argument_values(self):
+        runner, ctx, handle, report = self.prepared()
+        self.addCleanup(runner.release, ctx)
+        argv = runner.wrap(["claude", "--tools", ""], ctx, runner._worker_env(ctx))
+        self.assertEqual(argv[-3:], ["claude", "--tools", ""])
+
     def test_exec_contains_env_names_not_values_or_image_defaults(self):
         runner, ctx, handle, report = self.prepared()
         supplied = "synthetic-explicit-auth-value"
@@ -1065,7 +1092,14 @@ class RealDockerIntegrationTest(TempTest):
         proc = subprocess.run(argv, cwd=ctx["workspace"], env=worker_env, capture_output=True, timeout=20)
         self.assertLess(time.monotonic() - started, 20)
         self.assertNotEqual(proc.returncode, 0, proc)
-        self.assertIsNone(runner._find(handle, ctx))
+        # Docker's automatic removal may still be finishing after the worker exits.
+        deadline = time.monotonic() + 10
+        remaining = runner._find(handle, ctx)
+        while remaining is not None and time.monotonic() < deadline:
+            self.assertFalse(remaining["State"]["Running"])
+            time.sleep(0.1)
+            remaining = runner._find(handle, ctx)
+        self.assertIsNone(remaining)
         recovered = EnvironmentRunner(runner.profile)
         with self.assertRaises(EnvironmentError):
             recovered.prepare(ctx)

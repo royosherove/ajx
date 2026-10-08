@@ -186,6 +186,15 @@ def _strings(value, field):
     return list(value)
 
 
+def _arguments(value, field):
+    if not isinstance(value, (list, tuple)) or any(not isinstance(v, str) or "\0" in v for v in value):
+        _fail(field, "expected an argument array of strings without NUL bytes")
+    if not value or not value[0] or value[0].startswith("-"):
+        _fail(field, "expected an executable followed by optional arguments")
+    # Empty argument values are significant, for example Claude's --tools "".
+    return list(value)
+
+
 def _number(value, field, minimum, maximum, integer=True):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _fail(field, "expected a number")
@@ -440,9 +449,7 @@ def _normalize_profiles(raw_profiles, base_dir, *, inspect_sources):
             name_ = tool.get("name")
             if not isinstance(name_, str) or not _NAME.fullmatch(name_) or name_ in seen:
                 _fail(tf + ".name", "expected a unique tool name")
-            argv = _strings(tool.get("argv"), tf + ".argv")
-            if not argv or argv[0].startswith("-"):
-                _fail(tf + ".argv", "expected an executable followed by optional arguments")
+            argv = _arguments(tool.get("argv"), tf + ".argv")
             if not isinstance(tool.get("required", True), bool):
                 _fail(tf + ".required", "expected a boolean")
             seen.add(name_)
@@ -1280,11 +1287,7 @@ class EnvironmentRunner(Runner):
         return data
 
     def wrap(self, argv, ctx, env):
-        if not isinstance(argv, (list, tuple)):
-            _fail("environment.argv", "expected an argument array")
-        argv = _strings(list(argv), "environment.argv")
-        if not argv or argv[0].startswith("-"):
-            _fail("environment.argv", "expected an executable")
+        argv = _arguments(argv, "environment.argv")
         handle = self._handle(ctx)
         if self._released:
             raise EnvironmentError("Environment was released")
