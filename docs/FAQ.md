@@ -73,10 +73,15 @@ Improved results on one task do not establish general savings for every user.
 
 ## What do I provide before a run?
 
-Provide the product, a realistic task, the materials a user would receive, and
-observable success criteria. Choose the agent CLI, model, configuration,
-repetitions, and permitted environment. Define time, spend, human participation,
-and cleanup boundaries.
+Start with the project, an observable user outcome, the materials that user
+would receive, and any access or cost boundaries. Your coordinator checks
+prerequisites, suggests one supported worker and a fixed reporter, writes the
+trial, and explains the plan. You do not need to choose a full matrix or write
+TOML first. See [your first trial](GETTING-STARTED.md).
+
+For a comparison or constrained environment, the coordinator helps select
+models, repetitions, starting tools, skills, permissions, and cleanup rules.
+It should reuse existing choices and ask only what is missing.
 
 Keep expected findings, defect hints, and AJX reporting vocabulary out of the
 worker's prompt. Verification checks should test the requested outcome.

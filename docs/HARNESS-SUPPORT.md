@@ -14,7 +14,8 @@ needs file access and a shell that can run Python 3.11+.
 | Kiro CLI | `~/.kiro/skills/ajx` | `/ajx` |
 | Another Agent Skills host | Its documented skill directory | Its skill picker or “Use the AJX skill…” |
 
-The README includes installation commands. Start a new session after installing.
+Start with the [README installation commands](../README.md#1-get-the-skill) and
+[first-run guide](GETTING-STARTED.md). Start a new session after installing.
 The host's skill mechanism loads the coordinator instructions; the worker's
 headless CLI is selected separately in the trial.
 

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 569" role="img" aria-labelledby="title desc">
+<title id="title">From evidence to improvement</title><desc id="desc">Inspect a supported product ask, choose a change, run a fresh trial under comparable conditions, and compare outcomes and evidence. This is a team-led loop, not automatic repair.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M1 1L7 4L1 7" fill="none" stroke="#77dacf" stroke-width="1.5"/></marker></defs>
+<rect width="640" height="569" rx="12" fill="#0d1728"/>
+<style>text{font-family:system-ui,-apple-system,sans-serif;fill:#e8edf4}.label{font-size:27px;font-weight:650}.small{font-size:23px;fill:#a6b4c8}.cap{font-size:21px;letter-spacing:2px;fill:#77dacf}.rule{fill:none;stroke:#77dacf;stroke-width:2;marker-end:url(#arrow)}</style>
+<text x="32" y="42" class="cap" >FROM EVIDENCE TO IMPROVEMENT</text>
+<circle cx="57" cy="91" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="100" class="label" text-anchor="middle">1</text>
+<text x="102" y="87" class="label" >Inspect an ask</text>
+<text x="102" y="122" class="small" >Follow its events and check the claim</text>
+<path class="rule" d="M57 145V165"/>
+<circle cx="57" cy="202" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="211" class="label" text-anchor="middle">2</text>
+<text x="102" y="198" class="label" >Make one useful change</text>
+<text x="102" y="233" class="small" >You choose the product or docs fix</text>
+<path class="rule" d="M57 256V276"/>
+<circle cx="57" cy="313" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="322" class="label" text-anchor="middle">3</text>
+<text x="102" y="309" class="label" >Run a fresh trial</text>
+<text x="102" y="344" class="small" >New output; comparable conditions</text>
+<path class="rule" d="M57 367V387"/>
+<circle cx="57" cy="424" r="24" fill="#17283a" stroke="#77dacf"/>
+<text x="57" y="433" class="label" text-anchor="middle">4</text>
+<text x="102" y="420" class="label" >Compare the experience</text>
+<text x="102" y="455" class="small" >Outcome, friction, cost, and coverage</text>
+<path d="M32 507H608" stroke="#30415a"/><text x="32" y="543" class="small" >Repeat with evidence, not just fewer asks.</text>
+</svg>
