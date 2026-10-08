@@ -233,6 +233,32 @@ class EnvironmentLifecycleTests(unittest.TestCase):
                 run.go(["execute"])
             execute.assert_not_called()
 
+    def test_archive_keeps_confirmed_release_when_backend_becomes_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = trial_at(tmp)
+            source = Path(tmp) / "synthetic-login.json"
+            source.write_text('{"token": "synthetic-offline-credential"}')
+            spec["auth"]["test"] = {"type": "environment-copy", "source": str(source)}
+            run = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            run.go(["prepare", "execute", "verify", "teardown", "normalize", "narrate", "release"])
+            self.assertTrue(run.done("release"), run.state)
+            confirmed = dict(run.state["environment_cleanup"])
+            self.assertTrue(confirmed["confirmed"])
+            self.assertTrue((Path(run.state["paths"]["config_dir"]) / "auth.json").exists())
+            # Recover in a new coordinator, with the backend unavailable after its confirmed release.
+            resumed = runner.Run(spec, spec["cells"][0], 1, lambda _: None)
+            with mock.patch.object(resumed.runner, "release", return_value={
+                    "status": "failed", "confirmed": False, "error": "synthetic backend outage"}) as release, \
+                    mock.patch.object(resumed.auth, "cleanup", wraps=resumed.auth.cleanup) as cleanup:
+                resumed.go(["archive"])
+            release.assert_not_called()
+            cleanup.assert_called_once()
+            self.assertTrue(resumed.done("archive"), resumed.state)
+            self.assertEqual(resumed.state["environment_cleanup"], confirmed)
+            self.assertFalse((resumed.run_dir / "harness-config" / "auth.json").exists())
+            self.assertTrue(source.exists(), "the original login must remain intact")
+            self.assertTrue(all(not Path(path).exists() for path in resumed.state["paths"].values()))
+
     def test_local_lifecycle_isolated_home_and_environment_survives_to_narration(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = trial_at(tmp)

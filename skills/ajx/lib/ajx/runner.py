@@ -521,7 +521,9 @@ class Run:
         them; purge copied credentials; drop package caches; repoint evidence paths."""
         paths = self.state.get("paths", {})
         moved = dict(self.state.get("archived") or {})
-        if self.environment_profile and self.state.get("environment"):
+        # A confirmed release is durable; archiving no longer needs the backend to be available.
+        cleanup = self.state.get("environment_cleanup") or {}
+        if self.environment_profile and self.state.get("environment") and cleanup.get("confirmed") is not True:
             self.stage_release()
         try:
             self.auth.cleanup(self.ctx())
