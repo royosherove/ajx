@@ -539,7 +539,8 @@ class LocalEnvironmentTest(TempTest):
                 proc_status = Path(f"/proc/{child}/stat")
                 if proc_status.exists() and proc_status.read_text().split()[2] == "Z":
                     break
-            except ProcessLookupError:
+            except (ProcessLookupError, FileNotFoundError):
+                # Reaping can remove the proc entry between exists() and read_text().
                 break
             time.sleep(0.01)
         else:
