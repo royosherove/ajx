@@ -25,6 +25,97 @@ def _settings_file_env(path):
     return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}
 
 
+# ----------------------------------------------------------------------------- result folding
+# A `claude -p` session emits one `result` event per segment when the agent schedules its own
+# continuation (ScheduleWakeup / self-resume). Observed live: num_turns, duration_ms and usage are
+# per segment; total_cost_usd (and modelUsage costUSD) is a running total for the whole session.
+
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _sum_or_none(values):
+    nums = [v for v in values if _number(v)]
+    return sum(nums) if nums else None
+
+
+def _running_total(values):
+    """The last value of a running total is the figure. A series that ever decreases cannot be
+    cumulative, so the segments are summed instead and the caller says so. Returns (value, summed)."""
+    nums = [v for v in values if _number(v)]
+    if not nums:
+        return None, False
+    if all(later >= earlier for earlier, later in zip(nums, nums[1:])):
+        return nums[-1], False
+    return sum(nums), True
+
+
+_CUMULATIVE_USAGE = frozenset({"costUSD"})       # running session total, like total_cost_usd
+_CONSTANT_USAGE = frozenset({"contextWindow"})   # a property of the model, not a counter
+
+
+def _merge_model_usage(usages):
+    """Merge per-result modelUsage maps by model id: counters (inputTokens, outputTokens, cache*,
+    webSearchRequests, ...) are per segment and summed, costUSD follows _running_total, contextWindow
+    is kept, non-numeric fields keep their first value. Returns (merged, cost_summed)."""
+    merged, cost_series = {}, {}
+    for usage in usages:
+        if not isinstance(usage, dict):
+            continue
+        for model, fields in usage.items():
+            slot = merged.setdefault(model, {})
+            if not isinstance(fields, dict):
+                continue
+            for key, value in fields.items():
+                if not _number(value):
+                    slot.setdefault(key, value)
+                elif key in _CUMULATIVE_USAGE:
+                    cost_series.setdefault((model, key), []).append(value)
+                elif key in _CONSTANT_USAGE:
+                    slot[key] = max(slot.get(key, value), value)
+                else:
+                    slot[key] = slot.get(key, 0) + value
+    summed = False
+    for (model, key), values in cost_series.items():
+        merged[model][key], was_summed = _running_total(values)
+        summed = summed or was_summed
+    return merged, summed
+
+
+def _aggregate_results(results):
+    """Fold the stream's result events (in order) into one record. Text, subtype and error state come
+    from the last event; turns, duration, usage and spawned subagents are summed; cost is the running
+    session total. With a single event every figure is that event's own."""
+    last = results[-1]
+    cost, cost_summed = _running_total([r.get("total_cost_usd") for r in results])
+    model_usage, model_cost_summed = last.get("modelUsage"), False
+    if len(results) > 1:
+        model_usage, model_cost_summed = _merge_model_usage([r.get("modelUsage") for r in results])
+    model_ids = []
+    for r in results:
+        model_ids += [m for m in (r.get("modelUsage") or {}) if m not in model_ids]
+    return {"last": last, "count": len(results), "model_usage": model_usage, "model_ids": model_ids,
+            "num_turns": _sum_or_none([r.get("num_turns") for r in results]),
+            "duration_ms": _sum_or_none([r.get("duration_ms") for r in results]),
+            "cost_estimate_usd": cost, "cost_summed": cost_summed, "model_cost_summed": model_cost_summed,
+            "subagents_spawned": _sum_or_none([(r.get("subagent_stats") or {}).get("spawned") for r in results]),
+            "output_tokens": _sum_or_none([(r.get("usage") or {}).get("output_tokens") for r in results])}
+
+
+def _multi_result_limitation(stage, agg):
+    summed = [name for name, flag in (("total_cost_usd", agg["cost_summed"]),
+                                      ("modelUsage costUSD", agg["model_cost_summed"])) if flag]
+    cost = (f"{' and '.join(summed)} decreased between segments, so cost was summed from non-cumulative segments"
+            if summed else "cost taken as the cumulative session total")
+    return (f"{stage}: {agg['count']} result events in one session (self-resumed/scheduled continuation); "
+            f"turns, duration and usage summed across segments; {cost}")
+
+
+def _one_line(text, limit):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
+
+
 @register("harness", "claude-code")
 class ClaudeCode(Harness):
     binary = "claude"
@@ -130,13 +221,17 @@ class ClaudeCode(Harness):
                         extra_env=self.clean_env(ctx))
         text, structured = "", None
         proc.update(is_error=True, result_subtype="missing result", tools_policy="tools disabled")
-        for _, ev, _ in stream_records(ctx["run_dir"] / f"{ctx['stage_name']}.raw.jsonl"):
-            if ev and ev.get("type") == "result":
-                text, structured = ev.get("result") or "", ev.get("structured_output")
-                proc.update(output_tokens=(ev.get("usage") or {}).get("output_tokens"),
-                            model_ids=",".join((ev.get("modelUsage") or {}).keys()) or None,
-                            cost_estimate_usd=ev.get("total_cost_usd"),
-                            is_error=bool(ev.get("is_error")), result_subtype=ev.get("subtype"))
+        results = [ev for _, ev, _ in stream_records(ctx["run_dir"] / f"{ctx['stage_name']}.raw.jsonl")
+                   if ev and ev.get("type") == "result"]
+        if results:
+            agg = _aggregate_results(results)
+            last = agg["last"]
+            text, structured = last.get("result") or "", last.get("structured_output")
+            proc.update(output_tokens=agg["output_tokens"], model_ids=",".join(agg["model_ids"]) or None,
+                        cost_estimate_usd=agg["cost_estimate_usd"],
+                        is_error=bool(last.get("is_error")), result_subtype=last.get("subtype"))
+            if agg["count"] > 1:
+                proc["result_events"] = agg["count"]
         return {"proc": proc, "text": text, "structured": structured}
 
     def _projects_dir(self, ctx):
@@ -148,7 +243,7 @@ class ClaudeCode(Harness):
         raw = ctx["run_dir"] / f"{stage}.raw.jsonl"
         sid = self.stage_state(ctx, stage).get("session_id")
         out = empty_telemetry(session_id=sid, timestamp_source="transcript event timestamps (harness clock)")
-        stream_tool_ids, result = set(), None
+        stream_tool_ids, results = set(), []
         for _, ev, _ in stream_records(raw):
             if not ev:
                 continue
@@ -169,18 +264,21 @@ class ClaudeCode(Harness):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         stream_tool_ids.add(block.get("id"))
             if ev.get("type") == "result":
-                result = ev
-        if result:
-            out["final_text"] = result.get("result") or ""
-            out["stop_reason"] = result.get("subtype")
+                results.append(ev)
+        agg = _aggregate_results(results) if results else None
+        if agg:
+            last = agg["last"]
+            out["final_text"] = last.get("result") or ""
+            out["stop_reason"] = last.get("subtype")
             out["harness_reported"].update({
-                "result_subtype": result.get("subtype"), "terminal_reason": result.get("terminal_reason"),
-                "num_turns": result.get("num_turns"), "duration_ms": result.get("duration_ms"),
-                "cost_estimate_usd": result.get("total_cost_usd"),
+                "result_subtype": last.get("subtype"), "terminal_reason": last.get("terminal_reason"),
+                "num_turns": agg["num_turns"], "duration_ms": agg["duration_ms"],
+                "cost_estimate_usd": agg["cost_estimate_usd"],
                 "cost_note": "harness-computed estimate; not billed money",
-                "model_usage": result.get("modelUsage"),
-                "subagents_spawned": (result.get("subagent_stats") or {}).get("spawned"),
-                "is_error": result.get("is_error")})
+                "model_usage": agg["model_usage"], "subagents_spawned": agg["subagents_spawned"],
+                "is_error": last.get("is_error"), "result_events": agg["count"]})
+            if agg["count"] > 1:
+                out["limitations"].append(_multi_result_limitation(stage, agg))
         else:
             out["limitations"].append(f"{stage}: no result event in stream (killed, crashed, or timed out)")
 
@@ -232,7 +330,7 @@ class ClaudeCode(Harness):
                         for m in order]
         out["model_ids"] = sorted({m["model"] for m in messages.values() if m.get("model")})
         observed = sum(u["output_tokens"] for u in out["usage"])
-        expected = ((result or {}).get("usage") or {}).get("output_tokens")
+        expected = agg["output_tokens"] if agg else None   # per-segment usage, summed over every result event
         if isinstance(expected, int) and expected == observed:
             out["usage_status"], out["expected_output_tokens"] = "complete", expected
         else:
@@ -240,7 +338,7 @@ class ClaudeCode(Harness):
             out["limitations"].append(f"{stage}: transcript output tokens {observed} != stream result "
                                       f"{expected}; reported as partial")
         transcript_ids = {e["tool_use_id"] for e in events if e["kind"] == "tool"}
-        if result and stream_tool_ids == transcript_ids:
+        if agg and stream_tool_ids == transcript_ids:
             out["tool_status"], out["expected_tool_calls"] = "complete", len(stream_tool_ids)
         else:
             out["tool_status"] = "partial"
@@ -251,6 +349,32 @@ class ClaudeCode(Harness):
             if out["usage_status"] == "complete":
                 out.update(usage_status="partial", expected_output_tokens=None)
         return out
+
+    def progress(self, run_dir, stage="execute", limit=10):
+        """Live status from the stage's raw stream, tolerant of a file still being written (a partial
+        last line parses as nothing) or not yet created ([]). Sub-agent blocks are included: for a
+        status feed, what the worker is doing matters more than whose thread it is."""
+        items = []
+        try:
+            for at, ev, _ in stream_records(Path(run_dir) / f"{stage}.raw.jsonl"):
+                if not ev:
+                    continue
+                if ev.get("type") == "assistant":
+                    for block in (ev.get("message") or {}).get("content") or []:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "text" and (block.get("text") or "").strip():
+                            items.append({"at": at, "kind": "text", "text": _one_line(block["text"], 200)})
+                        elif block.get("type") == "tool_use":
+                            detail = _one_line(summarize_input(block.get("input")), 160)
+                            items.append({"at": at, "kind": "tool",
+                                          "text": _one_line(f"{block.get('name')}: {detail}", 200)})
+                elif ev.get("type") == "result":
+                    items.append({"at": at, "kind": "result",
+                                  "text": f"result {ev.get('subtype')} turns={ev.get('num_turns')}"})
+        except (OSError, UnicodeDecodeError):
+            pass
+        return items[-limit:] if limit and limit > 0 else items
 
 
 # ----------------------------------------------------------------------------- auth profiles

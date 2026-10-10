@@ -190,6 +190,8 @@ ajx doctor trials/my-cli/trial.toml
 # Run only when the scope is authorized and doctor reports ready.
 ajx run trials/my-cli/trial.toml
 ajx status trials/my-cli/trial.toml
+ajx status trials/my-cli/trial.toml --tail 10          # what the worker is doing right now
+ajx export trials/my-cli/trial.toml --run my-cell-r1   # shareable report.html, journey.html, asks.md
 ```
 
 Choose `claude-code` or `kiro-cli` instead of `codex` as needed. `init` selects

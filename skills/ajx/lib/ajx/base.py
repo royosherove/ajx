@@ -235,6 +235,11 @@ class Harness:
     def normalize(self, ctx, stage, exclude_message_ids=()):
         raise NotImplementedError
 
+    def progress(self, run_dir, stage="execute", limit=10):
+        """Recent human-readable events from the stage's raw stream for live status; [] when unsupported.
+        Each item: {'at': iso-or-None, 'kind': 'text'|'tool'|'result', 'text': str (<= 200 chars)}"""
+        return []
+
 
 class Auth:
     """Credential/provider profile for a harness.

@@ -100,7 +100,29 @@ limits = { cpus = 1, memory_mb = 1024, pids = 256, tmpfs_mb = 64, lifetime_secon
 Images must already exist on the local Linux Docker daemon. Mutable tags,
 implicit pulls, privileged containers, arbitrary Docker arguments and remote
 daemon endpoints are unsupported. `docker_host` can select an explicit local
-Unix socket.
+Unix socket; the default is `unix:///var/run/docker.sock`. Engines that use a
+Docker context instead of that socket (Colima, Docker Desktop, Rancher Desktop)
+need the context's socket:
+
+```sh
+docker context inspect --format '{{(index .Endpoints "docker").Host}}'
+```
+
+AJX drives the engine through a `docker` CLI found on a fixed management
+`PATH` (`/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `/bin`). Finch,
+nerdctl and other CLIs are not supported.
+
+A virtual-machine engine can bind-mount only the directories it shares with the
+VM, usually the home directory. Put `trial.workspace_root` under a shared
+directory; the scaffolded `/tmp` (`/private/tmp`) is not shared on macOS.
+`ajx doctor` creates an empty private directory under `workspace_root`,
+bind-mounts it read-only into a short-lived unprivileged probe container,
+removes both, and prints `workspace bind-mount probe: ok|skipped|FAILED`
+(recorded as `mount_probe` in the doctor report). A failed probe marks the
+trial NOT READY and prints the engine's error with a hint; the probe is skipped
+when `workspace_root` does not exist yet. If a container still fails to start
+during `prepare`, the error includes the engine's exit code and stderr, and
+`environment.json` records them under `environment_cleanup.creation_failure`.
 
 The worker runs as a numeric non-root user with a read-only root filesystem,
 dropped capabilities and no privilege escalation. It can install user-level
@@ -148,12 +170,24 @@ imports a live user configuration directory. AJX copies the complete supported
 skill tree, records content hashes, and checks for source changes during copying.
 An optional `pins = { "csv-guide" = "FULL_SHA256" }` table asserts expected hashes.
 
-The initial parser accepts portable name/description frontmatter and supported
-descriptive metadata. Unsupported execution/dependency fields, hidden caches,
-credential-like filenames, symlinks and ambiguous trees fail validation. This
-structural check does not scan arbitrary file contents for secrets. Snapshot copies are
-checked again before execution and narration. Setup or a previous turn cannot
-silently add a different skill or modify the pinned profile.
+The parser accepts portable name/description frontmatter and descriptive
+metadata (`license`, `compatibility`, `metadata`, `version`,
+`disable-model-invocation`, `user-invocable`, `argument-hint`). `allowed-tools`
+is accepted and recorded on the skill entry as `declared_tool_grants`; AJX does
+not enforce tool grants, and a worker that bypasses approval prompts is not
+restricted by them. The configuration manifest states this per skill, and
+reports list it under profile limitations. Write `allowed-tools` and `version`
+as single plain or quoted scalars; grants separate on spaces or commas outside
+parentheses, so `Bash(git add:*), Read` stays two grants. YAML block or flow
+lists for these fields are not accepted. Fields that imply execution semantics
+AJX cannot resolve (hooks, dependencies, context) fail validation, as do hidden
+caches, credential-like filenames, symlinks and ambiguous trees. Empty
+`.gitkeep` and `.keep` placeholders are copied and hashed like other files so
+the recorded hash matches the published skill; a non-empty placeholder is
+rejected like any other hidden file. This structural check
+does not scan arbitrary file contents for secrets. Snapshot copies are checked
+again before execution and narration. Setup or a previous turn cannot silently
+add a different skill or modify the pinned profile.
 
 Codex, Claude Code and Kiro CLI have explicit profile controls. AJX checks the
 installed CLI's version, required flags and supported configuration before use,
@@ -193,7 +227,7 @@ for both local and container environments:
 
 | Auth type | Supported route |
 |---|---|
-| `claude-bedrock` | `AWS_REGION` plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or `AWS_BEARER_TOKEN_BEDROCK`. Declare `AWS_SESSION_TOKEN` too when using temporary keys. |
+| `claude-bedrock` | `AWS_REGION` plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or `AWS_BEARER_TOKEN_BEDROCK`. Declare `AWS_SESSION_TOKEN` too when using temporary keys. When the profile's `env` sets `AWS_REGION` and nothing declares `AWS_DEFAULT_REGION`, the worker also receives `AWS_DEFAULT_REGION` with the same value (botocore-based tools read only that name); an `[env]` or cell value identical to the profile's is not reported as a collision, and an `unset` pattern covering `AWS_DEFAULT_REGION` suppresses the mirror. |
 | `claude-foundry` | `ANTHROPIC_FOUNDRY_RESOURCE` or `ANTHROPIC_FOUNDRY_BASE_URL`, plus `ANTHROPIC_FOUNDRY_API_KEY` or all of `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_CLIENT_SECRET`. |
 | `gemini-vertex` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_API_KEY`. |
 | `claude-vertex` | Built-in file-based ADC is unsupported in explicit environments; use a custom auth plugin with credential staging and cleanup. |

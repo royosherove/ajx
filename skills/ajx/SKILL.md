@@ -64,7 +64,7 @@ user supplies, what you will handle, and what reports to expect.
 
 ### 2. Write and check the plan
 
-`ajx init <trial-dir> --product <name> --harness <chosen-cli>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the brief (see `examples/trial.toml` for every option). Keep the task prompt neutral and within the supplied scope; once approved or launched, preserve its exact bytes. Its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources.
+`ajx init <trial-dir> --product <name> --harness <chosen-cli>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the brief (see `examples/trial.toml` for every option). Keep the task prompt neutral and within the supplied scope; once approved or launched, preserve its exact bytes. Its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources, and `$AJX_TRIAL_DIR` (the directory holding `trial.toml`) lets setup, preflight, verify and teardown commands reach trial files without absolute paths. Both are exported to those commands only, never to the worker's harness; inside a container backend the host path is not mounted, so use it from host-located commands.
 
 For explicit environment/agent profiles, see `examples/environment-profiles/`.
 Select `environment` and `agent_configuration` per cell, or set trial defaults.
@@ -103,7 +103,7 @@ its supplied authorization; missing scope is an error, not an interactive wait.
 
 ### 3. Run
 
-`ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` to rebuild analysis from saved evidence; `prepare`/`execute` cannot be redone, use a fresh output for a new attempt), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
+`ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`; `ajx status trial.toml --tail 10` adds, after the table, the worker's last 10 tool calls and messages for each cell still executing (for every run when none is), so you can tell the user what the agent is doing without opening raw transcripts; adapters without a progress feed print a one-line note instead. `status` needs no cell secrets. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` to rebuild analysis from saved evidence; `prepare`/`execute` cannot be redone, use a fresh output for a new attempt), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
 
 Profiled runs record the actual environment and extension manifest. `doctor`
 checks configuration/backend prerequisites; `prepare` checks the real runtime
@@ -128,6 +128,8 @@ skill hashes, unknown or observed activation, and environment cleanup. Link
 `environment.json` and `agent-configuration.json`; enabled does not mean used.
 
 Deliver files locally only. Filing tickets, publishing, or re-running paid trials needs the user's scope.
+
+To hand one run to a product team, run `ajx export trial.toml --run <run-id>`. It writes `report.html`, `journey.html` (renamed from `pretty-journey.html`) and `asks.md` to `<output>/share/<run-id>`, with the worker's workspace, home, configuration and cache directories replaced by neutral labels (`/workspace`, `/agent-home`, ...), the coordinator's home shown as `~`, and links to files outside the bundle reduced to text. Use `--dest DIR` for another folder and `--force` to overwrite a non-empty one. Review the three files with the user before sharing: they still contain the agent's commands and outputs, account identifiers, and URLs. Share only those files; `run.json`, `environment.json` and the archived workspace stay local.
 
 ## Extending
 

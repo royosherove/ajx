@@ -213,9 +213,12 @@ def load(path, *, cleanup_only=False):
                       "environments require an auth profile that supplies credentials to isolated configuration")
                 env = worker_env(spec, cell, auth)
                 environments.validate_for_cell(environment, {**cell, "env": env, "unset_env": auth.unset()})
-                problems = auth.environment_problems(env, environment)
-                _need(not problems, f"auth {auth.profile!r} is not ready for the selected environment: "
-                      + "; ".join(problems))
+                if not cleanup_only:
+                    # Readiness resolves ${VAR} references against the caller's shell. `ajx status` and the
+                    # cleanup stages never start a worker, so they must not need the trial's secrets exported.
+                    problems = auth.environment_problems(env, environment)
+                    _need(not problems, f"auth {auth.profile!r} is not ready for the selected environment: "
+                          + "; ".join(problems))
             if configuration:
                 agent_configuration.validate_for_cell(
                     configuration, cell, harness_for(spec, cell["harness"]), auth, environment)

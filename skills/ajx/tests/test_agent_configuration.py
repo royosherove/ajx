@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 from ajx import agent_configuration as ac  # noqa: E402
 from ajx import environments as envmod  # noqa: E402
+from ajx import report_ui  # noqa: E402
 from ajx.environments import EnvironmentRunner  # noqa: E402
 from ajx.base import Auth  # noqa: E402
 from ajx.builtin.claude_code import ClaudeCode, ClaudeSubscription  # noqa: E402
@@ -231,7 +232,7 @@ class ProfileTests(unittest.TestCase):
                 ac.normalize_profiles({"test": raw}, self.root)
         skill = self.source / "SKILL.md"
         original = skill.read_text()
-        for field in ("hooks: {}", "allowed-tools: Bash", "context: fork", "dependencies: plugin"):
+        for field in ("hooks: {}", "context: fork", "dependencies: plugin"):
             skill.write_text(original.replace("description:", field + "\ndescription:"))
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "unsupported"):
                 self.profile()
@@ -276,6 +277,85 @@ class ProfileTests(unittest.TestCase):
                 self.profile()
             path.unlink()
 
+    def test_allowed_tools_and_version_are_recorded_not_enforced(self):
+        path = self.source / "SKILL.md"
+        original = path.read_text()
+        path.write_text(original.replace(
+            "description:", "allowed-tools: Bash(aws:*) Bash(npm:*) Read Grep\nversion: 1.2.3\ndescription:"))
+        grants = ["Bash(aws:*)", "Bash(npm:*)", "Read", "Grep"]
+        entry = self.profile()["skills"]["entries"][0]
+        self.assertEqual(entry["declared_tool_grants"], grants)
+        self.assertEqual(entry["version"], "1.2.3")
+        note = ("skill product-guide declares tool grants (allowed-tools); AJX records them as declared_tool_grants "
+                "but does not enforce or restrict them, and a worker running with permission prompts bypassed is not "
+                "restricted by them.")
+        for harness in (Codex(), ClaudeCode(), KiroCli()):
+            with self.subTest(harness=harness.name):
+                ctx, manifest = self.prepared(harness)
+                skill = manifest["skills"]["entries"][0]
+                self.assertEqual(skill["declared_tool_grants"], grants)
+                self.assertEqual(skill["version"], "1.2.3")
+                # The shipped SKILL.md is installed verbatim: no fork, so the hash stays the artifact's.
+                self.assertEqual((ac._contained_path(skill["location"], ctx) / "SKILL.md").read_bytes(), path.read_bytes())
+                self.assertIn(note, manifest["limitations"])
+                self.assertIn("agent configuration: " + note,
+                              report_ui.profile_limitations({"agent_configuration": manifest}))
+                written = [Path(ac._expand(item["location"], ctx)).read_text() for item in manifest["configuration_files"]]
+                self.assertNotIn("Bash(aws:*)", json.dumps(manifest["launch"]) + "".join(written))
+        path.write_text(original)
+        plain = self.profile()["skills"]["entries"][0]
+        self.assertEqual(plain["declared_tool_grants"], [])
+        self.assertIsNone(plain["version"])
+        _, manifest = self.prepared(Codex())
+        self.assertFalse([line for line in manifest["limitations"] if "allowed-tools" in line])
+        header = "---\nname: product-guide\n{}\ndescription: d\n---\n"
+        parsed = ac._frontmatter(header.format('allowed-tools: "Bash(git add:*), Read,Grep"').encode(), "product-guide")
+        self.assertEqual(parsed["declared_tool_grants"], ["Bash(git add:*)", "Read", "Grep"])
+        self.assertEqual(ac._frontmatter(header.format("allowed-tools:").encode(), "product-guide")["declared_tool_grants"], [])
+        self.assertEqual(ac._frontmatter(header.format("version: '2'").encode(), "product-guide")["version"], "2")
+        for bad in ("allowed-tools: Bash(aws:*", "allowed-tools: Read)", "allowed-tools: Read # comment",
+                    "allowed-tools: [Read]", "version: \x1b[0m"):
+            with self.subTest(field=bad), self.assertRaises(ValueError):
+                ac._frontmatter(header.format(bad).encode(), "product-guide")
+
+    def test_execution_and_dependency_fields_stay_rejected_with_the_existing_message(self):
+        skill = self.source / "SKILL.md"
+        original = skill.read_text()
+        for field in ("hooks: {}", "dependencies: plugin", "context: fork", "scripts: run.sh"):
+            key = field.split(":")[0]
+            skill.write_text(original.replace("description:", field + "\ndescription:"))
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, f"unsupported SKILL.md field '{key}'"):
+                self.profile()
+
+    def test_empty_gitkeep_placeholders_are_copied_but_other_hidden_entries_stay_rejected(self):
+        (self.source / "scripts" / ".gitkeep").write_bytes(b"")
+        (self.source / "assets" / ".keep").write_bytes(b"")
+        entry = self.profile()["skills"]["entries"][0]
+        placeholders = {f["path"]: f for f in entry["files"] if f["path"].endswith((".gitkeep", ".keep"))}
+        self.assertEqual(set(placeholders), {"scripts/.gitkeep", "assets/.keep"})
+        for record in placeholders.values():
+            self.assertEqual((record["type"], record["bytes"], record["sha256"]),
+                             ("file", 0, hashlib.sha256(b"").hexdigest()))
+        ctx, manifest = self.prepared(Codex())
+        installed = ac._contained_path(manifest["skills"]["entries"][0]["location"], ctx)
+        self.assertEqual((installed / "scripts/.gitkeep").stat().st_size, 0)
+        self.assertEqual((installed / "assets/.keep").stat().st_size, 0)
+        self.assertEqual(ac._read_tree(installed)["sha256"], entry["sha256"])
+        (self.source / "scripts" / ".gitkeep").write_text("not empty\n")
+        with self.assertRaisesRegex(ValueError, r"disallowed.*\(\.gitkeep/\.keep placeholders must be empty\)"):
+            self.profile()
+        (self.source / "scripts" / ".gitkeep").unlink()
+        (self.source / "scripts" / ".gitkeep").mkdir()
+        with self.assertRaisesRegex(ValueError, "disallowed"):
+            self.profile()
+        (self.source / "scripts" / ".gitkeep").rmdir()
+        for name in (".env", ".gitignore", ".DS_Store", ".gitkeep.bak"):
+            path = self.source / name
+            path.write_bytes(b"")  # Empty, but only the exact names .gitkeep/.keep are placeholders.
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "disallowed"):
+                self.profile()
+            path.unlink()
+
     def test_bounds_apply_before_reading_oversize_content(self):
         with mock.patch.object(ac, "_MAX_FILES", 2), self.assertRaisesRegex(ValueError, "too many"):
             self.profile()
@@ -308,6 +388,19 @@ class ProfileTests(unittest.TestCase):
         # A fresh resume contract must not weaken resolution-to-copy checks.
         with self.assertRaisesRegex(ValueError, "changed after resolution"):
             ac.prepare(profile, self.ctx(Codex()), Codex())
+
+    def test_resume_contract_matches_attempts_saved_before_descriptive_fields(self):
+        profile = self.profile()
+        saved = copy.deepcopy(profile)
+        for entry in saved["skills"]["entries"]:  # A matrix plan saved before these fields existed.
+            del entry["version"], entry["declared_tool_grants"]
+        self.assertEqual(ac.resume_contract(saved), ac.resume_contract(profile))
+        self.assertNotIn("version", ac.resume_contract(profile)["skills"]["entries"][0])
+        path = self.source / "SKILL.md"
+        path.write_text(path.read_text().replace("description:", "allowed-tools: Read\nversion: 2\ndescription:"))
+        declared = ac.resume_contract(self.profile())["skills"]["entries"][0]
+        self.assertEqual((declared["declared_tool_grants"], declared["version"]), (["Read"], "2"))
+        self.assertNotEqual(ac.resume_contract(profile), ac.resume_contract(self.profile()))
 
     def test_source_mutation_during_copy_is_rejected_and_partial_copy_removed(self):
         profile = self.profile()

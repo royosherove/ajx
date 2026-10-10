@@ -44,7 +44,9 @@ run = "test -s response.txt && grep -qi 'hello' response.txt"
 scope = "proves a non-empty response containing 'hello' was written; does not prove it came from the agent runtime"
 
 [[teardown]]
-run = "true"                      # for cloud tasks: find and delete resources tagged with $AJX_RUN_TOKEN
+run = "true"                      # for cloud tasks: find and delete resources tagged with $AJX_RUN_TOKEN;
+                                  # $AJX_TRIAL_DIR is the directory holding this file, exported to setup, preflight,
+                                  # verify and teardown commands (never to the worker; a container does not see the host path)
 
 [reporter]
 ## The reporter stays fixed across the matrix. Also supports codex, kiro-cli, and reporter plugins.

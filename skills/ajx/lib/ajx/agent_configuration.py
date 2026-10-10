@@ -11,7 +11,10 @@ Public trial schema::
 All three categories default to ``none``. ``snapshot`` also takes explicit skill
 directories, never a user's configuration root, a glob, or an implicit search.
 Pins are optional at input: normalization always pins the complete content.
-Plugins/hooks other than none are unsupported and rejected.
+Plugins/hooks other than none are unsupported and rejected. SKILL.md
+``allowed-tools`` and ``version`` are recorded as declared metadata, never
+enforced; empty ``.gitkeep``/``.keep`` placeholders are copied and hashed like
+any other file so the recorded hash matches the shipped artifact.
 
 Integration:
 * normalize_profiles(raw_profiles, base_dir) returns JSON-safe normalized tables.
@@ -64,6 +67,8 @@ _HASH = re.compile(r"^[a-f0-9]{64}$")
 _MODES = ("none", "selected", "snapshot")
 _HARNESSES = ("codex", "claude-code", "kiro-cli")
 _MAX_SKILLS, _MAX_FILES, _MAX_BYTES, _MAX_FILE, _MAX_DEPTH = 32, 2048, 32 * 1024**2, 8 * 1024**2, 16
+_MAX_GRANTS, _MAX_SCALAR = 64, 256
+_PLACEHOLDER_NAMES = frozenset({".gitkeep", ".keep"})
 _DENIED_NAMES = frozenset({
     "node_modules", "__pycache__", "venv", "env", "cache", "caches",
     "credentials", "credentials.json", "auth.json", "token", "tokens", "id_rsa", "id_ed25519",
@@ -149,7 +154,12 @@ def _read_tree(path):
         names = sorted(os.listdir(fd))
         for name in names:
             rel = f"{prefix}/{name}" if prefix else name
-            _need(_safe_component(name), f"skill contains disallowed hidden, secret, or cache entry: {rel}")
+            # Empty .gitkeep/.keep placeholders are common in shipped skills. Copying
+            # them keeps the recorded hash equal to the upstream artifact; any
+            # content makes them ordinary hidden data, which stays rejected.
+            placeholder = name in _PLACEHOLDER_NAMES
+            _need(_safe_component(name) or placeholder,
+                  f"skill contains disallowed hidden, secret, or cache entry: {rel}")
             _need(rel.casefold() not in folded, f"skill has a case-insensitive path collision: {rel}")
             folded.add(rel.casefold())
             _need(len(folded) <= _MAX_FILES, "skill tree has too many entries")
@@ -157,6 +167,9 @@ def _read_tree(path):
             _need(not stat.S_ISLNK(st.st_mode), f"skill symlinks are unsupported: {rel}; supply real files")
             _need(stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode),
                   f"skill contains a special file: {rel}")
+            _need(not placeholder or (stat.S_ISREG(st.st_mode) and st.st_size == 0),
+                  f"skill contains disallowed hidden, secret, or cache entry: {rel} "
+                  "(.gitkeep/.keep placeholders must be empty)")
             _need(not st.st_mode & (stat.S_ISUID | stat.S_ISGID), f"skill has privileged mode bits: {rel}")
             identities[rel] = _identity(st)
             child = os.open(name, flags | (os.O_DIRECTORY if stat.S_ISDIR(st.st_mode) else 0), dir_fd=fd)
@@ -174,6 +187,9 @@ def _read_tree(path):
                         length += len(chunk)
                         _need(length <= _MAX_FILE, f"skill file exceeds size limit: {rel}")
                     data = b"".join(chunks)
+                    _need(not placeholder or not data,
+                          f"skill contains disallowed hidden, secret, or cache entry: {rel} "
+                          "(.gitkeep/.keep placeholders must be empty)")
                     size += len(data)
                     _need(size <= _MAX_BYTES, "skill content exceeds snapshot size limit")
                     content[rel] = data
@@ -207,6 +223,43 @@ def _read_tree(path):
             "_identity": identities, "_content": content}
 
 
+def _scalar(fields, key):
+    """Return a plain or quoted scalar field without interpreting YAML escapes."""
+    value = fields.get(key, "")
+    if value.startswith(("'", '"')):
+        _need(len(value) >= 2 and value[-1] == value[0], f"SKILL.md {key} has mismatched quotes")
+        value = value[1:-1]
+    return value
+
+
+def _tool_grants(value):
+    """Split a declared allowed-tools scalar into grant strings without interpreting them.
+
+    Grants separate on whitespace or commas outside parentheses, so the
+    space-delimited Agent Skills form and Claude Code's comma form both keep
+    grants such as ``Bash(git add:*)`` intact.
+    """
+    grants, token, depth = [], "", 0
+    for char in value + " ":
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            _need(depth > 0, "SKILL.md allowed-tools has unbalanced parentheses")
+            depth -= 1
+        if depth == 0 and (char.isspace() or char == ","):
+            if token:
+                grants.append(token)
+            token = ""
+        else:
+            token += char
+    _need(depth == 0, "SKILL.md allowed-tools has unbalanced parentheses")
+    _need(len(grants) <= _MAX_GRANTS, f"SKILL.md allowed-tools declares more than {_MAX_GRANTS} grants")
+    for grant in grants:
+        _need(len(grant) <= _MAX_SCALAR and grant.isprintable() and "#" not in grant,
+              f"SKILL.md allowed-tools grant is oversized, unprintable, or contains '#': {grant[:40]!r}")
+    return grants
+
+
 def _frontmatter(data, folder_name):
     """Validate a deliberately small, portable subset without rewriting YAML.
 
@@ -224,7 +277,7 @@ def _frontmatter(data, folder_name):
     except ValueError:
         raise ValueError("SKILL.md frontmatter needs a closing ---") from None
     allowed = {"name", "description", "license", "compatibility", "metadata",
-               "disable-model-invocation", "user-invocable", "argument-hint"}
+               "disable-model-invocation", "user-invocable", "argument-hint", "allowed-tools", "version"}
     fields, active = {}, None
     for line in lines[1:end]:
         if not line.strip() or line.lstrip().startswith("#"):
@@ -236,14 +289,11 @@ def _frontmatter(data, folder_name):
         match = re.fullmatch(r"([a-z][a-z0-9-]*):(?:[ \t]+(.*)|[ \t]*)", line)
         _need(match is not None, "unsupported SKILL.md frontmatter syntax; use plain, quoted, or block fields")
         key, value = match.group(1), (match.group(2) or "").strip()
-        _need(key in allowed, f"unsupported SKILL.md field {key!r}; hooks, tool grants, and dependencies need a resolver")
+        _need(key in allowed, f"unsupported SKILL.md field {key!r}; hooks, execution, and dependency fields need a resolver")
         _need(key not in fields, f"duplicate SKILL.md field: {key}")
         _need(not value.startswith(("&", "*", "!", "{", "[")), f"unsupported YAML value for SKILL.md {key}")
         fields[key], active = value, key
-    name = fields.get("name", "")
-    if name.startswith(("'", '"')):
-        _need(len(name) >= 2 and name[-1] == name[0], "SKILL.md name has mismatched quotes")
-        name = name[1:-1]
+    name = _scalar(fields, "name")
     _need(bool(_ID.fullmatch(name)) and "--" not in name,
           "SKILL.md name must be a lowercase skill slug (up to 63 characters)")
     _need(not name.endswith("-"), "SKILL.md name cannot end in a hyphen")
@@ -252,9 +302,16 @@ def _frontmatter(data, folder_name):
     for key in ("disable-model-invocation", "user-invocable"):
         if key in fields:
             _need(fields[key] in ("true", "false"), f"SKILL.md {key} must be true or false")
+    version = _scalar(fields, "version") if "version" in fields else None
+    _need(version is None or (len(version) <= _MAX_SCALAR and version.isprintable()),
+          "SKILL.md version must be a short printable string")
+    # allowed-tools is recorded for the manifest and reports, never enforced:
+    # AJX has no permission resolver, and bypassed permission prompts ignore it.
+    grants = _tool_grants(_scalar(fields, "allowed-tools")) if "allowed-tools" in fields else []
     return {"name": name, "automatic_invocation": fields.get("disable-model-invocation") != "true",
             "user_invocable": fields.get("user-invocable") != "false",
-            "invocation_fields": [k for k in ("disable-model-invocation", "user-invocable") if k in fields]}
+            "invocation_fields": [k for k in ("disable-model-invocation", "user-invocable") if k in fields],
+            "declared_tool_grants": grants, "version": version}
 
 
 def _check_skill_configuration(tree):
@@ -373,6 +430,12 @@ def resume_contract(profile):
     contract = copy.deepcopy(profile)
     for entry in contract["skills"]["entries"]:
         entry.pop("_identity", None)
+        # Descriptive fields added after the first saved attempts; omit them when
+        # undeclared so earlier matrix plans and attempt fingerprints still match.
+        if entry.get("version") is None:
+            entry.pop("version", None)
+        if not entry.get("declared_tool_grants"):
+            entry.pop("declared_tool_grants", None)
     return contract
 
 
@@ -769,6 +832,12 @@ def _container_ownership(ctx):
                 os.chown(path, owner.st_uid, owner.st_gid, follow_symlinks=False)
 
 
+def _grant_limitations(skills):
+    return [f"skill {skill['name']} declares tool grants (allowed-tools); AJX records them as declared_tool_grants "
+            "but does not enforce or restrict them, and a worker running with permission prompts bypassed is not "
+            "restricted by them." for skill in skills if skill["declared_tool_grants"]]
+
+
 def prepare(profile, ctx, harness):
     """Prepare isolated snapshots and return the manifest to persist before setup."""
     if profile is None:
@@ -811,6 +880,9 @@ def prepare(profile, ctx, harness):
             owned.append(target)
             _install(entry, target)
             skills.append({k: entry[k] for k in ("name", "sha256", "bytes", "files", "automatic_invocation", "user_invocable")})
+            # Saved profiles from earlier attempts may predate these descriptive fields.
+            skills[-1].update(version=entry.get("version"),
+                              declared_tool_grants=list(entry.get("declared_tool_grants") or []))
             skills[-1].update(id="skill:" + entry["name"], source=entry["name"], location=location,
                               installed=True, discoverable="unknown", discovery_configured=True, enabled=True,
                               enabled_basis="launch configuration", loaded="unknown", invoked="unknown",
@@ -864,7 +936,7 @@ def prepare(profile, ctx, harness):
             "No model was called to verify activation; loaded/invoked remain unknown without telemetry.",
             "Installed content/configuration is checked again before execution and narration; writes during a turn "
             "are not prevented by this profile.",
-        ],
+        ] + _grant_limitations(skills),
         "narration": "retains worker launch configuration and verifies pinned snapshots",
         "configuration_files": files, "launch": launch,
     }

@@ -53,6 +53,9 @@ host configuration, credential, sibling-workspace, or engine-socket mounts exist
 
 Images must already be present. Tags are rejected, so matrix cells cannot resolve
 a changing tag differently. plan() only performs read-only image/daemon inspection.
+doctor(ctx) also runs one short-lived unprivileged probe container that bind-mounts
+an empty private directory under ctx["spec"]["trial"]["workspace_root"] read-only,
+then removes both: VM-based engines can only bind-mount shared host directories.
 prepare() starts one persistent container with a non-root worker, root-owned
 bounded supervisor, --init, --rm, read-only rootfs, no capabilities, and
 no-new-privileges. Installed USER tools persist across setup/execute/narration.
@@ -194,6 +197,12 @@ _SYSTEM_TARGETS = ("/bin", "/sbin", "/usr", "/lib", "/lib64", "/etc", "/proc", "
 _MAX_FILES = 10000
 _MAX_BYTES = 64 * 1024 * 1024
 _LABEL_PREFIX = "io.ajx.environment."
+_PROBE_TARGET = "/ajx-probe"
+_REINSPECT_DELAY = 0.5
+_VM_MOUNT_HINT = ("VM-based Docker engines (Colima, Docker Desktop, Rancher Desktop) can only bind-mount shared "
+                  "directories; set trial.workspace_root to a directory the engine shares "
+                  "(for example under your home directory)")
+_VM_MOUNT_ERROR = re.compile(r"bind source path does not exist|mounts denied|not shared from the host", re.I)
 
 
 class EnvironmentError(RuntimeError):
@@ -202,6 +211,48 @@ class EnvironmentError(RuntimeError):
 
 def _fail(field, message):
     raise ValueError(f"{field}: {message}")
+
+
+class _InspectionChanged(ValueError):
+    """A starting directory changed while being inspected; one fresh re-inspection is permitted."""
+
+
+def _changed(field, entry, attributes):
+    raise _InspectionChanged(f"{field}: starting directory changed while being inspected: "
+                             f"{entry} ({', '.join(attributes)})")
+
+
+def _stat_changes(before, after, attributes):
+    """Names of the requested stat attributes that differ between two inspections of one entry."""
+    probes = {"dev/ino": lambda s: (s.st_dev, s.st_ino), "type": lambda s: stat.S_IFMT(s.st_mode),
+              "size": lambda s: s.st_size, "mtime": lambda s: s.st_mtime_ns, "ctime": lambda s: s.st_ctime_ns,
+              "nlink": lambda s: s.st_nlink}
+    return [name for name in attributes if probes[name](before) != probes[name](after)]
+
+
+def _stderr_tail(text, *, lines=6, limit=600):
+    """The last few stderr lines as one bounded, whitespace-collapsed, printable line."""
+    rows = [row for row in str(text or "").splitlines() if row.strip()]
+    tail = "".join(ch for ch in " ".join(" ".join(rows[-lines:]).split()) if ch.isprintable())
+    return tail if len(tail) <= limit else tail[:limit - 3] + "..."
+
+
+def _docker_failure(result):
+    """A durable record of a failed Docker command: exit code, bounded stderr tail, known-engine hint."""
+    record = {"exit_code": result.get("code"), "stderr_tail": _stderr_tail(result.get("stderr"))}
+    if _VM_MOUNT_ERROR.search(record["stderr_tail"]):
+        record["hint"] = _VM_MOUNT_HINT
+    return record
+
+
+def _docker_error(summary, record, *, consequence=None):
+    """One line: summary (exit code N): stderr tail[; consequence][; hint: ...]."""
+    text = f"{summary} (exit code {record['exit_code']}): {record['stderr_tail'] or '(no stderr)'}"
+    if consequence:
+        text += "; " + consequence
+    if record.get("hint"):
+        text += "; hint: " + record["hint"]
+    return text
 
 
 def _table(value, field, allowed):
@@ -348,8 +399,39 @@ def _chown_owned_tree(directory_fd, uid, gid):
 
 
 def _tree_manifest(root, field, *, fixtures=True, destination=None):
-    """Bound/hash and optionally copy a tree using no-follow descriptor-relative reads."""
+    """Bound/hash and optionally copy a tree using no-follow descriptor-relative reads.
+
+    An entry observed changing mid-inspection (for example macOS indexer/xattr
+    writes touching ctime shortly after a file is created) is named with the
+    attributes that differed. The whole inspection then reruns once from
+    scratch: fresh listing, descriptors and hashes and, after discarding any
+    partial copy, a fresh destination. The recorded hash always comes from the
+    read that produced the copy. A change observed again fails.
+    """
     root = _directory(root, field, exists=True)
+    for attempt in (1, 2):
+        try:
+            return _inspect_tree(root, field, fixtures=fixtures, destination=destination)
+        except _InspectionChanged as exc:
+            if attempt > 1:
+                raise _InspectionChanged(f"{exc} (reproduced on re-inspection)") from None
+            if destination is not None and not _discard_partial_copy(destination):
+                raise
+            time.sleep(_REINSPECT_DELAY)
+
+
+def _discard_partial_copy(destination):
+    """Remove the private, partially written snapshot this inspection created; False if it remains."""
+    try:
+        shutil.rmtree(destination)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return not Path(destination).exists()
+
+
+def _inspect_tree(root, field, *, fixtures, destination):
     entries, total = [], 0
     dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -369,9 +451,9 @@ def _tree_manifest(root, field, *, fixtures=True, destination=None):
                 child_fd, output_fd = None, None
                 try:
                     child_fd = os.open(name, dir_flags, dir_fd=directory_fd)
-                    opened = os.fstat(child_fd)
-                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                        _fail(field, "starting directory changed while being inspected")
+                    differences = _stat_changes(info, os.fstat(child_fd), ("dev/ino",))
+                    if differences:
+                        _changed(field, rel + "/", differences)
                     if destination_fd is not None:
                         os.mkdir(name, mode=0o700, dir_fd=destination_fd)
                         output_fd = os.open(name, dir_flags, dir_fd=destination_fd)
@@ -389,10 +471,9 @@ def _tree_manifest(root, field, *, fixtures=True, destination=None):
                     _fail(field, f"starting directory exceeds {_MAX_BYTES} bytes")
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
                 with os.fdopen(fd, "rb") as stream:
-                    opened = os.fstat(stream.fileno())
-                    if ((opened.st_dev, opened.st_ino, opened.st_size) != (info.st_dev, info.st_ino, info.st_size)
-                            or not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1):
-                        _fail(field, "starting directory changed while being inspected")
+                    differences = _stat_changes(info, os.fstat(stream.fileno()), ("dev/ino", "type", "size", "nlink"))
+                    if differences:
+                        _changed(field, rel, differences)
                     digest = hashlib.sha256()
                     count = 0
                     output = None
@@ -404,14 +485,15 @@ def _tree_manifest(root, field, *, fixtures=True, destination=None):
                         for chunk in iter(lambda: stream.read(65536), b""):
                             count += len(chunk)
                             if count > info.st_size:
-                                _fail(field, "starting directory changed while being inspected")
+                                _changed(field, rel, ["size (grew during the read)"])
                             digest.update(chunk)
                             if output is not None:
                                 output.write(chunk)
-                        final = os.fstat(stream.fileno())
-                        if (count != info.st_size or final.st_mtime_ns != info.st_mtime_ns
-                                or final.st_ctime_ns != info.st_ctime_ns or final.st_nlink != 1):
-                            _fail(field, "starting directory changed while being inspected")
+                        differences = _stat_changes(info, os.fstat(stream.fileno()), ("size", "mtime", "ctime", "nlink"))
+                        if count != info.st_size and "size" not in differences:
+                            differences.insert(0, "size")
+                        if differences:
+                            _changed(field, rel, differences)
                     finally:
                         if output is not None:
                             output.close()
@@ -754,6 +836,7 @@ class EnvironmentRunner(Runner):
         self._prepared = None
         self._preparing = False
         self._preparation_failed = False
+        self._creation_failure = None
         self._released = False
         self._docker_binary = None
         # PATH is runtime selection, not credential inheritance. Capture before worker execution.
@@ -949,7 +1032,8 @@ class EnvironmentRunner(Runner):
     def _docker_json(self, args, *, ctx=None, handle=None):
         result = self._docker(args, ctx=ctx, handle=handle)
         if result["code"]:
-            raise EnvironmentError(f"Docker {' '.join(args[:2])} failed; check the daemon and preloaded pinned image")
+            raise EnvironmentError(_docker_error(f"Docker {' '.join(args[:2])} failed", _docker_failure(result),
+                                                 consequence="check the daemon and preloaded pinned image"))
         try:
             return json.loads(result["stdout"])
         except (ValueError, TypeError):
@@ -998,18 +1082,86 @@ class EnvironmentRunner(Runner):
                 "security_options": security}
 
     def doctor(self, ctx=None):
-        """Read-only checks: no roots, containers, pulls, or inventory commands are created/run."""
+        """Prerequisite checks without attempt roots, pulls, or inventory commands.
+
+        Container profiles inspect the pinned image and daemon read-only, then
+        run one short-lived unprivileged probe container (--rm, --pull never,
+        --network none, --read-only, --cap-drop ALL, no-new-privileges, numeric
+        non-root user, no caches) that bind-mounts an empty private directory
+        created under ctx["spec"]["trial"]["workspace_root"] read-only at
+        /ajx-probe and exits. The container and the directory are removed. The
+        probe is skipped for the local backend, without a workspace_root, or
+        after a failed image/daemon check; a failed probe makes the profile
+        unavailable, with the engine's stderr in report["error"].
+        """
         report = {"id": self.profile["id"], "backend": self.backend, "status": "available",
                   "capabilities": self._capabilities(confirmed=False), "limitations": self._limitations()}
         if self.backend == "local":
             report["platform"] = self._local_platform()
-        else:
-            try:
-                report["image"] = self._inspect_image(ctx)
-                report["daemon"] = self._daemon(ctx)
-            except EnvironmentError as exc:
-                report.update(status="unavailable", error=str(exc))
+            report["mount_probe"] = {"status": "skipped", "reason": "the local backend has no container bind mounts"}
+            return report
+        try:
+            report["image"] = self._inspect_image(ctx)
+            report["daemon"] = self._daemon(ctx)
+        except EnvironmentError as exc:
+            report.update(status="unavailable", error=str(exc))
+            report["mount_probe"] = {"status": "skipped", "reason": "image/daemon checks failed"}
+            return report
+        report["mount_probe"] = self._mount_probe(ctx, report["image"])
+        if report["mount_probe"]["status"] == "failed":
+            report.update(status="unavailable", error=report["mount_probe"]["error"])
         return report
+
+    def _mount_probe(self, ctx, image):
+        """Bind-mount one empty private directory under trial.workspace_root into a throwaway container.
+
+        VM-based engines share only configured host directories (usually the
+        home directory): a workspace root outside them fails here, with the
+        engine's stderr, instead of opaquely at every cell's prepare().
+        """
+        spec = ctx.get("spec") if isinstance(ctx, dict) else None
+        root = ((spec.get("trial") or {}).get("workspace_root") if isinstance(spec, dict) else None)
+        if not isinstance(root, (str, os.PathLike)) or not root:
+            return {"status": "skipped", "reason": "no trial.workspace_root in the doctor context"}
+        root = os.fspath(root)
+        if not Path(root).is_dir():
+            return {"status": "skipped", "workspace_root": root,
+                    "reason": f"trial.workspace_root {root} does not exist yet (ajx run creates it); "
+                              "create it to probe bind mounts"}
+        probe = {"status": "failed", "workspace_root": root, "stderr_tail": "", "hint": None}
+        source = None
+        try:
+            parent = _directory(root, "trial.workspace_root", exists=True)
+            # mkdtemp: a private 0o700 directory with an unpredictable name, directly under the root.
+            source = tempfile.mkdtemp(prefix="ajx-doctor-probe-", dir=str(parent))
+            os.chmod(source, 0o700)
+            _path_text(source, "trial.workspace_root")
+            args = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL",
+                    "--security-opt", "no-new-privileges=true", "--user", f"{os.getuid() or 1000}:{os.getgid() or 1000}",
+                    "--ipc", "none", "--cgroupns", "private", "--no-healthcheck", "--log-driver", "none",
+                    "--entrypoint", "/usr/bin/env"]
+            if self.profile.get("platform"):
+                args.extend(["--platform", self.profile["platform"]])
+            # As in _create_argv: clear image ENV before the entrypoint, then env -i for the probe shell.
+            for key in sorted(set(image["environment_names"]) | {"HOME", "PATH", "ENV", "BASH_ENV"}):
+                args.extend(["--env", key + "="])
+            args.extend(["--mount", f"type=bind,source={source},target={_PROBE_TARGET},"
+                                    "bind-propagation=rprivate,bind-recursive=disabled,readonly",
+                         image["id"], "-i", "PATH=" + _PATH, "/bin/sh", "-c", f"test -d {_PROBE_TARGET}"])
+            result = self._docker(args, ctx=ctx, timeout=20)
+            if result["code"]:
+                record = _docker_failure(result)
+                probe.update(exit_code=record["exit_code"], stderr_tail=record["stderr_tail"], hint=record.get("hint"),
+                             error=_docker_error(f"Workspace bind-mount probe failed for trial.workspace_root {root}",
+                                                 record))
+            else:
+                probe["status"] = "ok"
+        except (EnvironmentError, ValueError, OSError) as exc:
+            probe["error"] = f"Workspace bind-mount probe could not run for trial.workspace_root {root}: {exc}"
+        finally:
+            if source is not None:
+                shutil.rmtree(source, ignore_errors=True)
+        return probe
 
     def plan(self, ctx):
         state = ctx.get("state") or {}
@@ -1374,7 +1526,10 @@ class EnvironmentRunner(Runner):
                     created = self._docker(self._create_argv(handle), ctx=ctx, handle=handle,
                                            timeout=min(30, max(1, handle["expires_at"] - time.time())))
                     if created["code"]:
-                        raise EnvironmentError("Docker creation failed; no fallback or task retry was attempted")
+                        # Keep the engine's own words: "creation failed" alone hid a VM bind-mount limit.
+                        self._creation_failure = _docker_failure(created)
+                        raise EnvironmentError(_docker_error("Docker creation failed", self._creation_failure,
+                                                             consequence="no fallback or task retry was attempted"))
                     existing = self._find(handle, ctx)
                     if existing is None:
                         raise EnvironmentError("Container disappeared during preparation (expiry or startup failure)")
@@ -1626,6 +1781,13 @@ class EnvironmentRunner(Runner):
 
     def release(self, ctx):
         """Remove only an ownership-verified container; retain bounded host evidence for archive."""
+        record = self._release(ctx)
+        if self._creation_failure is not None:
+            # The one absence whose cause is known: persist the engine's exit code/stderr with the cleanup record.
+            record["creation_failure"] = copy.deepcopy(self._creation_failure)
+        return record
+
+    def _release(self, ctx):
         try:
             handle = self._handle(ctx, cleanup=True)
             self._fresh_owner = None
@@ -1641,8 +1803,10 @@ class EnvironmentRunner(Runner):
             data = self._find(handle, ctx)
             if data is None:
                 self._released = True
+                reason = ("not present; container creation failed (see creation_failure)" if self._creation_failure
+                          else "not present; expiry/startup failure cannot be distinguished")
                 return {"status": "already_absent", "confirmed": True, "backend": "container",
-                        "name": handle["name"], "reason": "not present; expiry/startup failure cannot be distinguished"}
+                        "name": handle["name"], "reason": reason}
             identity = data["Id"]
             result = self._docker(["container", "rm", "--force", identity], ctx=ctx, handle=handle, timeout=15)
             # A concurrent --rm expiry can make rm fail; verify absence instead of trusting its exit.

@@ -105,8 +105,10 @@ this path. Optional plugins and hooks currently support `none` only.
 | Explain and report | Narration, environment release, evidence analysis, and rendering | Product asks, journey, costs, and explicit evidence gaps |
 
 The task timer does not include all setup and reporting time. Your coordinator
-can inspect `ajx status <trial.toml>` while the run proceeds. A dedicated live
-dashboard is planned; final HTML reports appear during rendering stages.
+can inspect `ajx status <trial.toml>` while the run proceeds, and
+`ajx status <trial.toml> --tail 10` shows the worker's latest tool calls and
+messages for cells still executing. A dedicated live dashboard is planned;
+final HTML reports appear during rendering stages.
 
 A blocked or timed-out attempt can still produce useful evidence. The
 coordinator should say where it stopped and whether reports and cleanup are
@@ -126,6 +128,13 @@ the worker a fresh attempt.
 
 The [fictional example reports](example-report/) show all three views. You can
 generate another copy offline with the README's `example` command.
+
+To hand one run to a product team, `ajx export <trial.toml> --run <run-id>`
+writes `report.html`, `journey.html` and `asks.md` to `<output>/share/<run-id>`
+with the worker's local directories replaced by neutral labels and the
+coordinator's home shown as `~`; links to files outside those three become
+plain text. Review the files first: they still quote the agent's commands,
+outputs and any account identifiers or URLs the task involved.
 
 ## Turn an ask into a follow-up
 

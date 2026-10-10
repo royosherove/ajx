@@ -8,8 +8,10 @@ Commands:
                                    env overrides and collisions; preflight (no secrets printed)
   validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings
   run <trial.toml> [--cells a,b] [--stages s1,s2] [--dry-run] [--keep-workspace] [--no-synthesis]
-  status <trial.toml|matrix-dir>   per-run stage table
+  status <trial.toml|matrix-dir> [--tail N]   per-run stage table; --tail adds each executing worker's last N events
   report <trial.toml> [--no-synthesis]   re-render run reports and the matrix report
+  export <trial.toml|matrix-dir> --run ID [--dest DIR] [--force]   shareable copy of one run: report.html,
+                                   journey.html, asks.md with the worker's directories relabeled
   plugins                          list registered harness/auth/runner/check plugins
 """
 
@@ -21,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from ajx import __version__, envcheck, plugins, render, runner, spec as specmod  # noqa: E402
-from ajx.util import read_json  # noqa: E402
+from ajx import __version__, envcheck, export as exportmod, plugins, render, runner, spec as specmod  # noqa: E402
+from ajx.util import parse_ts, read_json  # noqa: E402
 
 TRIAL_TEMPLATE = '''# AJX trial file. Everything the matrix needs, in one place. See examples/trial.toml.
 [trial]
@@ -203,9 +205,16 @@ def _doctor_cells(spec, tmp):
             print(f"cell {cell['id']:16s} harness={cell['harness']} model={cell.get('model') or 'harness default'}")
             print(f"    environment={cell.get('environment') or 'ajx-local'} backend={profile['backend']} "
                   f"agent_configuration={cell.get('agent_configuration') or 'legacy clean settings'}")
-            backend_check = rn.doctor()
+            backend_check = rn.doctor({"spec": spec, "cell": cell})
             healthy = backend_check.get("status") == "available"
             print("    backend prerequisites: " + ("available" if healthy else "FAILED"))
+            probe = backend_check.get("mount_probe") or {}
+            if probe.get("status") == "ok":
+                print(f"    workspace bind-mount probe: ok ({probe.get('workspace_root')})")
+            elif probe.get("status") == "skipped":
+                print(f"    workspace bind-mount probe: skipped ({probe.get('reason')})")
+            elif probe:
+                print(f"    workspace bind-mount probe: FAILED ({probe.get('workspace_root')})")
             if backend_check.get("error"):
                 print(f"    {backend_check['error']}")
             ok &= healthy
@@ -259,7 +268,7 @@ def _doctor_cells(spec, tmp):
             print(f"    PROBLEMS: {probs}")
             ok = False
         print(f"    runner={rn.name} {rn.describe()}")
-        env = envcheck.command_env(specmod.worker_env(spec, cell, auth), auth.unset(), "doctor")
+        env = envcheck.command_env(specmod.worker_env(spec, cell, auth), auth.unset(), "doctor", spec)
         groups.setdefault(sig(env), {"env": env, "cells": [], "tool": []})
         groups[sig(env)]["cells"].append(cell["id"])
         groups[sig(env)]["tool"].append(checks["task_identity"])
@@ -341,12 +350,14 @@ def cmd_run(args):
 
 def cmd_status(args):
     path = Path(args.trial)
-    out = Path(specmod.load(path, cleanup_only=True)["trial"]["output_dir"]) if path.is_file() else path
+    spec = specmod.load(path, cleanup_only=True) if path.is_file() else None
+    out = Path(spec["trial"]["output_dir"]) if spec else path
     runs = sorted((out / "runs").iterdir()) if (out / "runs").exists() else []
     print(f"{'run':20s} " + " ".join(f"{s[:7]:>7s}" for s in runner.STAGES) + "  verified")
-    bad, cleanup = 0, []
+    bad, cleanup, states = 0, [], []
     for d in runs:
         st = read_json(d / "state.json", {"stages": {}})
+        states.append((d, st))
         marks = []
         for s in runner.STAGES:
             v = st["stages"].get(s, {}).get("status")
@@ -368,10 +379,109 @@ def cmd_status(args):
     if cleanup:
         print("Resources the task created may still exist. After fixing credentials: "
               "ajx run <trial> --cells <cell> --stages teardown,render")
+    tail = getattr(args, "tail", None) or 0   # `run` calls cmd_status without the option
+    if tail > 0:
+        _status_tail(spec, states, tail)
     return 1 if bad else 0
 
 
 TEARDOWN_MARKS = {"auth_errors": "AUTH", "failed": "FAIL", "skipped": "SKIP"}
+
+
+def _status_tail(spec, states, limit):
+    """After the table: the last `limit` worker events (Harness.progress) of each run still executing,
+    or of every run when none is. A feed that is missing or unreadable is a note, never a failure."""
+    running = [(d, st) for d, st in states
+               if ((st.get("stages") or {}).get("execute") or {}).get("status") == "running"]
+    for d, st in running or states:
+        print(f"\n{d.name}: last {limit} worker events (execute)")
+        harness, why = _run_harness(spec, d)
+        if harness is None:
+            print(f"  ({why})")
+            continue
+        progress = getattr(harness, "progress", None)
+        if progress is None:
+            print(f"  ({getattr(harness, 'name', type(harness).__name__)} does not report progress)")
+            continue
+        try:
+            events = list(progress(d, "execute", limit) or [])[-limit:]
+        except Exception as exc:  # noqa: BLE001 - a status feed must never take status down
+            print(f"  (progress unavailable: {type(exc).__name__}: {exc})")
+            continue
+        if not events:
+            print("  (no worker events recorded)")
+        for ev in events:
+            ev = ev if isinstance(ev, dict) else {"text": ev}
+            print(f"  {_clock(ev.get('at'))} {str(ev.get('kind') or '')[:5]:5s} {_one_line(ev.get('text'))}")
+
+
+def _run_harness(spec, run_dir):
+    """The run's harness adapter: the trial cell's when a trial file was given, else the name the run
+    recorded (run.json after render, environment.json from prepare). (None, reason) when unavailable."""
+    name = None
+    try:
+        if spec:
+            for cell in spec["cells"]:
+                prefix = f"{cell['id']}-r"
+                if run_dir.name.startswith(prefix) and run_dir.name[len(prefix):].isdigit():
+                    return specmod.harness_for(spec, cell["harness"]), None
+        name = (((read_json(run_dir / "run.json", {}) or {}).get("agent") or {}).get("harness_name")
+                or ((read_json(run_dir / "environment.json", {}) or {}).get("harness") or {}).get("name"))
+        if not name:
+            return None, "harness unknown: no trial cell matches this run and it records no harness yet"
+        return plugins.get("harness", name)(), None
+    except Exception as exc:  # noqa: BLE001 - status must not fail on a half-written or odd run dir
+        return None, f"harness {name!r} unavailable: {type(exc).__name__}: {exc}"
+
+
+def _clock(at):
+    """HH:MM:SS (local time) for an ISO timestamp; --:--:-- when the adapter has none."""
+    try:
+        return parse_ts(str(at)).astimezone().strftime("%H:%M:%S") if at else "--:--:--"
+    except ValueError:
+        return "--:--:--"
+
+
+def _one_line(text, limit=200):
+    text = " ".join(str(text if text is not None else "").split())
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def cmd_export(args):
+    path = Path(args.trial)
+    out = Path(specmod.load(path, cleanup_only=True)["trial"]["output_dir"]) if path.is_file() else path
+    run_id = args.run
+    if not run_id or Path(run_id).name != run_id or run_id in (".", ".."):
+        return _fail(f"export: --run takes a run id such as my-cell-r1, not {run_id!r}")
+    run_dir = out / "runs" / run_id
+    if not run_dir.is_dir():
+        known = sorted(p.name for p in (out / "runs").iterdir() if p.is_dir()) if (out / "runs").is_dir() else []
+        return _fail(f"export: run {run_id!r} not found in {out / 'runs'}"
+                     + (f"; runs: {', '.join(known)}" if known else "; no runs recorded there"))
+    dest = Path(args.dest).expanduser() if args.dest else out / "share" / run_id
+    if dest.resolve() == run_dir.resolve():
+        return _fail(f"export: --dest must not be the run directory itself ({run_dir})")
+    if dest.is_dir() and any(dest.iterdir()) and not args.force:
+        return _fail(f"export: {dest} is not empty; pass --force to overwrite its report.html, journey.html and asks.md")
+    try:
+        summary = exportmod.export_run(run_dir, dest)
+    except (exportmod.ExportError, OSError) as exc:
+        return _fail(f"export: {exc}")
+    print(summary["dest"])
+    for name in summary["files"]:
+        print(f"  {name}")
+    counts = summary["replacements"]
+    print("replacements: " + (", ".join(f"{n} x {label}" for label, n in counts.items()) or "none"))
+    for note in summary.get("warnings") or []:
+        print(f"note: {note}")
+    print("Review before sharing: exported reports still contain the agent's commands and outputs, "
+          "account identifiers, and URLs.")
+    return 0
+
+
+def _fail(message):
+    print(message, file=sys.stderr)
+    return 1
 
 
 def cmd_report(args):
@@ -398,8 +508,16 @@ def main(argv=None):
     s = sub.add_parser("run"); s.add_argument("trial"); s.add_argument("--cells"); s.add_argument("--stages")
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--keep-workspace", action="store_true")
     s.add_argument("--no-synthesis", action="store_true"); s.set_defaults(fn=cmd_run)
-    s = sub.add_parser("status"); s.add_argument("trial"); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("status"); s.add_argument("trial")
+    s.add_argument("--tail", type=int, metavar="N",
+                   help="after the table, the last N worker events of each run still executing (of every run when none is)")
+    s.set_defaults(fn=cmd_status)
     s = sub.add_parser("report"); s.add_argument("trial"); s.add_argument("--no-synthesis", action="store_true"); s.set_defaults(fn=cmd_report)
+    s = sub.add_parser("export"); s.add_argument("trial")
+    s.add_argument("--run", required=True, metavar="RUN_ID", help="run id, for example my-cell-r1")
+    s.add_argument("--dest", metavar="DIR", help="default <output>/share/<run-id>")
+    s.add_argument("--force", action="store_true", help="overwrite the files in a non-empty --dest")
+    s.set_defaults(fn=cmd_export)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

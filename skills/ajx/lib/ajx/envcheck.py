@@ -9,7 +9,7 @@ A cloud task's credentials pass through three environments that can disagree:
                     runs every Bash call that way, so zsh reads ~/.zshenv). The agent's commands
                     use this, including the model's credentials it inherits.
   check shell       verify, teardown and preflight: ajx's env under /bin/sh, with no harness
-                    settings and no startup files.
+                    settings and no startup files, plus AJX_RUN_TOKEN and AJX_TRIAL_DIR.
 
 doctor and validate compare them before a run, prepare records them, and teardown, preflight
 and verify output is scanned for credential errors so an exit 0 cannot hide a cleanup that
@@ -110,9 +110,20 @@ def _matches(name, patterns):
     return any(name == p or (p.endswith("*") and name.startswith(p[:-1])) for p in patterns)
 
 
-def command_env(env, unset, run_token):
+def check_vars(spec, run_token):
+    """Variables ajx adds for setup, preflight, verify and teardown commands, never for the worker's
+    harness: the run token that tags and finds a run's resources, and the directory holding trial.toml
+    (so a host-located command need not hard-code it)."""
+    out = {"AJX_RUN_TOKEN": run_token}
+    trial_file = (spec or {}).get("path")
+    if trial_file:
+        out["AJX_TRIAL_DIR"] = str(Path(trial_file).parent)
+    return out
+
+
+def command_env(env, unset, run_token, spec=None):
     """Env of verify/teardown/preflight commands, which ajx runs under /bin/sh."""
-    return child_env({**env, "AJX_RUN_TOKEN": run_token}, unset)
+    return child_env({**env, **check_vars(spec, run_token)}, unset)
 
 
 def scratch_workspace(spec, tmp):
@@ -133,7 +144,7 @@ def placeholder_ctx(spec, cell, auth, runner, tmp):
             "cache_dir": str(tmp / "cache"), "run_token": "doctor", "timeout": int(spec["trial"]["timeout_seconds"]),
             "narrate_timeout": int(spec["trial"]["narrate_timeout_seconds"]), "prompt_text": spec["task"]["prompt_text"],
             "state": {}, "env": env, "unset_env": auth.unset(), "runner": runner, "auth": auth,
-            "check_env": {**env, "AJX_RUN_TOKEN": "doctor"}}
+            "check_env": {**env, **check_vars(spec, "doctor")}}
 
 
 def worker_view(spec, harness, auth, ctx):
@@ -214,10 +225,14 @@ def provider_label(auth, env):
 
 
 def collision_findings(spec, cell, auth, view):
-    """Trial [env] / cell env keys that are also the harness's model credentials under this auth."""
+    """Trial [env] / cell env keys that are also the harness's model credentials under this auth.
+    A key the auth profile itself supplies with the identical value (after ${VAR} resolution) can break
+    neither side and is not reported; values are only compared here, never printed."""
     patterns = auth.model_vars(view["effective"])
-    keys = list(dict.fromkeys([*spec["env"], *(cell.get("env") or {})]))
-    return [k for k in keys if _matches(k, patterns)]
+    supplied = auth.env()
+    layered = {**spec["env"], **{k: str(v) for k, v in (cell.get("env") or {}).items()}}
+    return [k for k, v in layered.items()
+            if _matches(k, patterns) and not (k in supplied and supplied[k] == v)]
 
 
 def collision_text(names, auth, view):

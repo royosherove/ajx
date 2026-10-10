@@ -27,6 +27,23 @@ class CloudAuth(Auth):
     endpoint_routes = ()
     unsupported_env = ()
     home_credentials = "caller-home credentials"
+    # (declared, alias) pairs. When the profile's env sets the first name and nothing sets the second,
+    # the worker gets the alias with the same value: Claude Code and the AWS CLI read AWS_REGION, but
+    # botocore (a pip-installed boto3 in a setup script) reads only AWS_DEFAULT_REGION.
+    env_aliases = (("AWS_REGION", "AWS_DEFAULT_REGION"),)
+
+    def env(self):
+        env = super().env()
+        for declared, alias in self.env_aliases:
+            value = env.get(declared, "")
+            if value.strip() and alias not in env and not _matches(alias, self.unset()):
+                env[alias] = value
+        return env
+
+    def model_vars(self, env=None):
+        """A mirrored alias is the model's variable too, so envcheck can tell it from a task variable."""
+        declared = self.conf.get("env") or {}
+        return super().model_vars(env) + tuple(alias for name, alias in self.env_aliases if name in declared)
 
     def problems(self, env=None):
         if env is None and self.environment_check is not None:

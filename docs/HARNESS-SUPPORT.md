@@ -47,6 +47,12 @@ These statuses describe the adapters. They do not limit which Agent Skills host
 can load and coordinate the skill. Offline tests do not establish compatibility
 with every CLI version or model provider.
 
+A Claude Code session can emit more than one `result` event when the agent
+schedules its own continuation. The adapter sums turns, durations and token
+usage across those segments, reports the cumulative cost, records the segment
+count as `result_events`, and notes the aggregation in the run's limitations.
+Other adapters keep single-result handling until a live run shows otherwise.
+
 ```sh
 ajx init trials/example-task --product my-cli --harness kiro-cli
 ajx plugins

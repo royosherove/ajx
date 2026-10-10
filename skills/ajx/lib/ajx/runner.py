@@ -43,7 +43,8 @@ PREREQS = {"execute": ("prepare",), "verify": ("execute",), "teardown": ("prepar
 TERMINAL = ("done", "error", "interrupted")
 NOT_REDOABLE = ("prepare", "execute")
 NOT_REDOABLE_AFTER_ARCHIVE = ("narrate",)   # resume needs the original cwd and harness config
-CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "credentials", "token.json", "tokens.json")
+CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "credentials", "token.json", "tokens.json",
+                    ".npmrc", ".netrc", ".pypirc", ".git-credentials")
 
 
 def cleanup_only(stages):
@@ -231,7 +232,7 @@ class Run:
             "narrate_timeout": int(self.spec["trial"]["narrate_timeout_seconds"]),
             "prompt_text": self.spec["task"]["prompt_text"], "state": self.state, "env": env,
             "unset_env": self.auth.unset(), "runner": self.runner, "auth": self.auth,
-            "check_env": {**env, "AJX_RUN_TOKEN": self.state.get("run_token", "")},
+            "check_env": {**env, **envcheck.check_vars(self.spec, self.state.get("run_token", ""))},
             "environment_profile": self.environment_profile,
             "agent_configuration_profile": self.configuration_profile,
         }
@@ -240,13 +241,13 @@ class Run:
             env.update(self.runner.environment_env(ctx))
             if declared_path is not None:
                 env["PATH"] = declared_path
-            ctx["check_env"] = {**env, "AJX_RUN_TOKEN": self.state.get("run_token", "")}
+            ctx["check_env"] = {**env, **envcheck.check_vars(self.spec, self.state.get("run_token", ""))}
         return ctx
 
     def _shell_env(self, ctx):
         if self.environment_profile:
             return self.runner.child_env(ctx["check_env"], ctx["unset_env"])
-        return envcheck.command_env(ctx["env"], ctx["unset_env"], ctx["run_token"])
+        return envcheck.command_env(ctx["env"], ctx["unset_env"], ctx["run_token"], ctx["spec"])
 
     def _command(self, command, ctx, default_location="environment"):
         return context_shell(command["run"], ctx, timeout=command["timeout"],
