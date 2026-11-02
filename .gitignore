@@ -51,3 +51,6 @@ ajx-reports/
 /release-info/
 /packageInfo*
 /Config
+
+# AJX Console state (journal, logs, local server key)
+.ajx-console/

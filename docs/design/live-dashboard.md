@@ -1,6 +1,9 @@
 # Proposal: live run dashboard
 
-**Status: proposed; not implemented.** Reviewed on 2026-10-07.
+**Status: proposed; not implemented.** Reviewed on 2026-10-07. A local, single-trial
+viewer with explicit controls now ships as `ajx console`
+([guide](../../skills/ajx/references/console.md)). It polls the runner's files; durable cursors,
+artifact revisions, remote collection and shared access below remain proposals.
 
 AJX should provide a live dashboard for local and remote trials. A product team
 should be able to open a matrix while it is running, follow each attempt's

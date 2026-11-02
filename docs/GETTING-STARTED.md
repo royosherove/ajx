@@ -107,8 +107,9 @@ this path. Optional plugins and hooks currently support `none` only.
 The task timer does not include all setup and reporting time. Your coordinator
 can inspect `ajx status <trial.toml>` while the run proceeds, and
 `ajx status <trial.toml> --tail 10` shows the worker's latest tool calls and
-messages for cells still executing. A dedicated live dashboard is planned;
-final HTML reports appear during rendering stages.
+messages for cells still executing. To watch in a browser instead, open
+`ajx console <trial-dir>`; see [the console guide](../skills/ajx/references/console.md).
+Final HTML reports appear during rendering stages.
 
 A blocked or timed-out attempt can still produce useful evidence. The
 coordinator should say where it stopped and whether reports and cleanup are

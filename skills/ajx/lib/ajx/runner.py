@@ -78,18 +78,29 @@ def _pid_alive(pid):
 
 def acquire_lock(out_dir):
     """One ajx per matrix directory: a second run would mark live workers interrupted and
-    archive workspaces still in use."""
+    archive workspaces still in use. Created with O_EXCL, so two launches cannot both take it."""
     path = Path(out_dir) / ".lock"
-    if path.exists():
-        info = read_json(path, {}) or {}
-        same_host = info.get("host") == socket.gethostname()
-        if same_host and info.get("pid") and _pid_alive(int(info["pid"])):
-            raise LockedError(f"another ajx (pid {info['pid']}) is running this matrix since {info.get('at')}; "
-                              f"stop it or wait. Remove {path} only if that process is gone.")
-        if not same_host:
-            raise LockedError(f"lock held by {info.get('host')} (pid {info.get('pid')}); remove {path} if stale")
-    write_json(path, {"pid": os.getpid(), "host": socket.gethostname(), "at": now()})
-    return path
+    data = json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "at": now()}, indent=2) + "\n"
+    for _ in range(3):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            info = read_json(path, {}) or {}
+            same_host = info.get("host") == socket.gethostname()
+            if same_host and info.get("pid") and _pid_alive(int(info["pid"])):
+                raise LockedError(f"another ajx (pid {info['pid']}) is running this matrix since {info.get('at')}; "
+                                  f"stop it or wait. Remove {path} only if that process is gone.") from None
+            if not same_host:
+                raise LockedError(f"lock held by {info.get('host')} (pid {info.get('pid')}); remove {path} if stale") from None
+            try:
+                path.unlink()  # stale: its process is gone
+            except FileNotFoundError:
+                pass
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+        return path
+    raise LockedError(f"could not take {path}; another ajx may be starting")
 
 
 def release_lock(path):
@@ -832,8 +843,9 @@ class Run:
             if not self._ready(stage):
                 self.log(f"[{self.run_id}] skip {stage}: prerequisites {PREREQS.get(stage)} not reached")
                 continue
-            self.mark(stage, "running")
             try:
+                # Inside the try: an interruption while marking still takes the handled cleanup below.
+                self.mark(stage, "running")
                 getattr(self, f"stage_{stage}")()
                 self.mark(stage, "done")
             except Exception as exc:  # noqa: BLE001

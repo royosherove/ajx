@@ -170,11 +170,13 @@ the old directory resumes its saved attempt.
 | What if the worker has different tools, skills, or access? | [Environment and agent profiles](skills/ajx/references/environments.md), with a [plain vs guided CSV example](skills/ajx/examples/environment-profiles/) |
 | Can a pipeline run this without an interview? | [Headless execution](skills/ajx/references/headless.md). Full acceptance gating is still proposed; task verification failure can return exit code zero. |
 | How does the evidence become a report? | [Architecture](docs/ARCHITECTURE.md) and [reporting method](skills/ajx/references/reporting.md) |
+| Can I review, start and watch a trial in a browser? | [The AJX Console](skills/ajx/references/console.md). Try it free with `python3 skills/ajx/bin/ajx console demo trials/console-demo`. |
 
 The skill can coordinate from a compatible Agent Skills host; launching a
 worker requires a supported CLI adapter. Local and local Docker environments
-are implemented. Remote provisioning, selected plugins/hooks, a live dashboard,
-and automated acceptance/improvement loops remain [designs](docs/design/).
+are implemented, and `ajx console` serves a local page for one trial. Remote
+provisioning, selected plugins/hooks, a remote or shared live dashboard, and
+automated acceptance/improvement loops remain [designs](docs/design/).
 
 ## Work directly with the CLI
 
@@ -192,6 +194,7 @@ ajx run trials/my-cli/trial.toml
 ajx status trials/my-cli/trial.toml
 ajx status trials/my-cli/trial.toml --tail 10          # what the worker is doing right now
 ajx export trials/my-cli/trial.toml --run my-cell-r1   # shareable report.html, journey.html, asks.md
+ajx console trials/my-cli                             # or review, start and watch it in a local web page
 ```
 
 Choose `claude-code` or `kiro-cli` instead of `codex` as needed. `init` selects

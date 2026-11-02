@@ -101,6 +101,20 @@ plan review before running, obtain their go once the concrete plan is ready.
 Do not re-ask permission for already authorized steps. An unattended trial uses
 its supplied authorization; missing scope is an error, not an interactive wait.
 
+### Optional: hand off to the AJX Console
+
+When the user wants to review, start or watch the trial in a browser, run
+`ajx console <trial-dir> --no-open` after it validates and give them the link.
+Say what needs their decision and that you cannot see the page live. Then follow
+[references/console.md](references/console.md#for-the-coordinating-agent):
+
+- Before every reply about that trial, run `ajx console since <trial> --cursor N`
+  and summarize what changed; answer `messages_for_agent`.
+- Never approve, start, stop or retry for the user. If they approve in chat, run
+  `ajx console start <trial> --plan <id> --quote "<their words>"`.
+- Watch only when asked, with `ajx console wait`. A run started in the console
+  needs no `ajx run` from you; deliver its results as in step 4.
+
 ### 3. Run
 
 `ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`; `ajx status trial.toml --tail 10` adds, after the table, the worker's last 10 tool calls and messages for each cell still executing (for every run when none is), so you can tell the user what the agent is doing without opening raw transcripts; adapters without a progress feed print a one-line note instead. `status` needs no cell secrets. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` to rebuild analysis from saved evidence; `prepare`/`execute` cannot be redone, use a fresh output for a new attempt), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.

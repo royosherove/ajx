@@ -1,0 +1,1 @@
+I have three orders in orders.json. Use orders-cli to convert them to out.csv with the columns id, customer and total, keeping the original order and every value exactly as given. The tool's built-in help is the only documentation.

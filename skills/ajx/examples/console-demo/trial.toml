@@ -1,0 +1,25 @@
+# AJX Console demo. plugins/console_demo.py simulates the worker: it prints a scripted session and
+# writes out.csv. No agent, model or network is used, so a run costs nothing and takes about a minute.
+# orders-cli is fictional. Open it with: ajx console demo trials/console-demo
+[trial]
+id = "console-demo"
+product = "orders-cli"
+workspace_root = "/tmp"
+timeout_seconds = 300
+narrate_timeout_seconds = 120
+
+[task]
+prompt_file = "task-prompt.md"
+materials = ["orders-cli --help"]
+fixture_dir = "fixture"
+
+[[verify]]
+name = "out.csv has the three orders, in order, with every value"
+run = "cmp -s out.csv \"$AJX_TRIAL_DIR/expected.csv\""
+
+[reporter]
+harness = "console-demo"
+
+[[cells]]
+id = "demo"
+harness = "console-demo"

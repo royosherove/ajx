@@ -24,7 +24,9 @@ def _need(cond, msg):
         raise SpecError(msg)
 
 
-def load(path, *, cleanup_only=False):
+def load(path, *, cleanup_only=False, readiness=True):
+    """Parse and validate a trial file. `readiness=False` skips only the checks that resolve the
+    caller's credentials (`ajx console` validates edits without the trial's secrets exported)."""
     path = Path(path).resolve()
     _need(path.exists(), f"trial file not found: {path}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -213,7 +215,7 @@ def load(path, *, cleanup_only=False):
                       "environments require an auth profile that supplies credentials to isolated configuration")
                 env = worker_env(spec, cell, auth)
                 environments.validate_for_cell(environment, {**cell, "env": env, "unset_env": auth.unset()})
-                if not cleanup_only:
+                if not cleanup_only and readiness:
                     # Readiness resolves ${VAR} references against the caller's shell. `ajx status` and the
                     # cleanup stages never start a worker, so they must not need the trial's secrets exported.
                     problems = auth.environment_problems(env, environment)
