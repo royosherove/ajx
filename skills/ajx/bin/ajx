@@ -14,7 +14,8 @@ Commands:
                                    journey.html, asks.md with the worker's directories relabeled
   console [open] <trial>           local web page to review, start and watch a trial (background server)
   console demo <dir>               copy a simulated trial (no agent or model) and open it in the console
-  console since|wait|note|start|state|stop <trial>   the coordinating agent's view of the same trial
+  console list | stop [--all]      running console servers; stopping one never stops a run
+  console since|wait|note|start|again|state <trial>   the coordinating agent's view of the same trial
   plugins                          list registered harness/auth/runner/check plugins
 """
 
@@ -45,6 +46,7 @@ narrate_timeout_seconds = 900     # for the resumed self-narration and reporter 
 # max_budget_usd = 5              # enforced by harnesses that support it (claude-code)
 order_seed = 0
 cache = "isolated"                # isolated | shared package caches
+shell_startup = "inherit"         # skip: the worker's tool shell reads no ~/.zshenv or BASH_ENV (local runs)
 
 [task]
 prompt_file = "task-prompt.md"    # exact bytes are hashed; never edited by ajx
@@ -113,6 +115,8 @@ def cmd_init(args):
         else:
             path.write_text(text, encoding="utf-8")
             print(f"wrote {path}")
+    print(f"Next: describe the task in task-prompt.md and add a [[verify]] check, then review and start it in the "
+          f"browser with: ajx console {consolemod._short(d)}")
     return 0
 
 
@@ -533,7 +537,7 @@ def cmd_report(args):
     return 0
 
 
-CONSOLE_ACTIONS = ("open", "serve", "stop", "state", "since", "wait", "note", "start", "demo")
+CONSOLE_ACTIONS = ("open", "serve", "stop", "list", "state", "since", "wait", "note", "start", "again", "demo")
 
 
 def _dump(data):
@@ -552,6 +556,9 @@ def _console_open(trial, args):
           f"it stops after 30 idle minutes or with: ajx console stop {where}")
     print("Closing the page, this terminal or the chat never stops a run.")
     print(f"Agents catch up with: ajx console since {where} --cursor 0")
+    others = [c for c in consolemod.list_consoles() if c["pid"] != info["pid"]]
+    if others:
+        print(f"{len(others)} other console(s) running: ajx console list (ajx console stop --all stops them)")
     return 0
 
 
@@ -568,8 +575,25 @@ def cmd_console(args):
         return consolemod.serve(args.trial, port=args.port, open_browser=args.open,
                                 announce=lambda url: print(f"serving {url}", flush=True))
     if act == "stop":
+        if args.all:
+            count = consolemod.stop_all()
+            print(f"stopped {count} console(s); runs keep going" if count else "no console was running")
+            return 0
+        if not args.trial:
+            return _fail("console stop: name a trial, or pass --all")
         print("console stopped; runs keep going" if consolemod.stop_console(args.trial)
               else "no console was running for this trial")
+        return 0
+    if act == "list":
+        consoles = consolemod.list_consoles()
+        if args.json:
+            return _dump(consoles)
+        if not consoles:
+            print("no console is running")
+            return 0
+        for c in consoles:
+            print(f"pid {c['pid']:>7}  up {c['elapsed']:>9}  {c['short']}\n    {c['url'] or '(starting or unreachable)'}")
+        print("Stop one with: ajx console stop <trial>; all with: ajx console stop --all (runs keep going)")
         return 0
     if act == "state":
         return _dump(consolemod.snapshot(args.trial))
@@ -586,9 +610,17 @@ def cmd_console(args):
     if act == "start":
         consolemod.preflight_start(args.trial, args.plan)
         print("checking readiness (ajx validate, then ajx doctor) for this plan...", flush=True)
-        entry = consolemod.start(args.trial, actor="agent", via="chat", plan=args.plan, quote=args.quote)
+        entry = consolemod.start(args.trial, actor="agent", via="chat", plan=args.plan, quote=args.quote,
+                                 accept_warnings=args.accept_warnings)
         print(f"started {entry['command']} (pid {entry['pid']}); the console shows it live, and "
               f"`ajx console wait` returns when it changes")
+        return 0
+    if act == "again":
+        mode = "same-folder" if args.same_folder else "fresh-folder"
+        print(f"run again ({mode}): checking readiness (ajx validate, then ajx doctor)...", flush=True)
+        entry = consolemod.run_again(args.trial, actor="agent", via="chat", mode=mode, plan=args.plan,
+                                     quote=args.quote, accept_warnings=args.accept_warnings)
+        print(f"started {entry['command']} (pid {entry['pid']}); earlier attempts are kept as they were")
         return 0
     return 2
 
@@ -631,7 +663,9 @@ def main(argv=None):
     c.add_argument("--port", type=int, default=0)
     c = acts.add_parser("serve", help="internal: serve in this process (`open` starts it in the background)")
     c.add_argument("trial"); c.add_argument("--port", type=int, default=0); c.add_argument("--open", action="store_true")
-    c = acts.add_parser("stop", help="stop this trial's console server (never a run)"); c.add_argument("trial")
+    c = acts.add_parser("stop", help="stop this trial's console server, or every one with --all (never a run)")
+    c.add_argument("trial", nargs="?"); c.add_argument("--all", action="store_true")
+    c = acts.add_parser("list", help="console servers running for you"); c.add_argument("--json", action="store_true")
     c = acts.add_parser("state", help="everything the page shows, as JSON"); c.add_argument("trial")
     c = acts.add_parser("since", help="for agents: what changed after --cursor, as JSON")
     c.add_argument("trial"); c.add_argument("--cursor", type=int, default=0)
@@ -644,6 +678,17 @@ def main(argv=None):
     c.add_argument("trial"); c.add_argument("--quote", required=True, help="the user's approval, word for word")
     c.add_argument("--plan", required=True, help="plan id from `since` (its first 7+ characters); refuses a plan "
                    "that changed after the user saw it")
+    c.add_argument("--accept-warnings", action="store_true",
+                   help="only when the user accepted the readiness warnings listed by `since`, in their own words")
+    c = acts.add_parser("again", help="for agents: run a finished trial again after the user asked (new attempt)")
+    c.add_argument("trial"); c.add_argument("--quote", required=True, help="the user's request, word for word")
+    c.add_argument("--plan", required=True, help="plan id from `since`; refuses a plan that changed meanwhile")
+    where = c.add_mutually_exclusive_group(required=True)
+    where.add_argument("--same-folder", action="store_true",
+                       help="one more attempt in this output folder, same settings (results stay comparable)")
+    where.add_argument("--fresh-folder", action="store_true", help="a new, empty output folder (changed settings)")
+    c.add_argument("--accept-warnings", action="store_true",
+                   help="only when the user accepted the readiness warnings listed by `since`, in their own words")
     s.set_defaults(fn=cmd_console)
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) >= 2 and argv[0] == "console" and argv[1] not in CONSOLE_ACTIONS and not argv[1].startswith("-"):

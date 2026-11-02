@@ -171,7 +171,7 @@ def write_run_json(spec, cell, rep, run_dir, state, harness, auth, runner):
                     "version_after": env.get("product_version_after")},
         "agent": {
             "model_id": ",".join(tel.get("model_ids") or []) or None,
-            "model_requested": cell.get("model"), "model_version": None,
+            "model_requested": (ex.get("requested") or {}).get("model", cell.get("model")), "model_version": None,
             "harness_name": harness.name, "harness_version": env.get("harness", {}).get("version_before"),
             "harness_version_after": env.get("harness_version_after"),
             "settings": {k: v for k, v in {"effort": cell.get("effort"), "config": cell["config"],

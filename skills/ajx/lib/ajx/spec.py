@@ -11,6 +11,11 @@ from . import plugins
 from .util import read_json, sha256_bytes, sha256_file
 
 CONFIGS = ("clean", "user")
+SHELL_STARTUP = ("inherit", "skip")
+# shell_startup = "skip": the agent's `zsh -c` tool shell reads $ZDOTDIR/.zshenv, so an empty ZDOTDIR
+# keeps ~/.zshenv (for example an exported AWS_PROFILE) out of it; bash and sh read BASH_ENV / ENV.
+SHELL_STARTUP_SKIP_ENV = {}
+SHELL_STARTUP_DROP = ("BASH_ENV", "ENV")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
 _NOT_ID = re.compile(r"[^a-z0-9._-]+")
 
@@ -38,11 +43,13 @@ def load(path, *, cleanup_only=False, readiness=True):
     _need(trial.get("product"), "trial.product is required")
     defaults = {"product_version_cmd": None, "workspace_root": "/tmp", "repetitions": 1, "parallel": 1,
                 "timeout_seconds": 1800, "max_budget_usd": None, "order_seed": 0, "cache": "isolated",
-                "narrate_timeout_seconds": 900, "environment": None, "agent_configuration": None}
+                "narrate_timeout_seconds": 900, "environment": None, "agent_configuration": None,
+                "shell_startup": "inherit"}
     for k, v in defaults.items():
         trial.setdefault(k, v)
     trial.setdefault("output_dir", str(base / "ajx-reports" / trial["product"] / trial["id"]))
     _need(trial["cache"] in ("isolated", "shared"), "trial.cache must be isolated|shared")
+    _need(trial["shell_startup"] in SHELL_STARTUP, "trial.shell_startup must be inherit|skip")
     for key in ("repetitions", "parallel", "timeout_seconds", "narrate_timeout_seconds", "order_seed"):
         try:
             trial[key] = int(trial[key])
@@ -175,9 +182,11 @@ def load(path, *, cleanup_only=False, readiness=True):
               f"cells[{i}].harness {cell.get('harness')!r} unknown; available {harness_names(spec)}")
         for k, v in {"model": None, "effort": None, "config": "clean", "args": [], "env": {},
                      "auth": None, "runner": None, "environment": trial["environment"],
-                     "agent_configuration": trial["agent_configuration"]}.items():
+                     "agent_configuration": trial["agent_configuration"],
+                     "shell_startup": trial["shell_startup"]}.items():
             cell.setdefault(k, v)
         _need(cell["config"] in CONFIGS, f"cells[{i}].config must be clean|user")
+        _need(cell["shell_startup"] in SHELL_STARTUP, f"cells[{i}].shell_startup must be inherit|skip")
         _need(isinstance(cell["args"], list) and all(isinstance(a, str) for a in cell["args"]),
               f"cells[{i}].args must be a list of strings")
         for key, table in (("environment", "environments"), ("agent_configuration", "agent_configurations")):

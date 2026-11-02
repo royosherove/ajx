@@ -63,6 +63,11 @@ Here is an **illustrative plan**, not a completed trial:
 | Cleanup | Local files handled by AJX; any external resource would need an explicit cleanup plan |
 | Output | An ignored `trials/` location; open the generated `index.html` first |
 
+Your coordinator opens this plan in the AJX Console (`ajx console <trial-dir>`).
+There you can adjust the time limit, attempts and models, press
+**Check and start**, follow the run, and use **Run again** afterwards. You can
+also approve in chat.
+
 The coordinator should use your existing authorization when it covers this
 scope. If you asked to see a plan first, it should wait for your go before
 launching. It should not ask you to repeat answers or approve each internal step.

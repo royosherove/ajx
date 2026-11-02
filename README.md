@@ -72,7 +72,8 @@ Start with one attempt using my current agent CLI if supported.
 Check Python, the worker and reporter CLIs, authentication, and jq first.
 Use a disposable local workspace; no cloud resources or system installations.
 Propose a short time limit and explain any model costs and access limits.
-Show me the task, success check, environment, and run plan before starting.
+Open the trial in the AJX Console so I can review the task, success check,
+environment, and run plan, and start it there.
 
 Afterward, open the report and visual journey. Explain the top product asks,
 what evidence supports them, and what I should try changing next.
@@ -84,7 +85,9 @@ a successful response.” You do not need to write TOML or choose a matrix first
 
 ### 3. Check the small plan, then let AJX run
 
-Your coordinator checks setup and proposes defaults. Supply what it cannot
+Your coordinator checks setup, proposes defaults, and opens the plan in the
+**AJX Console**: a local page where you review it, press **Check and start**,
+watch the run, and read the results. You can also approve in chat. Supply what it cannot
 infer: the intended user outcome, allowed materials, permissions, and any limits.
 The [first-run guide](docs/GETTING-STARTED.md) shows a sample plan and common fixes.
 

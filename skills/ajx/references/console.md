@@ -34,10 +34,10 @@ environment of the process that opened the console, including its credential var
 
 | Tab | What you can do |
 |---|---|
-| Plan | Read the task prompt the worker receives and the success checks. See where the worker runs and how it signs in. Set the time limit, attempts, budget and models. Edit `trial.toml` directly; an edit is saved only if AJX can load it. Check readiness, then start or resume. |
-| Live | Follow each attempt's stages, the worker's latest events, verification, cleanup and reporting, plus AJX's own output. Stop a run, or retry cleanup when it was not confirmed. |
-| Results | Read the verified outcome and the asks with their evidence IDs. Open the report, the journey and `asks.md`. Export a run for a team, or rebuild the reports without model calls. |
-| Activity | See everything you, your agent and the console did. Send a message to your agent. |
+| Plan | Read the task prompt the worker receives and the success checks. See where the worker runs and how it signs in. Set the time limit, attempts, budget and models; the model field suggests names the agent accepts. Edit `trial.toml` directly; an edit is saved only if AJX can load it. Check readiness, then start, resume, finish a report, or run again. |
+| Live | Follow each attempt's stages, model, the worker's latest events and any error it stopped with, verification, cleanup and reporting, plus AJX's own output. Stop or restart a run, or retry cleanup when it was not confirmed. |
+| Results | Read the verified outcome and the asks, with an icon for each label (Roadblock, Misdirection, Blind Spot and the rest; hover one for its meaning), helpful behavior and gates. Open the report, the journey and `asks.md`. Export a run for a team, or rebuild the reports without model calls. |
+| Activity | See everything you, your agent, the console and the runner did, as one story. Send a message to your agent and see whether it answered. |
 
 Each button runs an existing command, and the page shows it: `ajx validate`, `ajx doctor`,
 `ajx run`, `ajx run --cells C --stages S`, `ajx report --no-synthesis` and `ajx export`. The page
@@ -59,25 +59,52 @@ starts only if both pass. Any later change to those files voids the approval.
   and launch.
 - Scripts that your checks call from elsewhere are not part of the plan.
 
-## Output folders, resuming and stopping
+## Output folders, running again and stopping
 
-- **Resume.** Start resumes an output folder that has unfinished attempts. It never runs a
-  finished or stopped attempt again.
-- **Change the task.** After attempts exist, the task prompt is locked for that folder. Choose
-  **Use a fresh output folder**, which sets `trial.output_dir`, then edit the task.
-- **Run again under the same conditions.** Choose **Add another attempt**. Start then runs only
-  the new repetition in the same folder.
+- **Resume and finish a report.** Start resumes an output folder with unfinished work. Its label
+  says what it does: **Resume: N attempt(s) left**, or **Finish the report for r1** when the
+  worker already stopped. It never runs a finished or stopped attempt again.
+- **Run again.** Once attempts exist, **Run again here** adds one more attempt in the same folder
+  with the same settings, so the results compare directly. **Run again in a fresh folder** points
+  `trial.output_dir` at a new, empty folder. Both check readiness and start.
+- **Settings are locked once attempts exist.** The task prompt, models, time limit, budget and
+  reporter stay as the attempts used them, and `ajx run` refuses a changed configuration for an
+  output folder with attempts. To change them, switch to a fresh output folder first.
 - **Stop.** Stop sends SIGINT to `ajx run`. AJX stops the worker, runs task cleanup, releases the
-  environment and archives the evidence. Resume later to write the report from what was captured.
-  A second Stop is refused while cleanup runs. `ajx run` treats SIGTERM and SIGHUP the same way.
-  The page cannot stop a run with `parallel` above 1, because AJX would wait for every running
-  attempt.
+  environment and archives the evidence. When the worker already finished, the button reads
+  **Stop reporting**: stopping then leaves the report for **Finish the report**. A second Stop is
+  refused while cleanup runs. `ajx run` treats SIGTERM and SIGHUP the same way. The page cannot
+  stop a run with `parallel` above 1, because AJX would wait for every running attempt.
+- **Restart.** While a run is in progress, **Restart** stops it the same way, waits for the
+  cleanup, then runs again here or in a fresh folder.
+- **A worker that could not start.** When the worker exits with an error within two minutes
+  without a single tool call, for example because the agent rejected the model name, the page,
+  the journal and `since` say so and quote the error. Fix the cause, then use Run again.
+
+## Accounts and readiness warnings
+
+When the task acts in a cloud or SaaS account (it declares `identity_cmd` or `[[preflight]]`),
+warnings from `ajx doctor` must be accepted before starting: tick **I accept these warnings for
+this run**, and the approval records them. If doctor says a startup file such as `~/.zshenv`
+sets the AWS profile for the worker's tool shell, set `shell_startup = "skip"` in `[trial]`
+instead of accepting the risk.
+
+## Stop the console
+
+**Stop console** in the page header stops the server for that trial; runs keep going. From a
+terminal:
+
+```sh
+ajx console list                 # every console server running for you, with its link
+ajx console stop trials/my-cli   # one trial's console
+ajx console stop --all           # every console
+```
 
 ## For the coordinating agent
 
-The console is useful when the user wants to review or run the trial in a browser. Open it after
-the trial validates. Draft the task prompt, the success check and any fixture as usual; the page
-does not write task text.
+The console is the default way to hand a trial to a user who is present. Open it after the
+trial validates. Draft the task prompt, the success check and any fixture as usual; the page
+does not write task text. Skip it only for unattended runs or when the user asks to stay in chat.
 
 ```sh
 ajx console <trial-dir> --no-open      # prints the link; the server keeps running
@@ -89,10 +116,16 @@ Tell the user what needs their decision, and that you cannot see the page live. 
   `cursor` from your previous call, or 0 the first time. Summarize `headline` and `changes` in a
   sentence or two; never paste the JSON. Answer each item in `messages_for_agent`, and when the
   user is in the browser, post a short answer with `ajx console note <trial> "..." --reply-to <n>`.
-- **Never approve, start, stop or retry for the user.** If they approve in chat, run
+- **Never approve, start, stop, restart or run again for the user.** If they approve in chat, run
   `ajx console start <trial> --plan <id> --quote "<their words>"`. Use the plan ID from `since`;
   its first 7 or more characters are enough. The command checks readiness, records the quote and
   launches. It refuses a plan that changed after the user saw it.
+- **Run a finished trial again when asked.** Use `ajx console again <trial> --same-folder` for one
+  more comparable attempt, or `--fresh-folder` after changed settings, with `--plan` and `--quote`.
+  Never edit `repetitions` or `output_dir` by hand for this.
+- **Readiness warnings.** When `since` lists `readiness.warnings` with
+  `warnings_need_acceptance`, show them to the user. Pass `--accept-warnings` only when they
+  accepted them in their own words.
 - **Watch only when asked.** Loop `ajx console wait <trial> --cursor N --timeout 90`, passing back
   the `cursor` each call returns. It returns when the journal gains an entry (`woke: journal`) or
   at the timeout (`woke: timeout`). Entries include the user's actions and run milestones from
@@ -115,7 +148,7 @@ Tell the user what needs their decision, and that you cannot see the page live. 
 | `messages_for_agent` | The user's messages you have not answered with a `--reply-to` note |
 | `plan` | The plan ID, whether it can be fingerprinted, and its approval: `none`, `valid` or `stale`, `via` console or chat |
 | `readiness` | The last check's status, whether it covers the current plan, and its problems |
-| `process`, `runs`, `output` | What is running; each attempt's stage, verification, cleanup, asks and report `files`; the output folder |
+| `process`, `runs`, `output` | What is running; each attempt's stage, model, `exit_code`, `stop_reason`, `error` and `could_not_start`, verification, cleanup, asks and report `files`; the output folder, its `pending_reports` and `unstarted` attempts |
 | `console` | Whether the server is running, and its `url` and `results_url` |
 | `do_not` | Actions to avoid in the current state |
 

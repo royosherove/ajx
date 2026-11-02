@@ -101,28 +101,38 @@ plan review before running, obtain their go once the concrete plan is ready.
 Do not re-ask permission for already authorized steps. An unattended trial uses
 its supplied authorization; missing scope is an error, not an interactive wait.
 
-### Optional: hand off to the AJX Console
+### Hand off to the AJX Console (the default)
 
-When the user wants to review, start or watch the trial in a browser, run
-`ajx console <trial-dir> --no-open` after it validates and give them the link.
-Say what needs their decision and that you cannot see the page live. Then follow
+When the user is present, the AJX Console is where they review, start and watch
+the trial. After it validates, run `ajx console <trial-dir> --no-open`, give
+them the link, say what needs their decision, and say that you cannot see the
+page live. They may also approve in chat instead. Skip the console only for
+unattended runs or when the user asks to stay in chat. Then follow
 [references/console.md](references/console.md#for-the-coordinating-agent):
 
 - Before every reply about that trial, run `ajx console since <trial> --cursor N`
-  and summarize what changed; answer `messages_for_agent`.
-- Never approve, start, stop or retry for the user. If they approve in chat, run
-  `ajx console start <trial> --plan <id> --quote "<their words>"`.
+  and summarize what changed, including any run's `error`; answer
+  `messages_for_agent`.
+- Never approve, start, stop, restart or run again for the user. If they approve
+  in chat, run `ajx console start <trial> --plan <id> --quote "<their words>"`.
+  To repeat a finished trial, run `ajx console again <trial> --same-folder` (one
+  more comparable attempt) or `--fresh-folder` (changed settings), with the same
+  `--plan` and `--quote`. Add `--accept-warnings` only when the user accepted the
+  listed readiness warnings in their own words.
 - Watch only when asked, with `ajx console wait`. A run started in the console
   needs no `ajx run` from you; deliver its results as in step 4.
 
 ### 3. Run
 
-`ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`; `ajx status trial.toml --tail 10` adds, after the table, the worker's last 10 tool calls and messages for each cell still executing (for every run when none is), so you can tell the user what the agent is doing without opening raw transcripts; adapters without a progress feed print a one-line note instead. `status` needs no cell secrets. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` to rebuild analysis from saved evidence; `prepare`/`execute` cannot be redone, use a fresh output for a new attempt), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
+When a console is open, the user starts the run there, or you start it with
+`ajx console start` after they approve in chat. Otherwise, for unattended runs or
+a user who stays in chat, launch `ajx run trial.toml` using the host's background-command facility or a persistent terminal, then report progress from `ajx status trial.toml`; `ajx status trial.toml --tail 10` adds, after the table, the worker's last 10 tool calls and messages for each cell still executing (for every run when none is), so you can tell the user what the agent is doing without opening raw transcripts; adapters without a progress feed print a one-line note instead. `status` needs no cell secrets. The runner is resumable: rerun the same command after a crash and it skips completed stages, finishes pending teardowns, and marks a worker that was cut off as `interrupted` (its evidence is kept; the task is never silently re-run). Use `--cells a,b` to run a subset, `--stages` to redo post-processing stages (for example `--stages extract,measure,render` to rebuild analysis from saved evidence; `prepare`/`execute` cannot be redone, use a fresh output for a new attempt), `--keep-workspace` to inspect a workspace, `--no-synthesis` to skip the cross-run clustering call.
 
 Profiled runs record the actual environment and extension manifest. `doctor`
 checks configuration/backend prerequisites; `prepare` checks the real runtime
 before the worker starts. A missing/expired container is never recreated on
-resume, and a changed profile or prompt requires a new output directory.
+resume, and a changed profile, prompt, cell, model, limit or reporter requires a new
+output directory; adding cells or repetitions does not.
 The `release` stage follows narration and precedes extraction; a full run releases
 its container even with `--keep-workspace`. Failed release is a separate error,
 retriable with the unchanged trial and `--stages release,render`.

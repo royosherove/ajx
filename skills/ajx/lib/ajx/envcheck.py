@@ -139,11 +139,17 @@ def placeholder_ctx(spec, cell, auth, runner, tmp):
     """A full run ctx (see base.py) for doctor/validate, pointing at scratch dirs instead of a run."""
     tmp = Path(tmp)
     env = specmod.worker_env(spec, cell, auth)
+    unset = list(auth.unset())
+    if not specmod.environment_for(spec, cell) and cell.get("shell_startup") == "skip":
+        quiet = tmp / "no-shell-startup"
+        quiet.mkdir(parents=True, exist_ok=True)
+        env.update(specmod.SHELL_STARTUP_SKIP_ENV, ZDOTDIR=str(quiet))
+        unset += list(specmod.SHELL_STARTUP_DROP)
     return {"spec": spec, "cell": cell, "run_dir": tmp, "workspace": tmp / "workspace",
             "config_dir": str(tmp / "harness-config"),
             "cache_dir": str(tmp / "cache"), "run_token": "doctor", "timeout": int(spec["trial"]["timeout_seconds"]),
             "narrate_timeout": int(spec["trial"]["narrate_timeout_seconds"]), "prompt_text": spec["task"]["prompt_text"],
-            "state": {}, "env": env, "unset_env": auth.unset(), "runner": runner, "auth": auth,
+            "state": {}, "env": env, "unset_env": unset, "runner": runner, "auth": auth,
             "check_env": {**env, **check_vars(spec, "doctor")}}
 
 
@@ -156,7 +162,7 @@ def worker_view(spec, harness, auth, ctx):
     except Exception as exc:  # noqa: BLE001 - a plugin's clean_env must not break doctor or prepare
         extra, errors = {}, [f"{harness.name}.clean_env failed: {type(exc).__name__}: {exc}"]
     make_env = ctx["runner"].child_env if ctx.get("environment_profile") else child_env
-    process = make_env({**ctx["env"], **extra}, tuple(harness.strip_env) + tuple(auth.unset()))
+    process = make_env({**ctx["env"], **extra}, tuple(harness.strip_env) + tuple(ctx.get("unset_env", auth.unset())))
     layers = harness.settings_env(process, ctx["workspace"])
     effective, source = dict(process), {}
     for label, values in layers:
@@ -201,8 +207,31 @@ def env_findings(spec, cell, auth, view, shell_vars):
             source = view["source"].get(name) or ("the harness's launch env" if name in view["launch"] else None)
             out.append({"name": name, "origin": label, "set": want, "harness": harness_val, "tool_shell": tool_val,
                         "settings_source": source if harness_val != want else None,
-                        "shell_startup": tool_val != harness_val, "model_affected": harness_val != want})
+                        "shell_startup": tool_val != harness_val, "model_affected": harness_val != want,
+                        "startup_source": startup_source(name, view["effective"]) if tool_val != harness_val else None})
     return out
+
+
+def startup_source(name, env):
+    """Where a non-login `zsh -c` or `bash -c` would set `name`: '~/.zshenv line 3', or None."""
+    home = env.get("HOME") or str(Path.home())
+    files = [Path(env.get("ZDOTDIR") or home) / ".zshenv"]
+    if env.get("BASH_ENV"):
+        files.append(Path(env["BASH_ENV"]).expanduser())
+    pattern = re.compile(rf"^\s*(?:export\s+|typeset\s+-x\s+)?{re.escape(name)}=")
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for number, line in enumerate(lines, 1):
+            if pattern.match(line):
+                shown_path = str(path).replace(home, "~", 1) if str(path).startswith(home) else str(path)
+                return f"{shown_path} line {number}"
+    return None
+
+
+SKIP_HINT = "set shell_startup = \"skip\" in [trial] so the worker's tool shell does not read it"
 
 
 def override_text(finding, shell):
@@ -213,7 +242,8 @@ def override_text(finding, shell):
                  "(model calls use that); ")
     text += f"the agent's tool shell ({shell}) sees {shown(n, finding['tool_shell'])}"
     if finding["shell_startup"]:
-        text += " (set by that shell's startup files)"
+        source = finding.get("startup_source")
+        text += f" (set by {source}; {SKIP_HINT})" if source else " (set by that shell's startup files)"
     if not finding["model_affected"] and finding["origin"].startswith("auth "):
         text += "; model calls keep the profile's value"
     return text
@@ -299,6 +329,8 @@ def inspect_cell(spec, cell, harness, auth, runner, cwd, ctx, identities=False):
         # What a command that omits the task's --profile acts as: with Bedrock, the model's own account.
         report["default_aws_identity"] = (identity_result(DEFAULT_AWS_IDENTITY, cwd, view["effective"], shell)
                                           if local and uses_aws(spec, auth, view) else None)
+        report["aws_profile_source"] = next((startup_source(n, view["effective"]) for n in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE")
+                                             if startup_source(n, view["effective"])), None) if local else None
     return report, view
 
 
@@ -321,8 +353,11 @@ def default_identity_warning(report):
     if not default or not default["ok"] or (task and task["ok"] and task["output"] == default["output"]):
         return None
     whose = " (the model's account)" if default["output"] == (report.get("auth_identity") or "").strip() else ""
-    return (f"an aws command or SDK call in the agent's tool shell that omits the task's --profile acts as "
+    text = (f"an aws command or SDK call in the agent's tool shell that omits the task's --profile acts as "
             f"{default['output']}{whose}, not as the task identity; teardown does not look there")
+    if report.get("aws_profile_source"):
+        text += f". {report['aws_profile_source']} sets the AWS profile for that shell; {SKIP_HINT}"
+    return text
 
 
 def record(report):

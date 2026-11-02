@@ -11,6 +11,8 @@ narrate_timeout_seconds = 900
 max_budget_usd = 5
 order_seed = 42                   # interleaved shuffled order: all cells r1, then r2 ...
 cache = "isolated"
+shell_startup = "inherit"         # skip: the worker's `zsh -c` reads no ~/.zshenv and bash no BASH_ENV
+                                  # (local runs without a profile), e.g. when ~/.zshenv exports AWS_PROFILE
 
 [task]
 prompt_file = "task-prompt.md"

@@ -16,7 +16,7 @@
     tab: TABS.includes(sessionStorage.getItem("ajx-console-tab")) ? sessionStorage.getItem("ajx-console-tab") : "plan",
     snap: null, sigs: {}, offline: null, lastState: null,
     drafts: { settings: {} }, trialText: null, advancedOpen: false, composer: "", exports: {}, seenEntries: 0,
-    openState: {}, inflight: false,
+    openState: {}, inflight: false, acceptWarnings: false, acceptPlan: null, restartOpen: false, stopped: null,
   };
 
   // ------------------------------------------------------------------ helpers
@@ -129,6 +129,7 @@
   }
 
   async function poll() {
+    if (ui.stopped) return;
     await refresh(false);
     const active = ui.snap && ACTIVE.includes(ui.snap.process.state);
     setTimeout(poll, active ? 1500 : 3000);
@@ -139,13 +140,14 @@
                                  s.output, s.locks, s.pending_start]),
     live: (s) => JSON.stringify([s.runs, s.process, s.output]),
     results: (s) => JSON.stringify([s.runs.map((r) => [r.id, r.started, r.asks, r.verify, r.links, r.review_status,
-                                                       r.complete, r.declared, r.teardown]), s.output.index,
-                                    s.process.state, ui.exports]),
+                                                       r.complete, r.declared, r.teardown, r.result, r.strengths, r.gates]),
+                                    s.output.index, s.process.state, ui.exports]),
     activity: (s) => JSON.stringify([s.journal, s.agent]),
   };
   const RENDER = { plan: renderPlan, live: renderLive, results: renderResults, activity: renderActivity };
 
   function render(force) {
+    if (ui.stopped) return renderStopped();
     renderHeader();
     document.body.classList.toggle("offline", Boolean(ui.offline));
     const banner = $("#offline");
@@ -157,6 +159,7 @@
     }
     const s = ui.snap;
     if (!s) return;
+    if (ui.acceptPlan !== s.plan.sha) { ui.acceptWarnings = false; ui.acceptPlan = s.plan.sha; }
     if (ui.tab === "activity") ui.seenEntries = s.journal.cursor;
     autoSwitch(s);
     renderTabLabels(s);
@@ -257,7 +260,37 @@
       chips.push(chip(ui.offline === "auth" ? "Link expired: reopen it with ajx console" : "Console not responding", "bad",
                       "Run `ajx console open <trial>` again; a run keeps going without the console."));
     }
+    if (s && !ui.offline) chips.push(h("button", { class: "chipbtn", onclick: stopConsole, title: "Stops this page's server. Runs keep going." }, "Stop console"));
     $("#chips").replaceChildren(...chips);
+  }
+
+  async function stopConsole() {
+    const where = ui.snap ? ui.snap.trial.short.replace(/\/trial\.toml$/, "") : "<trial>";
+    if (!confirm(`Stop this console's server?\n\nRuns keep going. Reopen it any time with:\najx console open ${where}`)) return;
+    try {
+      const res = await api("/api/shutdown", {});
+      ui.stopped = res.reopen || `ajx console open ${where}`;
+    } catch (e) {
+      toast(e.message, true);
+      return;
+    }
+    renderStopped();
+  }
+
+  function renderStopped() {
+    $("#chips").replaceChildren(chip("Console stopped", ""));
+    document.body.classList.remove("offline");
+    const banner = $("#offline");
+    if (banner) banner.hidden = true;
+    for (const name of TABS) {
+      const el = document.getElementById("tab-" + name);
+      el.hidden = name !== "plan";
+      el.replaceChildren();
+    }
+    document.getElementById("tab-plan").replaceChildren(h("div", { class: "card empty" },
+      h("h2", { text: "The console is stopped" }),
+      h("p", { text: "Runs keep going without it. Reopen it with:" }),
+      h("pre", { class: "logtail", text: ui.stopped })));
   }
 
   // ------------------------------------------------------------------ plan tab
@@ -322,11 +355,25 @@
     if (p.state === "starting") return { disabled: true, label: "Checking, then starting\u2026", reason: "It starts by itself if both checks pass." };
     if (p.state === "busy") return { disabled: true, label: "Busy", reason: "Rebuilding the reports." };
     if (anyDirty(s)) return { disabled: true, label: "Check and start", reason: "Save or discard your changes first." };
-    if (out.blocker) return { disabled: true, label: out.blocker_kind === "complete" ? "Finished" : "Check and start", reason: out.blocker };
+    if (out.blocker) {
+      return { disabled: true, label: out.blocker_kind === "complete" ? "Finished" : "Check and start",
+               reason: out.blocker_kind === "complete" ? "Every planned attempt has finished. Use Run again to start another." : out.blocker };
+    }
     if (!s.plan.complete) return { disabled: true, label: "Check and start", reason: "The starting files or trial plugins are too large to fingerprint for approval. Start this trial with ajx run." };
     const ready = r.current && r.status === "ready";
+    if (r.current && r.needs_ack && (r.warnings || []).length && !ui.acceptWarnings) {
+      return { disabled: true, label: "Check and start", reason: "This task acts in an account: accept the readiness warnings above first." };
+    }
     if (out.resumable) {
-      return { disabled: false, label: "Resume", reason: "Finishes the remaining stages; a finished or stopped attempt is never run again. Readiness is checked first if the plan changed." };
+      if ((out.unstarted || []).length) {
+        return { disabled: false, label: `Resume: ${out.unstarted.length} attempt(s) left`,
+                 reason: "Runs the attempts that have not started, and finishes any unfinished report. Finished or stopped attempts are never run again." };
+      }
+      if ((out.pending_reports || []).length) {
+        return { disabled: false, label: `Finish the report for ${out.pending_reports.join(", ")}`,
+                 reason: "The worker already stopped. This writes the missing report; it does not run the task again (Run again does)." };
+      }
+      return { disabled: false, label: "Resume", reason: "Finishes the remaining stages; a finished or stopped attempt is never run again." };
     }
     return {
       disabled: false, label: ready ? "Start" : "Check and start",
@@ -429,10 +476,13 @@
   function agentsCard(s) {
     const t = s.trial, lock = s.locks.settings;
     const rows = (t.cells || []).map((c) => {
+      const listId = `models-${c.raw_index}`;
       const model = c.model_editable
-        ? h("input", { type: "text", "data-key": `cell-${c.raw_index}`, placeholder: "agent default", disabled: lock ? true : null,
-                       value: (ui.drafts.settings.cell_models || {})[c.raw_index] ?? (c.model || ""),
-                       oninput: (e) => { ui.drafts.settings.cell_models = { ...(ui.drafts.settings.cell_models || {}), [c.raw_index]: e.target.value }; updateDirty(); } })
+        ? [h("input", { type: "text", list: listId, "data-key": `cell-${c.raw_index}`, placeholder: "agent default", disabled: lock ? true : null,
+                        spellcheck: "false", value: (ui.drafts.settings.cell_models || {})[c.raw_index] ?? (c.model || ""),
+                        oninput: (e) => { ui.drafts.settings.cell_models = { ...(ui.drafts.settings.cell_models || {}), [c.raw_index]: e.target.value }; updateDirty(); } }),
+           h("datalist", { id: listId }, (c.model_suggestions || []).map((m) => h("option", { value: m }))),
+           h("small", { text: modelHint(c.harness, c.model_suggestions) })]
         : h("span", { class: "mono", text: c.model || "agent default" });
       return h("li", {},
         h("div", { class: "row spread" }, h("div", { class: "row" }, h("b", { text: c.harness }), h("span", { class: "tiny muted", text: c.id }),
@@ -441,15 +491,23 @@
         h("label", { class: "field" }, h("span", { text: "Model" }), model));
     });
     const rep = t.reporter || {};
-    const repModel = h("input", { type: "text", "data-key": "reporter-model", placeholder: "agent default", disabled: lock ? true : null,
-                                  value: draftValue(s, "reporter_model"),
-                                  oninput: (e) => { ui.drafts.settings.reporter_model = e.target.value; updateDirty(); } });
+    const repModel = [h("input", { type: "text", list: "models-reporter", "data-key": "reporter-model", placeholder: "agent default",
+                                   disabled: lock ? true : null, spellcheck: "false", value: draftValue(s, "reporter_model"),
+                                   oninput: (e) => { ui.drafts.settings.reporter_model = e.target.value; updateDirty(); } }),
+                      h("datalist", { id: "models-reporter" }, (rep.model_suggestions || []).map((m) => h("option", { value: m }))),
+                      h("small", { text: modelHint(rep.harness, rep.model_suggestions) })];
     return h("div", { class: "card" },
       h("h2", { text: "Worker and reporter" }),
       h("ul", { class: "list" }, rows,
         h("li", {}, h("div", { class: "row" }, h("b", { text: rep.harness || "reporter" }), h("span", { class: "tiny muted", text: "reporter: writes the analysis after the task, kept the same across runs" })),
           h("label", { class: "field" }, h("span", { text: "Reporter model" }), repModel))),
       h("p", { class: "note", text: "Save model changes with \u201cSave changes\u201d under Your decisions." }));
+  }
+
+  function modelHint(harness, suggestions) {
+    const known = (suggestions || []).slice(0, 5).join(", ");
+    return "Leave empty for the agent's default." + (known ? ` Suggestions: ${known}.` : "")
+      + " Other names must be ones this agent accepts, without spaces; an unknown name makes the worker exit at once.";
   }
 
   function advancedCard(s) {
@@ -519,13 +577,6 @@
       ? "Optional. Claude Code enforces it; other agents ignore it." : "Optional. None of these agents enforces a budget.";
     const outStatus = !out.started ? "Not started yet."
       : `${out.complete} of ${out.planned} planned attempt(s) finished` + (out.started > out.complete ? `, ${out.started - out.complete} in progress or stopped.` : ".");
-    const remedies = [];
-    if (out.started) {
-      remedies.push(h("button", { onclick: () => { if (confirm("Point trial.output_dir at a new, empty folder? The recorded attempts stay where they are. The plan changes, so starting needs a new approval.")) act("/api/fresh-output", { base: t.sha256 }, (r) => `Fresh output folder: ${r.output_dir}. Start needs a new approval.`); }, disabled: lock ? true : null }, "Use a fresh output folder"));
-    }
-    if (out.blocker_kind === "complete") {
-      remedies.push(h("button", { onclick: () => { if (confirm("Add one more attempt of the same task in this folder? The plan changes, so starting needs a new approval.")) act("/api/add-attempt", { base: t.sha256 }, "Added an attempt. Start runs only the new one, after a new approval."); }, disabled: lock ? true : null }, "Add another attempt"));
-    }
     const st = startState(s);
     return h("div", { class: "card" },
       h("h2", { text: "Your decisions" }),
@@ -542,12 +593,12 @@
       h("h3", { text: "Output folder" }),
       h("p", { class: "mono small", style: "margin:0;word-break:break-all", text: out.short }),
       h("p", { class: "small", style: "margin:4px 0", text: outStatus }),
-      remedies.length ? h("div", { class: "row" }, remedies) : null,
+      runAgainBox(s),
       h("div", { class: "hr" }),
       h("h3", { text: "Readiness" }),
       readinessView(s),
       h("button", { id: "start-btn", class: "primary start-btn", disabled: st.disabled ? true : null, "aria-describedby": "start-reason",
-                    onclick: (e) => { e.currentTarget.disabled = true; act("/api/start", { plan: s.plan.sha }, "Checking readiness, then starting\u2026"); } }, st.label),
+                    onclick: (e) => { e.currentTarget.disabled = true; act("/api/start", { plan: s.plan.sha, accept_warnings: ui.acceptWarnings }, "Checking readiness, then starting\u2026"); } }, st.label),
       h("p", { id: "start-reason", class: "reason" + (st.disabled ? " block" : ""), text: st.reason }),
       h("p", { class: "note" }, "Starting approves plan ",
         h("span", { class: "mono", title: "A fingerprint of " + (s.plan.covers || []).join(", ") + ". Any change to them gives a new plan id.", text: s.plan.short.slice(0, 7) }),
@@ -558,6 +609,31 @@
         : "The worker runs commands without asking you first, inside its container." }),
       h("p", { class: "note", text: "Model calls by the worker and the reporter can cost money." }),
       h("p", { class: "cmd", text: `runs: ajx run ${t.short}` }));
+  }
+
+  function runAgainBox(s) {
+    const out = s.output, t = s.trial;
+    if (!out.attempts_exist || ACTIVE.includes(s.process.state)) return null;
+    const changed = out.blocker_kind === "changed";
+    const blocked = !s.plan.complete || (s.readiness.current && s.readiness.needs_ack && (s.readiness.warnings || []).length && !ui.acceptWarnings);
+    const where = t.short.replace(/\/trial\.toml$/, "");
+    const go = (mode, msg) => act("/api/again", { mode, plan: s.plan.sha, accept_warnings: ui.acceptWarnings }, msg);
+    return h("div", { class: "againbox" },
+      h("h3", { text: "Run again" }),
+      h("p", { class: "small", style: "margin:0 0 8px", text: "Starts a new attempt of the same task after the readiness check. Earlier attempts stay exactly as they are; nothing runs twice." }),
+      h("div", { class: "row" },
+        h("button", { class: "primary", disabled: changed || blocked ? true : null,
+                      title: changed ? "The settings changed since these attempts; run again in a fresh folder." : null,
+                      onclick: () => { if (confirm(`Run attempt ${out.planned + 1} in this output folder, with the same settings? It sits next to the earlier attempts, so their results compare directly.`)) go("same-folder", "Run again: checking readiness, then starting\u2026"); } },
+          "Run again here"),
+        h("button", { disabled: blocked ? true : null,
+                      onclick: () => { if (confirm("Run again in a new, empty output folder? Use this after changing the task or settings. The current folder and its attempts stay where they are.")) go("fresh-folder", "Run again in a fresh folder: checking readiness, then starting\u2026"); } },
+          "Run again in a fresh folder")),
+      h("p", { class: "tiny muted", style: "margin:8px 0 0" }, "To change settings before starting, ",
+        h("button", { class: "link", disabled: s.locks.prompt === "Locked while a run or command is in progress." ? true : null,
+                      onclick: () => { if (confirm("Point trial.output_dir at a new, empty folder without starting? The recorded attempts stay where they are; the task and settings unlock.")) act("/api/fresh-output", { base: t.sha256 }, (r) => `Fresh output folder: ${r.output_dir}. Settings are editable again.`); } },
+          "switch to a fresh output folder"), " first."),
+      h("p", { class: "cmd", text: `agents: ajx console again ${where} --same-folder | --fresh-folder` }));
   }
 
   async function saveSettings(s) {
@@ -580,7 +656,16 @@
       h("ul", { class: "list" }, (r.problems || []).map((p) => h("li", { class: "mono", text: p }))));
     const steps = (r.steps || []).map((st) => h("details", { "data-key": `ready-${st.name}` }, h("summary", { text: `${st.name}: ${st.exit_code === 0 ? "passed" : st.timed_out ? "timed out" : "exit " + st.exit_code}` }),
       h("pre", { class: "logtail", text: st.output })));
-    return h("div", {}, head, steps,
+    const warns = r.current ? (r.warnings || []) : [];
+    const warnBox = !warns.length ? null : r.needs_ack
+      ? h("div", { class: "warnbox" }, h("b", { text: "Passed with warnings." }), " This task acts in an account, so read them before starting:",
+          h("ul", { class: "list" }, warns.map((w) => h("li", { text: w }))),
+          h("label", { class: "row", style: "margin-top:6px" },
+            h("input", { type: "checkbox", "data-key": "accept-warnings", checked: ui.acceptWarnings ? true : null,
+                         onchange: (e) => { ui.acceptWarnings = e.target.checked; updateDirty(); renderTab("plan", true); } }),
+            h("span", { text: "I accept these warnings for this run" })))
+      : h("div", { class: "notebox" }, h("b", { text: "Notes from doctor:" }), h("ul", { class: "list" }, warns.map((w) => h("li", { text: w }))));
+    return h("div", {}, head, warnBox, steps,
       h("div", { class: "row", style: "margin-top:8px" },
         h("button", { onclick: () => act("/api/check", {}, "Checking readiness\u2026"), disabled: active || s.trial.error ? true : null }, "Check now")));
   }
@@ -602,6 +687,7 @@
   function processCard(s) {
     const p = s.process;
     const active = ACTIVE.includes(p.state);
+    const reporting = p.state === "running" && p.job === "run" && !s.runs.some((r) => ["prepare", "execute"].includes(r.current));
     const text = { idle: "Nothing is running.", running: "AJX is running the trial.", stopping: "Stopping. AJX stops the worker, cleans up and keeps the evidence.",
                    checking: "Checking readiness.", starting: "Checking readiness, then starting.", busy: "Rebuilding the reports." }[p.state] || p.state;
     const lines = p.log_tail || [];
@@ -610,10 +696,22 @@
         h("div", {}, h("h2", { text: text }),
           p.command && active ? h("p", { class: "cmd", text: `${p.command} \u00b7 started ${byText(p.by)} at ${clock(p.since)} \u00b7 pid ${p.pid}` }) : null),
         (p.state === "running" || p.state === "stopping")
-          ? h("button", { class: "danger", "data-key": "stop", disabled: p.state === "stopping" || (p.parallel > 1 && p.job === "run") ? true : null,
-                          onclick: () => { if (confirm("Stop the run?\n\nAJX stops the worker, runs cleanup and keeps the evidence captured so far. Resume later to write the report.")) act("/api/stop", {}, "Stop requested. Cleanup runs before AJX exits."); } },
-              p.state === "stopping" ? "Stopping\u2026" : "Stop")
+          ? h("div", { class: "row" },
+              p.state === "running" && p.job === "run" && !(p.parallel > 1)
+                ? h("button", { "data-key": "restart", onclick: () => { ui.restartOpen = !ui.restartOpen; renderTab("live", true); } }, "Restart\u2026") : null,
+              h("button", { class: "danger", "data-key": "stop", disabled: p.state === "stopping" || (p.parallel > 1 && p.job === "run") ? true : null,
+                            onclick: () => { if (confirm(reporting
+                              ? "Stop reporting?\n\nThe worker already finished. Stopping now leaves the report unfinished; Finish the report writes it later."
+                              : "Stop the run?\n\nAJX stops the worker, runs cleanup and keeps the evidence captured so far. Finish the report later from the Plan tab.")) act("/api/stop", {}, "Stop requested. Cleanup runs before AJX exits."); } },
+                p.state === "stopping" ? "Stopping\u2026" : reporting ? "Stop reporting" : "Stop"))
           : null),
+      ui.restartOpen && p.state === "running" ? h("div", { class: "againbox" },
+        h("p", { class: "small", style: "margin:0 0 8px", text: "Restart stops this run (AJX cleans up first and keeps its evidence), then starts a new attempt of the same task." }),
+        h("div", { class: "row" },
+          h("button", { class: "primary", onclick: () => { ui.restartOpen = false; act("/api/restart", { mode: "same-folder", accept_warnings: ui.acceptWarnings }, "Stopping, then starting a new attempt here\u2026"); } }, "Restart here (adds an attempt)"),
+          h("button", { onclick: () => { ui.restartOpen = false; act("/api/restart", { mode: "fresh-folder", accept_warnings: ui.acceptWarnings }, "Stopping, then starting in a fresh folder\u2026"); } }, "Restart in a fresh folder"),
+          h("button", { class: "link", onclick: () => { ui.restartOpen = false; renderTab("live", true); } }, "Cancel"))) : null,
+      p.restarting ? h("div", { class: "okbox", text: "Restarting: AJX is cleaning up this run; a new attempt starts as soon as it ends." }) : null,
       (p.state === "running" || p.state === "stopping") ? h("p", { class: "note", text: p.parallel > 1 && p.job === "run"
         ? "Stop is unavailable for parallel runs: AJX would stop only after every running attempt ends."
         : "Stop asks AJX to finish safely: it stops the worker, cleans up and keeps the evidence (an interrupt, like Ctrl-C). The page, the terminal and the chat can all close without stopping the run." }) : null,
@@ -665,6 +763,16 @@
     return [h("span", { class: "badge", text: "asks pending" })];
   }
 
+  function workerError(r) {
+    const result = r.result || {};
+    if (!result.error) return null;
+    if (result.could_not_start) {
+      return h("div", { class: "errbox" }, h("b", { text: "The worker could not start. " }), result.error,
+        h("div", { class: "tiny", text: "Nothing was attempted, so the checks below say little about the product. Fix the cause (for example the model name) and use Run again." }));
+    }
+    return h("div", { class: "errbox" }, h("b", { text: result.timed_out ? "The worker reached the time limit. " : "The worker stopped with an error. " }), result.timed_out ? "" : result.error);
+  }
+
   function runCard(s, r) {
     const ex = r.execute;
     const pills = r.stages.map((st) => h("span", { class: "pill " + (st.status || ""), title: st.status ? `${st.status} at ${clock(st.at)}` : "not reached", text: st.name }));
@@ -684,10 +792,11 @@
                     onclick: () => { if (x.stages !== "extract,measure,render" || confirm("This calls the reporter model again. Continue?")) act("/api/stages", { run: r.id, stages: x.stages }, `${x.label}\u2026`); } }, x.label),
       h("div", { class: "cmd", text: `runs: ajx run <trial> --cells ${r.id.replace(/-r\d+$/, "")} --stages ${x.stages}` })));
     return h("div", { class: "card" },
-      h("div", { class: "row spread" }, h("div", { class: "row" }, h("h2", { text: r.id, style: "margin:0" }), runStatus(r)),
+      h("div", { class: "row spread" }, h("div", { class: "row" }, h("h2", { text: r.id, style: "margin:0" }), runStatus(r),
+          h("span", { class: "tiny muted", text: `model: ${r.model || "agent default"}` })),
         r.links.report ? link(r.links.report, "Open report") : null),
       h("div", { class: "pills" }, pills),
-      timer, feed,
+      timer, workerError(r), feed,
       errors.map((st) => h("div", { class: "errbox", text: `${st.name}: ${st.error}` })),
       r.started ? h("div", { class: "minis" },
         h("div", { class: "mini" }, h("h3", { text: "Verification" }), verifyText(r.verify)),
@@ -703,12 +812,33 @@
       h("p", { class: "sub", text: "Start with the verified outcome, then the asks and the evidence behind them. Asks come from one recorded attempt; they are not a product score." })];
     if (!runs.length) return items.concat(h("div", { class: "card empty", text: "Results appear here as each attempt finishes reporting." }));
     for (const r of runs) items.push(resultCard(s, r));
+    items.push(h("div", { class: "card" }, legend(s)));
     items.push(h("div", { class: "card" },
       h("div", { class: "row" },
         s.output.index ? link(s.output.index, "Open the matrix overview (index.html)") : h("span", { class: "muted", text: "The matrix overview appears after the first report." }),
         h("button", { disabled: ACTIVE.includes(s.process.state) ? true : null, onclick: () => act("/api/report", {}, "Rebuilding the reports (no model calls)\u2026") }, "Rebuild reports")),
       h("p", { class: "cmd", text: "Rebuild runs: ajx report <trial> --no-synthesis" })));
     return items;
+  }
+
+  const TONE = { bad: "bad", warn: "warn", good: "good", info: "blue" };
+
+  function labelBadge(s, name) {
+    const vocab = s.vocabulary || {};
+    const [icon, tone] = (vocab.labels || {})[name] || ["\u25cf", ""];
+    return h("span", { class: "badge " + (TONE[tone] || ""), title: (vocab.meanings || {})[name] || name, text: `${icon} ${name}` });
+  }
+
+  function statusBadge(s, key) {
+    const [label, tone] = ((s.vocabulary || {}).statuses || {})[key] || [key, ""];
+    return key ? h("span", { class: "badge " + (TONE[tone] || ""), text: label }) : null;
+  }
+
+  function legend(s) {
+    const vocab = s.vocabulary || {};
+    return h("details", { "data-key": "legend", class: "legend" }, h("summary", { text: "What the icons mean" }),
+      h("ul", { class: "list" }, Object.keys(vocab.labels || {}).map((name) => h("li", {}, labelBadge(s, name), " ",
+        h("span", { class: "small muted", text: (vocab.meanings || {})[name] || "" })))));
   }
 
   function resultCard(s, r) {
@@ -720,8 +850,8 @@
         r.links.report ? link(r.links.report, "Report") : null,
         r.links.journey ? link(r.links.journey, "Journey") : null,
         r.links.asks ? link(r.links.asks, "asks.md") : null));
-    const body = [];
-    if (r.declared) body.push(h("p", { class: "small" }, h("b", { text: "The worker said: " }), r.declared));
+    const body = [workerError(r)];
+    if (r.declared && !(r.result || {}).could_not_start) body.push(h("p", { class: "small" }, h("b", { text: "The worker said: " }), r.declared));
     if (r.journey_provenance && r.journey_provenance.startsWith("EDITORIAL")) body.push(h("p", { class: "note", text: "The journey is a labeled reconstruction, not the worker's own account." }));
     if (a.status === "ready") {
       if (!a.count) body.push(h("p", { class: "muted", text: a.no_obstacles_observed ? "No obstacles observed in this attempt." : "No asks were extracted. Check the verification and the journey before reading this as an easy experience." }));
@@ -729,14 +859,26 @@
         body.push(h("div", { class: "ask" },
           h("div", {},
             h("div", { class: "row" }, h("span", { class: "badge dark", text: ask.id || "" }), h("b", { text: ask.title }),
-              (ask.labels || []).map((l) => h("span", { class: "badge", text: l }))),
+              (ask.labels || []).map((l) => labelBadge(s, l)), statusBadge(s, ask.evidence_status)),
             h("p", { text: ask.requested_behavior }),
             ask.consequence ? h("p", { class: "small", text: ask.consequence }) : null,
             h("div", { class: "refs", text: "Evidence: " + ((ask.event_refs || []).join(", ") || "journey anchors") })),
           h("button", { "aria-label": `Ask my agent about ${ask.id}`, onclick: () => askAgent(`About ${ask.id} \u201c${ask.title}\u201d in ${r.id}: `) }, "Ask my agent")));
       }
       if (a.count > a.top.length) body.push(h("p", { class: "note" }, `${a.count - a.top.length} more in `, r.links.report ? link(r.links.report, "the report") : "the report", "."));
-      if (a.strengths || a.gates) body.push(h("p", { class: "note", text: `${a.strengths} helpful behavior(s) and ${a.gates} gate(s) are in the report.` }));
+      for (const good of r.strengths || []) {
+        body.push(h("div", { class: "ask" }, h("div", {},
+          h("div", { class: "row" }, labelBadge(s, "Delight"), h("b", { text: good.title })),
+          h("p", { text: good.how_observed }),
+          h("div", { class: "refs", text: "Evidence: " + ((good.event_refs || []).join(", ") || "journey") }))));
+      }
+      for (const gate of r.gates || []) {
+        body.push(h("div", { class: "ask" }, h("div", {},
+          h("div", { class: "row" }, labelBadge(s, "Gate"), h("b", { text: gate.trigger }),
+            h("span", { class: "badge " + (gate.resolved ? "good" : "warn"), text: gate.resolved ? "resolved" : "unresolved" })),
+          h("p", { text: gate.agent_action }),
+          h("div", { class: "refs", text: "Evidence: " + ((gate.event_refs || []).join(", ") || "journey") }))));
+      }
     } else {
       body.push(h("div", { class: "row" }, asksText(a, r)));
     }
@@ -791,7 +933,9 @@
       entries.length ? h("ul", { class: "list journal" }, entries.map((e) => h("li", {},
         h("time", { text: clock(e.at) }),
         h("span", { class: "who " + (e.actor || ""), text: { user: "you", agent: "agent", console: "console", runner: "run", outside: "outside" }[e.actor] || e.actor || "" }),
-        h("span", {}, e.text, e.reply_to_text ? h("span", { class: "tiny muted", style: "display:block", text: `Reply to: ${e.reply_to_text}` }) : null)))) : h("p", { class: "muted", text: "Nothing yet." }));
+        h("span", {}, e.text, e.reply_to_text ? h("span", { class: "tiny muted", style: "display:block", text: `Reply to: ${e.reply_to_text}` }) : null,
+          e.kind === "message" ? h("span", { class: "badge " + (e.answered ? "good" : "warn"), style: "margin-left:8px",
+            text: e.answered ? "answered" : "waiting for your agent" }) : null)))) : h("p", { class: "muted", text: "Nothing yet." }));
     return [h("h1", { text: "Activity" }), h("p", { class: "sub", text: "Everything you, your agent and the console did with this trial. Your agent reads the same list with `ajx console since`." }), composer, journal];
   }
 

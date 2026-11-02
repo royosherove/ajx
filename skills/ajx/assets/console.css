@@ -132,3 +132,9 @@ details[open] > summary { margin-bottom: 8px }
 .offline-banner { background: var(--red-soft); color: var(--red); border-bottom: 1px solid #e2a3aa; padding: 8px 24px; font-size: 13.5px; font-weight: 600 }
 body.offline main button, body.inflight main button.primary { pointer-events: none; opacity: .5 }
 .who.runner { color: var(--amber) }
+.chipbtn { border-radius: 99px; padding: 3px 11px; font-size: 12.5px; background: transparent; color: #e4ecf8; border: 1px solid #4a6690 }
+.chipbtn:hover:not(:disabled) { background: #26406a }
+.againbox { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #f6f9fd }
+.notebox { margin-top: 8px; padding: 8px 11px; border-radius: 8px; background: #eef2f7; color: #34465f; font-size: 13px }
+.legend .list li { display: flex; gap: 8px; align-items: baseline }
+input:disabled, textarea:disabled { background: #f3f6fa; color: #6b7a90; border-color: var(--line); cursor: not-allowed }

@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import base, plugins, runner, spec as specmod
+from .report_ui import LABELS, STATUSES
 from .util import SKILL_ROOT, now, parse_ts, read_json, sha256_bytes
 
 AJX_BIN = SKILL_ROOT / "bin" / "ajx"
@@ -40,6 +41,9 @@ STATE_DIR = ".ajx-console"
 SCHEMA = 1
 IDLE_SECONDS = 30 * 60
 MAX_TEXT = 4000
+# Offered in the model field; any other name the agent accepts still works (no spaces, no leading '-').
+KNOWN_MODELS = {"claude-code": ["sonnet", "opus", "haiku"]}
+AGAIN_MODES = ("same-folder", "fresh-folder")
 
 # Recovery commands the page offers for one run. Anything else stays a CLI decision.
 STAGE_SETS = {
@@ -229,6 +233,25 @@ def plan_sha(trial, spec=None):
     return plan_info(trial, spec)["sha"]
 
 
+_MEANINGS = {}
+
+
+def label_meanings():
+    """Label -> one-line meaning, from references/vocabulary.md (the reporter's own vocabulary)."""
+    if not _MEANINGS:
+        try:
+            text = (SKILL_ROOT / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        except OSError:
+            return {}
+        for line in text.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) == 2 and " " in cells[0]:
+                name = cells[0].split(" ", 1)[1].strip()
+                if name in LABELS:
+                    _MEANINGS[name] = cells[1]
+    return dict(_MEANINGS)
+
+
 def lint_prompt(text):
     found = []
     for pattern, why in PROMPT_LINT:
@@ -321,6 +344,30 @@ def _job_alive(e):
     return e.get("host") == socket.gethostname() and _alive(e["pid"]) and _is_ajx(e["pid"], verb) is not False
 
 
+def _job_summary(trial, job, code):
+    """What a finished command left behind, in words, rather than its exit code."""
+    if code in (130, -2):
+        return "was stopped; the evidence so far is kept"
+    if code == 2:
+        return "did not start: the trial file has an error (see the log)"
+    if code == 3:
+        return "did not start: another ajx run holds this output folder"
+    try:
+        spec, _ = load(trial)
+        runs = [r for r in _runs(spec, output_dir(trial, spec), 0) if r["started"]]
+    except Exception:  # noqa: BLE001 - a summary is a courtesy; never fail the record
+        runs = []
+    parts = []
+    for r in runs:
+        result = r.get("result") or {}
+        worker = ("could not start" if result.get("could_not_start") else
+                  "stopped" if result.get("interrupted") else (r.get("verify") or {}).get("outcome") or "not verified")
+        report = {"ready": "report ready", "incomplete": "report incomplete"}.get(r.get("review_status"), "no report yet")
+        parts.append(f"{r['id']} {worker}, {report}")
+    lead = "finished" if code in (0, None) or job == "report" else "finished with problems"
+    return lead + (": " + "; ".join(parts) if parts else "")
+
+
 def finish_job(trial, job_n, pid, exit_code=None, job=None):
     """Record a launched command's end once, whichever process notices first."""
     marker = state_dir(trial) / f"finished-{int(job_n)}"
@@ -328,7 +375,8 @@ def finish_job(trial, job_n, pid, exit_code=None, job=None):
         os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
     except FileExistsError:
         return False
-    record(trial, "console", "job_finished", job_n=int(job_n), pid=int(pid), job=job, exit_code=exit_code)
+    record(trial, "console", "job_finished", job_n=int(job_n), pid=int(pid), job=job, exit_code=exit_code,
+           summary=_job_summary(trial, job, exit_code))
     return True
 
 
@@ -428,9 +476,12 @@ def check(trial, actor="user"):
         if res["exit_code"] != 0:
             ok = False
             break
-    problems = [line.strip() for s in steps for line in s["output"].splitlines() if _PROBLEM.search(line)][:12]
+    lines = [line.strip() for s in steps for line in s["output"].splitlines()]
+    warnings = [line[len("WARNING "):] for line in lines if line.startswith("WARNING ")][:12]
+    problems = [line for line in lines if _PROBLEM.search(line) and not line.startswith("WARNING ")][:12]
+    account = bool(spec and (spec["task"].get("identity_cmd") or spec["preflight"]))
     result = {"status": "ready" if ok else "not_ready", "plan": plan, "checked_at": now(), "steps": steps,
-              "problems": problems}
+              "problems": problems, "warnings": warnings, "needs_ack": bool(warnings) and account}
     _write_private(_readiness_path(trial), result)
     record(trial, actor, "checked", plan=plan[:12], status=result["status"])
     return result
@@ -510,18 +561,87 @@ def _cell_for_run(spec, rid):
     return None
 
 
-def _progress_text(rid, stage, status, d, st, mark):
+_EXECUTIONS = {}  # run dir -> (file mtimes, summary): the page polls; finished runs do not change
+
+
+def _mtimes(d, *names):
+    return tuple((Path(d) / n).stat().st_mtime_ns if (Path(d) / n).exists() else 0 for n in names)
+
+
+def _execution(spec, d, st):
+    """How the worker stopped, in words: exit code, stop reason, the error it printed, and whether it
+    never got going (a non-zero exit within two minutes and no tool calls, such as a rejected model)."""
+    key = _mtimes(d, "state.json", "telemetry.execute.json", "execute.raw.jsonl", "execute.stderr.txt")
+    cached = _EXECUTIONS.get(str(d))
+    if cached and cached[0] == key:
+        return cached[1]
+    result = _execution_uncached(spec, d, st)
+    _EXECUTIONS[str(d)] = (key, result)
+    return result
+
+
+def _execution_uncached(spec, d, st):
+    ex = st.get("execute") or {}
+    code, timed_out = ex.get("exit_code"), bool(ex.get("timed_out"))
+    tel = read_json(d / "telemetry.execute.json", None)
+    feed = []
+    harness = _harness_for_run(spec, d)[0] if spec else None
+    if harness is not None and type(harness).progress is not base.Harness.progress:
+        try:
+            feed = [i for i in harness.progress(d, "execute", 0) or [] if isinstance(i, dict)]
+        except Exception:  # noqa: BLE001 - a summary must not fail on a half-written stream
+            feed = []
+    tools = (sum(1 for e in (tel or {}).get("events") or [] if e.get("kind") == "tool") if tel
+             else sum(1 for i in feed if i.get("kind") == "tool"))
+    error = None
+    if timed_out:
+        error = "it reached the time limit"
+    elif code not in (None, 0) and not ex.get("interrupted"):
+        candidates = [((tel or {}).get("final_text") or "").strip()]
+        candidates += [str(i.get("text") or "").strip() for i in reversed(feed) if i.get("kind") == "text"][:1]
+        stderr = d / "execute.stderr.txt"
+        if stderr.is_file():
+            candidates += [line.strip() for line in stderr.read_text(encoding="utf-8", errors="replace").splitlines()
+                           if line.strip()][:1]
+        error = next((" ".join(c.split()) for c in candidates if c), None) or f"exit {code}"
+    duration = None
+    try:
+        duration = parse_ts(ex["stopped_at"]).timestamp() - parse_ts(ex["started_at"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        pass
+    could_not_start = bool(error) and not timed_out and tools == 0 and duration is not None and duration < 120
+    return {"exit_code": code, "stop_reason": ex.get("stop_reason"), "timed_out": timed_out,
+            "interrupted": bool(ex.get("interrupted")), "tool_calls": tools,
+            "error": _clip(error, 300) if error else None, "could_not_start": could_not_start,
+            "model": (ex.get("requested") or {}).get("model")}
+
+
+def _progress_text(rid, stage, status, d, st, mark, spec=None):
     if status == "error":
         return f"{rid}: {stage} failed: {_clip(mark.get('error'), 200)}"
     if stage == "prepare":
         return f"{rid}: stopped before the worker started" if status == "interrupted" else None
     if stage == "execute":
-        return {"running": f"{rid}: the worker started", "done": f"{rid}: the worker finished",
-                "interrupted": f"{rid}: the worker was stopped; its evidence is kept"}.get(status)
+        if status == "running":
+            return f"{rid}: the worker started"
+        if status == "interrupted":
+            return f"{rid}: the worker was stopped; its evidence is kept"
+        if status != "done":
+            return None
+        ex = _execution(spec, d, st)
+        if ex["timed_out"]:
+            return f"{rid}: the worker reached the time limit"
+        if ex["could_not_start"]:
+            return f"{rid}: the worker could not start: {ex['error']}"
+        if ex["error"]:
+            return f"{rid}: the worker stopped with an error ({ex['stop_reason']}): {ex['error']}"
+        return f"{rid}: the worker finished"
     if status != "done":
         return None
     if stage == "verify":
         v = read_json(d / "verify.json", {}) or {}
+        if not v:
+            return f"{rid}: verification recorded no results"
         return f"{rid}: verification {v.get('outcome')} ({v.get('passed')}/{v.get('total')} checks passed)"
     if stage == "teardown":
         td = (st.get("teardown") or {}).get("status")
@@ -536,10 +656,17 @@ def _progress_text(rid, stage, status, d, st, mark):
         if a.get("extraction_status") == "ok":
             return f"{rid}: {len(a.get('asks') or [])} ask(s) extracted"
         return f"{rid}: ask extraction {a.get('extraction_status') or 'incomplete'}"
-    return f"{rid}: report ready" if stage == "render" else None
+    if stage == "render":
+        run = read_json(d / "run.json", {}) or {}
+        if run.get("review_status") in (None, "ready"):
+            return f"{rid}: report ready"
+        asks = read_json(d / "asks.json", {}) or {}
+        why = asks.get("extraction_status") if asks.get("extraction_status") not in (None, "ok") else "see the report"
+        return f"{rid}: report written, but incomplete ({why})"
+    return None
 
 
-def journal_progress(trial, out):
+def journal_progress(trial, out, spec=None):
     """Journal each run's milestones once (worker started or stopped, verification, cleanup, journey,
     asks, report, any stage error), so the page and `ajx console since` read one story."""
     runs = Path(out) / "runs"
@@ -553,7 +680,7 @@ def journal_progress(trial, out):
         marks = st.get("stages") or {}
         for stage in runner.STAGES:
             mark = marks.get(stage) or {}
-            text = _progress_text(d.name, stage, mark.get("status"), d, st, mark) if mark.get("status") else None
+            text = _progress_text(d.name, stage, mark.get("status"), d, st, mark, spec) if mark.get("status") else None
             if not text:
                 continue
             key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{d.name}.{stage}.{mark['status']}.{mark.get('at')}")
@@ -589,6 +716,7 @@ def _run_view(spec, out, rid, planned, feed_limit):
     never_ran = prepared == "interrupted" or (prepared == "error" and owned_env)
     complete = (marks.get("render") or {}).get("status") == "done" or never_ran
     feed, note = (_feed(spec, d, feed_limit) if exec_mark.get("status") and feed_limit > 0 else ([], None))
+    asks_data = read_json(d / "asks.json", None)
     view = {
         "id": rid, "planned": planned, "started": started, "has_state": (d / "state.json").is_file(),
         "complete": complete, "never_ran": never_ran, "current": current,
@@ -607,7 +735,17 @@ def _run_view(spec, out, rid, planned, feed_limit):
         "teardown": teardown,
         "environment_cleanup": None if not env_cleanup else {"status": env_cleanup.get("status"),
                                                              "confirmed": env_cleanup.get("confirmed")},
-        "asks": _asks_view(read_json(d / "asks.json", None), marks),
+        "asks": _asks_view(asks_data, marks),
+        "result": _execution(spec, d, st) if exec_mark.get("status") in runner.TERMINAL else None,
+        "model": (((st.get("execute") or {}).get("requested") or {}).get("model") if (st.get("execute") or {}).get("requested")
+                  else (run_json.get("agent") or {}).get("model_requested") if run_json else (cell or {}).get("model")),
+        "models_seen": list(((read_json(d / "telemetry.execute.json", {}) or {}).get("model_ids") or [])),
+        "strengths": [{"title": x.get("title"), "how_observed": _clip(x.get("how_observed"), 300),
+                       "event_refs": x.get("event_refs") or []}
+                      for x in ((asks_data or {}).get("strengths") or [])[:8]],
+        "gates": [{"trigger": _clip(x.get("trigger"), 200), "agent_action": _clip(x.get("agent_action"), 200),
+                   "resolved": x.get("resolved"), "event_refs": x.get("event_refs") or []}
+                  for x in ((asks_data or {}).get("gates") or [])[:8]],
         "review_status": run_json.get("review_status"),
         "declared": _clip(run_json.get("task_outcome_declared"), 400) or None,
         "journey_provenance": st.get("journey_provenance"),
@@ -651,13 +789,21 @@ def _output(spec, out, runs):
             kind = "changed"
             blocker = ("The environment or agent profiles changed after this output folder was started. "
                        "Use a fresh output folder.")
+        elif meta.get("cells_contract") and runner.contract_changes(meta["cells_contract"], runner.cells_contract(spec)):
+            kind = "changed"
+            blocker = ("These attempts were recorded with other settings ("
+                       + "; ".join(runner.contract_changes(meta["cells_contract"], runner.cells_contract(spec))[:3])
+                       + "). Run again in a fresh output folder so the results stay comparable.")
         elif planned and len(done) == len(planned):
             kind = "complete"
             blocker = ("Every planned attempt in this output folder has finished. Add another attempt (same folder, "
                        "comparable conditions) or use a fresh output folder.")
+    pending = [r["id"] for r in started if not r["complete"] and r["execute"]["status"] in runner.TERMINAL]
+    unstarted = [r["id"] for r in planned if not r["has_state"]]
     return {"dir": str(out), "short": _short(out), "exists": Path(out).is_dir(), "started": len(started),
             "planned": len(planned), "complete": len(done), "blocker": blocker, "blocker_kind": kind,
-            "resumable": bool(started) and not blocker,
+            "resumable": bool(started) and not blocker, "pending_reports": pending, "unstarted": unstarted,
+            "attempts_exist": any(r["has_state"] for r in runs),
             "index": "index.html" if (Path(out) / "index.html").is_file() else None}
 
 
@@ -742,6 +888,14 @@ def _trial_view(trial, spec, error, out):
                       "verified_live": bool(harness.verified_live), "installed": _safe_available(harness),
                       "place": _place(spec, c), "signin": _signin(spec, c),
                       "budget_enforced": c["harness"] == "claude-code"})
+    seen = {}
+    for d in sorted((Path(out) / "runs").glob("*")) if (Path(out) / "runs").is_dir() else []:
+        harness_name = (((read_json(d / "state.json", {}) or {}).get("execute") or {}).get("requested") or {}).get("harness")
+        for mid in ((read_json(d / "telemetry.execute.json", {}) or {}).get("model_ids") or []):
+            if harness_name and mid and mid not in seen.setdefault(harness_name, []):
+                seen[harness_name].append(mid)
+    for cell in cells:
+        cell["model_suggestions"] = KNOWN_MODELS.get(cell["harness"], []) + seen.get(cell["harness"], [])
     rep = spec["reporter"]
     view.update({
         "id": t["id"], "product": t["product"], "output_dir": t["output_dir"], "workspace_root": t["workspace_root"],
@@ -753,7 +907,9 @@ def _trial_view(trial, spec, error, out):
         "checks": [_check_view(c) for c in spec["verify"]],
         "setup": [c.get("name") for c in spec["setup"]], "teardown": [c.get("name") for c in spec["teardown"]],
         "preflight": [c.get("name") for c in spec["preflight"]],
-        "cells": cells, "reporter": {"harness": rep.get("harness"), "model": rep.get("model"), "auth": rep.get("auth")},
+        "cells": cells, "reporter": {"harness": rep.get("harness"), "model": rep.get("model"), "auth": rep.get("auth"),
+                                     "model_suggestions": KNOWN_MODELS.get(rep.get("harness"), []) + seen.get(rep.get("harness"), [])},
+        "shell_startup": t.get("shell_startup"), "account_task": bool(task.get("identity_cmd") or spec["preflight"]),
     })
     return view
 
@@ -815,6 +971,8 @@ def _process(trial, entries, job, out, ready, parallel=1):
         view.update(state="stopping" if stopping else ("running" if job.get("job") in ("run", "stages") else "busy"),
                     job=job.get("job"), pid=job.get("pid"), since=job.get("at"), by=job.get("actor"),
                     command=job.get("command"), outside=bool(job.get("outside")))
+        restart = _last(entries, "restart_requested")
+        view["restarting"] = bool(restart and restart.get("job_n") == job.get("n"))
     elif ready.get("status") == "checking":
         view["state"] = "checking"
     elif _pending_start(entries, ready):
@@ -836,11 +994,18 @@ def describe(e):
             return f"Started: {STAGE_SETS.get(e.get('stages'), e.get('stages'))} for {e.get('run')}"
         return "Rebuilding the reports (no model calls)" if job == "report" else f"Started {job}"
     if k == "job_finished":
-        code = e.get("exit_code")
         what = {"run": "The run", "stages": "The recovery command", "report": "Rebuilding reports"}.get(e.get("job"), "A command")
+        if e.get("summary"):
+            return f"{what} {e['summary']}"
+        code = e.get("exit_code")
         if code is None:
             return f"{what} ended"
         return f"{what} finished" if code == 0 else (f"{what} was stopped" if code in (130, -2) else f"{what} ended with exit {code}")
+    if k == "run_again":
+        return ("Run again: one more attempt in this output folder" if e.get("mode") == "same-folder"
+                else "Run again: a fresh output folder")
+    if k == "restart_requested":
+        return "Restart: stop this run (AJX cleans up first), then run again"
     labels = {
         "stop_requested": "Asked the run to stop. AJX cleans up (teardown, release, archive) before it exits.",
         "check_started": "Checking readiness (ajx validate, then ajx doctor)",
@@ -849,6 +1014,7 @@ def describe(e):
         "trial_edited": "Edited trial.toml",
         "console_started": "Opened the console",
         "console_stopped": "Closed the console",
+        "shutdown_requested": "Asked the console to stop (runs keep going)",
     }
     if k in labels:
         return labels[k]
@@ -867,11 +1033,13 @@ def describe(e):
     return str(k)
 
 
-def _entry_view(e, texts=None):
+def _entry_view(e, texts=None, replied=()):
     view = {"n": e.get("n"), "at": e.get("at"), "actor": e.get("actor"), "kind": e.get("kind"),
             "text": _clip(describe(e), 600), "reply_to": e.get("reply_to")}
     if e.get("reply_to") and texts:
         view["reply_to_text"] = _clip(texts.get(e["reply_to"]), 160) or None
+    if e.get("kind") == "message":
+        view["answered"] = e.get("n") in replied
     return view
 
 
@@ -879,7 +1047,7 @@ def snapshot(trial, *, feed_limit=14, skip=()):
     trial = trial_file(trial)
     spec, error = load(trial)
     out = output_dir(trial, spec)
-    journal_progress(trial, out)
+    journal_progress(trial, out, spec)
     entries, _ = read_entries(trial)
     if reconcile(trial, entries, skip=skip):
         entries, _ = read_entries(trial)
@@ -893,6 +1061,11 @@ def snapshot(trial, *, feed_limit=14, skip=()):
     lock_reason = ("Locked while a run or command is in progress." if job else
                    "This output folder already holds attempts of this task. Use a fresh output folder to change "
                    "the task; recorded attempts keep their original prompt." if started else None)
+    settings_lock = ("Locked while a run or command is in progress." if job else
+                     "Locked for this output folder: its attempts used these settings. To change them, run again "
+                     "in a fresh output folder." if started else None)
+    texts = {m["n"]: m.get("text") for m in entries if m.get("kind") == "message"}
+    replied = {m.get("reply_to") for m in entries if m.get("kind") == "note"}
     return {
         "schema": SCHEMA, "generated_at": now(),
         "trial": _trial_view(trial, spec, error, out),
@@ -903,12 +1076,13 @@ def snapshot(trial, *, feed_limit=14, skip=()):
         "output": output,
         "runs": runs,
         "journal": {"cursor": entries[-1]["n"] if entries else 0,
-                    "entries": [_entry_view(e, {m["n"]: m.get("text") for m in entries if m.get("kind") == "message"})
-                                for e in entries[-80:]]},
+                    "entries": [_entry_view(e, texts, replied) for e in entries[-80:]]},
         "agent": presence(trial),
         "console": _console_view(trial),
         "pending_start": _pending_start(entries, ready),
-        "locks": {"prompt": lock_reason, "settings": "Locked while a run or command is in progress." if job else None},
+        "locks": {"prompt": lock_reason, "settings": settings_lock},
+        "vocabulary": {"labels": {k: list(v) for k, v in LABELS.items()},
+                       "statuses": {k: list(v) for k, v in STATUSES.items()}, "meanings": label_meanings()},
     }
 
 
@@ -964,12 +1138,15 @@ def since(trial, cursor=0, touch=True):
     if snap["process"]["state"] in ("running", "stopping", "busy", "starting", "checking"):
         do_not.append("start another run or edit the trial while this one is in progress")
     elif kind == "complete":
-        do_not.append("start again: every planned attempt finished. Offer another attempt or a fresh output folder "
-                      "(both are buttons on the Plan tab)")
+        do_not.append(f"start again: every planned attempt finished. To run it again, use `ajx console again {where} "
+                      "--same-folder` (one more comparable attempt) or `--fresh-folder`, with the user's approval")
     elif kind == "changed":
         do_not.append("start in this output folder: the task or profiles changed. Offer a fresh output folder")
     if snap["output"]["started"] and kind != "changed":
-        do_not.append("edit the task prompt for this output folder; offer a fresh output folder instead")
+        do_not.append("edit the task prompt, models or limits for this output folder; to change them, offer "
+                      f"`ajx console again {where} --fresh-folder`")
+    if snap["readiness"].get("needs_ack") and snap["readiness"].get("warnings"):
+        do_not.append("pass --accept-warnings unless the user accepted those readiness warnings in their own words")
     info = server_info(trial)
     out = Path(snap["output"]["dir"])
     return {
@@ -980,11 +1157,18 @@ def since(trial, cursor=0, touch=True):
         "messages_for_agent": messages,
         "plan": {"sha": short, "complete": snap["plan"]["complete"], "approval": snap["plan"]["approval"]},
         "readiness": {"status": snap["readiness"].get("status"), "current": snap["readiness"].get("current"),
-                      "problems": snap["readiness"].get("problems") or []},
+                      "problems": snap["readiness"].get("problems") or [],
+                      "warnings": snap["readiness"].get("warnings") or [],
+                      "warnings_need_acceptance": bool(snap["readiness"].get("needs_ack"))},
         "process": {k: snap["process"].get(k) for k in ("state", "job", "pid", "since", "by", "command")},
-        "output": {k: snap["output"][k] for k in ("dir", "started", "planned", "complete", "blocker", "index")},
-        "runs": [{"id": r["id"], "stage": r["current"], "complete": r["complete"],
+        "output": {k: snap["output"][k] for k in ("dir", "started", "planned", "complete", "blocker", "blocker_kind",
+                                                   "index", "pending_reports", "unstarted")},
+        "runs": [{"id": r["id"], "stage": r["current"], "complete": r["complete"], "model": r.get("model"),
                   "verified": (r.get("verify") or {}).get("outcome"), "cleanup": r["teardown"],
+                  "exit_code": (r.get("result") or {}).get("exit_code"),
+                  "stop_reason": (r.get("result") or {}).get("stop_reason"),
+                  "error": (r.get("result") or {}).get("error"),
+                  "could_not_start": (r.get("result") or {}).get("could_not_start"),
                   "asks": r["asks"].get("count") if r["asks"]["status"] == "ready" else r["asks"]["status"],
                   "review_status": r["review_status"],
                   "files": {k: str(out / v) for k, v in r["links"].items()}} for r in snap["runs"] if r["started"]],
@@ -1069,9 +1253,10 @@ def preflight_start(trial, plan=None):
     return spec, current
 
 
-def start(trial, *, actor, via, plan=None, quote=None, on_launch=None):
+def start(trial, *, actor, via, plan=None, quote=None, accept_warnings=False, again=None, on_launch=None):
     """Check readiness when it is missing for this exact plan, record approval, launch `ajx run`.
-    The run itself refuses to start if the plan changes after approval (--expect-plan)."""
+    The run itself refuses to start if the plan changes after approval (--expect-plan). On a task that
+    acts in an account, readiness warnings must be accepted explicitly."""
     trial = trial_file(trial)
     try:
         _, current = preflight_start(trial, plan)
@@ -1080,11 +1265,16 @@ def start(trial, *, actor, via, plan=None, quote=None, on_launch=None):
             ready = check(trial, actor)
         if ready.get("status") != "ready":
             raise ConsoleError("not ready; the readiness check lists what to fix")
+        if ready.get("needs_ack") and ready.get("warnings") and not accept_warnings:
+            raise ConsoleError("the readiness check passed with warnings that need your acceptance before this task "
+                               "acts in an account: " + " | ".join(_clip(w, 200) for w in ready["warnings"][:3]))
         if plan_sha(trial, load(trial)[0]) != current:
             raise Conflict("the plan changed during the readiness check; review it and start again")
         entries, _ = read_entries(trial)
         if _approval(entries, current)["state"] != "valid":
-            record(trial, actor, "approved", plan=current, via=via, quote=_clip(quote, 500) if quote else None)
+            record(trial, actor, "approved", plan=current, via=via, quote=_clip(quote, 500) if quote else None,
+                   again=again, accepted_warnings=[_clip(w, 300) for w in ready.get("warnings") or []]
+                   if accept_warnings else None)
         proc, entry = launch(trial, "run", ["run", str(trial), "--expect-plan", current], actor,
                              plan=current[:12], via=via)
     except ConsoleError as exc:
@@ -1093,6 +1283,36 @@ def start(trial, *, actor, via, plan=None, quote=None, on_launch=None):
     if on_launch:
         on_launch(proc, entry)
     return entry
+
+
+def run_again(trial, *, actor, via, mode, plan=None, quote=None, accept_warnings=False, on_launch=None):
+    """Start a new attempt of the same task: 'same-folder' adds one attempt to this output folder (the
+    settings must be unchanged, so the attempts stay comparable); 'fresh-folder' points output_dir at
+    a new, empty folder. Finished and stopped attempts are kept, never run again."""
+    trial = trial_file(trial)
+    if mode not in AGAIN_MODES:
+        raise ConsoleError(f"run again needs a mode: {' or '.join(AGAIN_MODES)}")
+    spec, error = load(trial)
+    if error:
+        raise ConsoleError(f"the trial file has an error: {error}")
+    current = plan_sha(trial, spec)
+    given = str(plan or "").strip().lower()
+    if plan is not None and (len(given) < 7 or not current.startswith(given)):
+        raise Conflict(f"plan mismatch: you passed {given[:12] or 'nothing'}, the current plan is {current[:12]}; "
+                       "`ajx console since` shows what changed")
+    _ensure_idle(trial)
+    base_sha = sha256_bytes(Path(trial).read_bytes())
+    if mode == "same-folder":
+        out = output_dir(trial, spec)
+        view = _output(spec, out, _runs(spec, out, 0))
+        if view["blocker_kind"] == "changed":
+            raise ConsoleError(view["blocker"])
+        add_attempt(trial, base_sha, actor)
+    else:
+        fresh_output(trial, base_sha, actor)
+    record(trial, actor, "run_again", mode=mode, from_plan=current[:12])
+    return start(trial, actor=actor, via=via, quote=quote, accept_warnings=accept_warnings, again=mode,
+                 on_launch=on_launch)
 
 
 def stop(trial, actor):
@@ -1268,45 +1488,91 @@ def _write_trial(trial, text, base_sha, actor, kind, **fields):
     return new_sha
 
 
+def _contract_guard(trial, text):
+    """A raw edit that would mix configurations in an output folder that holds attempts is refused."""
+    spec, _ = load(trial)
+    out = output_dir(trial, spec)
+    meta = read_json(out / "matrix-plan.json", {}) or {}
+    if not meta.get("cells_contract") or not any((out / "runs").glob("*/state.json")):
+        return
+    tmp = Path(trial).with_name(f".{Path(trial).name}.contract-{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        new_spec = specmod.load(tmp, readiness=False)
+    except Exception:  # noqa: BLE001 - the normal validation reports it
+        return
+    finally:
+        tmp.unlink(missing_ok=True)
+    if Path(new_spec["trial"]["output_dir"]) != out:
+        return  # a new output folder starts a new set of attempts
+    changed = runner.contract_changes(meta["cells_contract"], runner.cells_contract(new_spec))
+    if changed:
+        raise ConsoleError("not saved: this output folder holds attempts made with the current settings ("
+                           + "; ".join(changed[:3]) + "). Change output_dir too, or use Run again in a fresh folder.")
+
+
 def save_trial_text(trial, text, base_sha, actor="user"):
     trial = trial_file(trial)
     _ensure_idle(trial)
-    return {"sha256": _write_trial(trial, str(text).replace("\r\n", "\n"), base_sha, actor, "trial_edited")}
+    text = str(text).replace("\r\n", "\n")
+    _contract_guard(trial, text)
+    return {"sha256": _write_trial(trial, text, base_sha, actor, "trial_edited")}
 
 
 def save_settings(trial, changes, base_sha, actor="user"):
     """Edit the few values the page exposes. `changes` keys: timeout_minutes, repetitions,
     max_budget_usd, reporter_model, cell_models ({raw cell index: model or ""})."""
     trial = trial_file(trial)
-    _ensure_idle(trial)
+    spec = _ensure_idle(trial)
+    out = output_dir(trial, spec)
+    locked = sorted(k for k in changes if k != "repetitions")
+    if locked and any((out / "runs").glob("*/state.json")):
+        raise ConsoleError("these settings are locked for this output folder because its attempts used them; run "
+                           "again in a fresh output folder to change " + ", ".join(k.replace("_", " ") for k in locked))
+    old = (spec or {}).get("trial") or {}
+    cells_before = {i: c.get("model") for i, c in enumerate(_raw(trial).get("cells") or [])}
     text, notes = Path(trial).read_text(encoding="utf-8"), []
     if "timeout_minutes" in changes:
         minutes = _number(changes["timeout_minutes"], "time limit", 1, 24 * 60)
         text = set_value(text, "trial", "timeout_seconds", int(round(minutes * 60)))
-        notes.append(f"time limit {minutes:g} min")
+        notes.append(f"time limit {(old.get('timeout_seconds') or 0) / 60:g} -> {minutes:g} min")
     if "repetitions" in changes:
         reps = _number(changes["repetitions"], "attempts", 1, 50)
         if reps != int(reps):
             raise ConsoleError("attempts must be a whole number")
         reps = int(reps)
         text = set_value(text, "trial", "repetitions", reps)
-        notes.append(f"attempts {reps}")
+        notes.append(f"attempts {old.get('repetitions')} -> {reps}")
     if "max_budget_usd" in changes:
         raw = changes["max_budget_usd"]
         budget = None if raw in (None, "") else _number(raw, "budget", 0.01, 10000)
         text = set_value(text, "trial", "max_budget_usd", budget)
-        notes.append("budget " + (f"${budget:g}" if budget is not None else "removed"))
+        before = old.get("max_budget_usd")
+        notes.append("budget " + (f"${before:g}" if before else "none") + " -> "
+                     + (f"${budget:g}" if budget is not None else "none"))
     if "reporter_model" in changes:
-        model = str(changes["reporter_model"] or "").strip() or None
+        model = _model_name(changes["reporter_model"])
         text = set_value(text, "reporter", "model", model)
-        notes.append(f"reporter model {model or 'default'}")
+        before = ((spec or {}).get("reporter") or {}).get("model")
+        notes.append(f"reporter model {before or 'default'} -> {model or 'default'}")
     for index, model in (changes.get("cell_models") or {}).items():
-        model = str(model or "").strip() or None
+        model = _model_name(model)
         text = set_value(text, "cells", "model", model, index=int(index))
-        notes.append(f"cell {int(index) + 1} model {model or 'default'}")
+        notes.append(f"cell {int(index) + 1} model {cells_before.get(int(index)) or 'default'} -> {model or 'default'}")
     if not notes:
         raise ConsoleError("nothing to change")
     return {"sha256": _write_trial(trial, text, base_sha, actor, "settings_changed", changes=notes)}
+
+
+def _model_name(value):
+    """A model name as an agent CLI takes it: an alias such as sonnet, or the provider's model id."""
+    name = str(value or "").strip()
+    if not name:
+        return None
+    if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
+        raise ConsoleError(f"{name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, opus or "
+                           "haiku, or the provider's model id (no spaces), or leave it empty for the agent's default")
+    return name
 
 
 def _number(value, label, low, high):
@@ -1374,6 +1640,7 @@ class App:
         self.last_request = time.time()
         self.lock = threading.Lock()
         self.checking = threading.Event()
+        self.shutdown = lambda: None  # set by make_server
 
     def watch(self, proc, entry):
         self.children[proc.pid] = proc
@@ -1394,7 +1661,8 @@ class App:
             except ConsoleError:
                 pass  # already recorded in the journal for the page
             except Exception as exc:  # noqa: BLE001
-                record(self.trial, "console", "start_blocked", reason=f"{type(exc).__name__}: {_clip(exc, 200)}")
+                if Path(self.trial).exists():
+                    record(self.trial, "console", "start_blocked", reason=f"{type(exc).__name__}: {_clip(exc, 200)}")
         threading.Thread(target=run, daemon=True).start()
 
 
@@ -1476,13 +1744,20 @@ def _handler(app):
 
                 def run_start():
                     try:
-                        start(t, actor="user", via="console", plan=body.get("plan"), on_launch=app.watch)
+                        start(t, actor="user", via="console", plan=body.get("plan"),
+                              accept_warnings=bool(body.get("accept_warnings")), on_launch=app.watch)
                     finally:
                         app.checking.clear()
                 app.background(run_start)
                 return 202, {"ok": True}
             if path == "/api/stop":
                 return 200, stop(t, "user")
+            if path in ("/api/again", "/api/restart"):
+                return self._again(t, path, body)
+            if path == "/api/shutdown":
+                record(t, "user", "shutdown_requested")
+                threading.Timer(0.3, app.shutdown).start()
+                return 200, {"ok": True, "reopen": f"ajx console open {_short(Path(t).parent)}"}
             if path == "/api/stages":
                 return 200, {"ok": True, "entry": run_stages(t, "user", body.get("run"), body.get("stages"), app.watch)}
             if path == "/api/report":
@@ -1502,6 +1777,40 @@ def _handler(app):
             if path == "/api/message":
                 return 200, {"entry": message(t, body.get("text"), body.get("about"))}
             return None
+
+        def _again(self, t, path, body):
+            mode = body.get("mode")
+            if mode not in AGAIN_MODES:
+                raise ConsoleError(f"choose where to run again: {' or '.join(AGAIN_MODES)}")
+            restart = path == "/api/restart"
+            with app.lock:
+                if app.checking.is_set():
+                    raise Conflict("a readiness check or start is already in progress")
+                if restart:
+                    spec, _ = load(t)
+                    job = active_job(t, read_entries(t)[0], output_dir(t, spec))
+                    if not job:
+                        raise ConsoleError("nothing is running; use Run again")
+                    stop(t, "user")
+                    record(t, "user", "restart_requested", mode=mode, job_n=job.get("n"))
+                else:
+                    _ensure_idle(t)
+                app.checking.set()
+
+            def after_stop():
+                try:
+                    deadline = time.time() + 15 * 60
+                    while restart and time.time() < deadline:
+                        spec, _ = load(t)
+                        if not active_job(t, read_entries(t)[0], output_dir(t, spec)):
+                            break
+                        time.sleep(1)
+                    run_again(t, actor="user", via="console", mode=mode, plan=None if restart else body.get("plan"),
+                              accept_warnings=bool(body.get("accept_warnings")), on_launch=app.watch)
+                finally:
+                    app.checking.clear()
+            app.background(after_stop)
+            return 202, {"ok": True}
 
         # -- helpers
         def _host_ok(self):
@@ -1615,6 +1924,7 @@ def make_server(trial, port=0, idle=IDLE_SECONDS):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), _handler(app))
     httpd.daemon_threads = True
     app.port = httpd.server_address[1]
+    app.shutdown = lambda: threading.Thread(target=httpd.shutdown, daemon=True).start()
     url = f"http://127.0.0.1:{app.port}/#token={app.token}"
     info = {"pid": os.getpid(), "port": app.port, "token": app.token, "url": url, "started_at": now(),
             "trial": str(trial)}
@@ -1702,6 +2012,42 @@ def stop_console(trial, timeout=5):
     while time.time() < deadline and _alive(info["pid"]):
         time.sleep(0.1)
     return True
+
+
+def list_consoles():
+    """Console servers running for this user: [{pid, elapsed, trial, short, url, started_at}]."""
+    try:
+        res = subprocess.run(["ps", "-axo", "pid=,etime=,command="], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    found = []
+    for line in res.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3 or " console serve " not in f" {parts[2]} " or "ajx" not in parts[2]:
+            continue
+        trial = parts[2].split(" console serve ", 1)[1].split(" --port", 1)[0].strip()
+        info = read_json(Path(trial).parent / STATE_DIR / "server.json", {}) or {}
+        found.append({"pid": int(parts[0]), "elapsed": parts[1], "trial": trial, "short": _short(Path(trial).parent),
+                      "url": info.get("url") if info.get("pid") == int(parts[0]) else None,
+                      "started_at": info.get("started_at")})
+    return found
+
+
+def stop_all(timeout=5):
+    """Stop every console server (never a run); return how many were asked to stop."""
+    consoles = list_consoles()
+    for c in consoles:
+        try:
+            os.kill(c["pid"], signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        own = _SPAWNED.pop(c["pid"], None)
+        if own:
+            own.wait(timeout)
+    deadline = time.time() + timeout
+    while time.time() < deadline and any(_alive(c["pid"]) for c in consoles):
+        time.sleep(0.1)
+    return len(consoles)
 
 
 def copy_demo(dest, force=False):

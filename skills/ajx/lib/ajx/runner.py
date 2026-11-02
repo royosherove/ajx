@@ -42,6 +42,8 @@ PREREQS = {"execute": ("prepare",), "verify": ("execute",), "teardown": ("prepar
            "release": ("prepare",), "measure": ("normalize",), "render": ("measure",), "archive": ("teardown",)}
 TERMINAL = ("done", "error", "interrupted")
 NOT_REDOABLE = ("prepare", "execute")
+# Post-processing that an interruption left half done; a resume redoes it (never prepare/execute/cleanup).
+REDO_WHEN_INTERRUPTED = ("normalize", "narrate", "extract", "measure", "render")
 NOT_REDOABLE_AFTER_ARCHIVE = ("narrate",)   # resume needs the original cwd and harness config
 CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "credentials", "token.json", "tokens.json",
                     ".npmrc", ".netrc", ".pypirc", ".git-credentials")
@@ -49,6 +51,34 @@ CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "crede
 
 def cleanup_only(stages):
     return bool(stages) and set(stages) <= CLEANUP_STAGES
+
+
+def cells_contract(spec):
+    """What every attempt in one output folder must share: cell definitions, the fixed reporter and
+    the limits. New cells and repetitions may be added; changing these means a new output folder."""
+    keys = ("harness", "model", "effort", "config", "auth", "args", "runner", "environment", "agent_configuration",
+            "shell_startup")
+    trial = spec["trial"]
+    return {
+        "cells": {c["id"]: {k: c.get(k) for k in keys} | {"env": sorted(c.get("env") or {})} for c in spec["cells"]},
+        "reporter": {k: spec["reporter"].get(k) for k in ("harness", "model", "effort", "auth")},
+        "limits": {k: trial.get(k) for k in ("timeout_seconds", "narrate_timeout_seconds", "max_budget_usd", "cache",
+                                             "shell_startup")},
+    }
+
+
+def contract_changes(saved, current):
+    """Readable differences that would mix configurations in one output folder (added cells are fine)."""
+    out = []
+    for cid, before in (saved.get("cells") or {}).items():
+        after = (current.get("cells") or {}).get(cid)
+        if after is None:
+            continue
+        out += [f"cell {cid} {k}: {before.get(k)!r} -> {after.get(k)!r}" for k in before if before.get(k) != after.get(k)]
+    for part in ("reporter", "limits"):
+        before, after = saved.get(part) or {}, current.get(part) or {}
+        out += [f"{part} {k}: {before.get(k)!r} -> {after.get(k)!r}" for k in before if before.get(k) != after.get(k)]
+    return out
 
 
 def _profile_contract(profiles):
@@ -230,6 +260,12 @@ class Run:
         paths = self.state.get("paths", {})
         archived = self.state.get("archived", {})
         env = specmod.worker_env(self.spec, self.cell, self.auth)
+        unset = list(self.auth.unset())
+        if not self.environment_profile and self.cell.get("shell_startup") == "skip":
+            quiet = self.run_dir / "no-shell-startup"
+            quiet.mkdir(parents=True, exist_ok=True)
+            env.update(specmod.SHELL_STARTUP_SKIP_ENV, ZDOTDIR=str(quiet))
+            unset += list(specmod.SHELL_STARTUP_DROP)
         if self.spec["trial"]["cache"] == "isolated" and paths.get("cache_dir"):
             env.update({v: str(Path(paths["cache_dir"]) / v.lower()) for v in CACHE_VARS})
         workspace = archived.get("workspace") or paths.get("workspace") or str(self.run_dir / "workspace")
@@ -242,7 +278,7 @@ class Run:
             "timeout": int(self.spec["trial"]["timeout_seconds"]),
             "narrate_timeout": int(self.spec["trial"]["narrate_timeout_seconds"]),
             "prompt_text": self.spec["task"]["prompt_text"], "state": self.state, "env": env,
-            "unset_env": self.auth.unset(), "runner": self.runner, "auth": self.auth,
+            "unset_env": unset, "runner": self.runner, "auth": self.auth,
             "check_env": {**env, **envcheck.check_vars(self.spec, self.state.get("run_token", ""))},
             "environment_profile": self.environment_profile,
             "agent_configuration_profile": self.configuration_profile,
@@ -422,10 +458,12 @@ class Run:
 
     def stage_execute(self):
         ctx = self.ctx()
-        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model')}")
+        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model') or 'agent default'}")
         # Record what we can before launching so a crash mid-run still leaves a findable session.
         planned = self.harness.plan(ctx) or {}
-        self.state["execute"] = {**planned, "started_at": now(), "stopped_at": None, "stop_reason": "running"}
+        requested = {k: self.cell.get(k) for k in ("harness", "model", "effort", "config", "auth")}
+        self.state["execute"] = {**planned, "requested": requested, "started_at": now(), "stopped_at": None,
+                                 "stop_reason": "running"}
         self.save()
         proc = self.harness.execute(self.ctx())
         stop = "timeout" if proc["timed_out"] else ("exit" if proc["exit_code"] == 0 else f"exit_{proc['exit_code']}")
@@ -568,6 +606,10 @@ class Run:
     def stage_extract(self):
         if self.state.get("journey_provenance") == JOURNEY_UNAVAILABLE:
             reporter.write_asks_stub(self.run_dir, "skipped: no journey to extract from")
+            return
+        missing = [n for n in ("journey.md", "digest.md") if not (self.run_dir / n).is_file()]
+        if missing:
+            reporter.write_asks_stub(self.run_dir, f"skipped: {' and '.join(missing)} missing (narration did not finish)")
             return
         result = reporter.extract(self.spec, self.run_dir)
         self.state["extract"] = result["proc"]
@@ -789,6 +831,8 @@ class Run:
         st = self.status(stage)
         if stage == "prepare" and self.environment_profile and st in TERMINAL:
             return True  # A failed owned attempt is evidence, not permission to allocate a replacement.
+        if st == "interrupted" and stage in REDO_WHEN_INTERRUPTED:
+            return False  # e.g. Stop during reporting: finish the report instead of leaving it half written
         return st in ("done", "interrupted") or (stage == "execute" and st == "error")
 
     def go(self, stages=None, keep_workspace=False):
@@ -902,6 +946,12 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
                     or meta.get("task_prompt_sha256") != spec["task"]["prompt_sha256"]):
                 raise specmod.SpecError("matrix profiles or task changed; use a new trial output directory "
                                         "or request only cleanup stages to recover the original attempts")
+        if not recovery and meta.get("cells_contract") and any((out / "runs").glob("*/state.json")):
+            changed = contract_changes(meta["cells_contract"], cells_contract(spec))
+            if changed:
+                raise specmod.SpecError("this output folder holds attempts made with other settings ("
+                                        + "; ".join(changed[:6]) + "); use a new trial output directory so the "
+                                        "attempts stay comparable, or request only cleanup stages")
         if recovery:
             # Unstarted repetitions own nothing; never create new attempts during recovery.
             plan = [(c, r) for c, r in plan
@@ -916,6 +966,7 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
                 "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
                 "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
                 "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
+                "cells_contract": cells_contract(spec),
                 "wall_clock_comparable": parallel == 1, "planned_at": now(),
                 "normalized_profiles": profiles,
                 "configurations": [{

@@ -80,7 +80,11 @@ Default `auth = "inherit"` may retain harness configuration. Claude Code uses
 `--safe-mode` with the caller's config directory for its stored login and applies
 `settings.json` environment values; the run records that limitation. Use the
 supported auth profile for the intended isolation, not a fabricated
-`isolates_config` declaration. Shell startup files can affect legacy local tool
+`isolates_config` declaration. When doctor reports that a startup file such as
+`~/.zshenv` sets a task variable (for example `AWS_PROFILE`) for the worker's
+tool shell, set `shell_startup = "skip"` in `[trial]`: for local runs without an
+environment profile, the worker's `zsh -c` then reads no `~/.zshenv` and bash no
+`BASH_ENV`, while PATH stays as the launching shell had it. Shell startup files can affect legacy local tool
 shells. Use doctor and the adapter/profile references to explain what the worker
 will actually receive. Explicit environments have stricter authentication rules
 in [environments.md](environments.md).

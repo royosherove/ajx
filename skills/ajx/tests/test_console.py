@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -25,8 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
-from ajx import console  # noqa: E402
-from ajx.util import read_json, sha256_bytes, write_json  # noqa: E402
+from ajx import console, envcheck, plugins, spec as specmod  # noqa: E402
+from ajx.util import now, read_json, sha256_bytes, write_json  # noqa: E402
 
 AJX = HERE.parent / "bin" / "ajx"
 
@@ -270,9 +271,11 @@ class ServerCase(DemoCase):
     def setUp(self):
         super().setUp()
         self.httpd, self.app, self.info = console.make_server(self.trial)
-        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True).start()
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+        self.thread.start()
 
     def tearDown(self):
+        _until(lambda: not self.app.checking.is_set(), 120)  # background starts finish before cleanup
         self.httpd.shutdown()
         self.httpd.server_close()
         for proc in list(self.app.children.values()):
@@ -482,3 +485,188 @@ class CliTest(DemoCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunnerFixesTest(DemoCase):
+    def _run(self, *extra):
+        return subprocess.run([sys.executable, str(AJX), "run", str(self.trial), *extra], capture_output=True,
+                              text=True, timeout=180)
+
+    def test_an_interrupted_report_is_finished_on_resume(self):
+        self.assertEqual(self._run().returncode, 0)
+        rd = self.out() / "runs" / "demo-r1"
+        state = read_json(rd / "state.json")
+        state["stages"]["narrate"]["status"] = "interrupted"
+        for stage in ("extract", "measure", "render"):
+            state["stages"].pop(stage, None)
+        write_json(rd / "state.json", state)
+        (rd / "journey.md").unlink()
+        (rd / "asks.json").unlink()
+        res = self._run()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(read_json(rd / "state.json")["stages"]["narrate"]["status"], "done")
+        self.assertEqual(read_json(rd / "asks.json")["extraction_status"], "ok")
+        self.assertEqual(read_json(rd / "run.json")["review_status"], "ready")
+
+    def test_extract_without_a_journey_writes_a_labeled_stub(self):
+        self.assertEqual(self._run().returncode, 0)
+        rd = self.out() / "runs" / "demo-r1"
+        (rd / "journey.md").unlink()
+        self._run("--stages", "extract,measure,render")
+        self.assertTrue(read_json(rd / "asks.json")["extraction_status"].startswith("skipped: journey.md missing"))
+        self.assertEqual(read_json(rd / "state.json")["stages"]["extract"]["status"], "done")
+
+    def test_a_changed_model_cannot_join_an_output_folder_with_attempts(self):
+        text = console.set_value(self.trial.read_text(), "cells", "model", "demo-model", index=0)
+        self.trial.write_text(text)
+        self.assertEqual(self._run().returncode, 0)
+        rd = self.out() / "runs" / "demo-r1"
+        self.assertEqual(read_json(rd / "run.json")["agent"]["model_requested"], "demo-model")
+        text = console.set_value(self.trial.read_text(), "cells", "model", "other-model", index=0)
+        self.trial.write_text(console.set_value(text, "trial", "repetitions", 2))
+        res = self._run()
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("other settings", res.stderr)
+        self.assertIn("'demo-model' -> 'other-model'", res.stderr)
+        self.trial.write_text(console.set_value(self.trial.read_text(), "cells", "model", "demo-model", index=0))
+        self.assertEqual(self._run().returncode, 0)
+        self.assertTrue((self.out() / "runs" / "demo-r2" / "run.json").is_file())
+
+
+class SettingsAndErrorsTest(DemoCase):
+    def test_model_names_an_agent_cannot_take_are_refused(self):
+        base = sha256_bytes(self.trial.read_bytes())
+        for bad in ("sonnet 5.5", "--dangerous"):
+            with self.assertRaisesRegex(console.ConsoleError, "not a model name"):
+                console.save_settings(self.trial, {"cell_models": {"0": bad}}, base)
+        console.save_settings(self.trial, {"cell_models": {"0": "sonnet"}, "timeout_minutes": 4}, base)
+        note = [e for e in console.read_entries(self.trial)[0] if e["kind"] == "settings_changed"][-1]
+        self.assertIn("time limit 5 -> 4 min", note["changes"])
+        self.assertIn("cell 1 model default -> sonnet", note["changes"])
+        self.assertIn("sonnet", console.snapshot(self.trial)["trial"]["cells"][0]["model"])
+
+    def test_settings_lock_once_attempts_exist_but_attempts_can_grow(self):
+        write_json(self.out() / "runs" / "demo-r1" / "state.json", {"stages": {"prepare": {"status": "done"}}})
+        base = sha256_bytes(self.trial.read_bytes())
+        with self.assertRaisesRegex(console.ConsoleError, "locked for this output folder"):
+            console.save_settings(self.trial, {"timeout_minutes": 3}, base)
+        console.save_settings(self.trial, {"repetitions": 2}, base)
+        self.assertIn("Locked for this output folder", console.snapshot(self.trial)["locks"]["settings"])
+
+    def test_a_worker_that_never_started_is_named_with_its_error(self):
+        rd = self.out() / "runs" / "demo-r1"
+        marks = {s: {"status": "done", "at": "2026-01-01T10:00:05Z"} for s in ("prepare", "execute", "verify")}
+        write_json(rd / "state.json", {"stages": marks, "execute": {
+            "exit_code": 1, "stop_reason": "exit_1", "started_at": "2026-01-01T10:00:00Z",
+            "stopped_at": "2026-01-01T10:00:03Z", "requested": {"harness": "console-demo", "model": "sonnet 5.5"}}})
+        write_json(rd / "telemetry.execute.json", {"events": [{"kind": "text", "text": "API Error"}],
+                                                   "final_text": "API Error (sonnet 5.5): 400 The provided model identifier is invalid."})
+        snap = console.snapshot(self.trial)
+        run = snap["runs"][0]
+        self.assertTrue(run["result"]["could_not_start"])
+        self.assertTrue(run["result"]["error"].startswith("API Error (sonnet 5.5)"))
+        self.assertEqual(run["model"], "sonnet 5.5")
+        self.assertTrue(any(e["text"].startswith("demo-r1: the worker could not start: API Error (sonnet 5.5)")
+                            for e in snap["journal"]["entries"]))
+        self.assertTrue(console.since(self.trial)["runs"][0]["could_not_start"])
+
+    def test_readiness_warnings_on_an_account_task_need_acceptance(self):
+        plan = console.plan_sha(self.trial, console.load(self.trial)[0])
+        console._write_private(console.state_dir(self.trial) / "readiness.json", {
+            "status": "ready", "plan": plan, "checked_at": now(), "steps": [], "problems": [],
+            "warnings": ["an aws command without --profile acts in the model's account"], "needs_ack": True})
+        with self.assertRaisesRegex(console.ConsoleError, "need your acceptance"):
+            console.start(self.trial, actor="agent", via="chat", quote="go", on_launch=self.capture)
+        console.start(self.trial, actor="agent", via="chat", quote="go, I accept the warning", accept_warnings=True,
+                      on_launch=self.capture)
+        self.assertEqual(self.procs[0].wait(120), 0)
+        approved = [e for e in console.read_entries(self.trial)[0] if e["kind"] == "approved"][-1]
+        self.assertEqual(approved["accepted_warnings"], ["an aws command without --profile acts in the model's account"])
+
+    def test_icons_and_meanings_come_with_the_snapshot(self):
+        vocab = console.snapshot(self.trial)["vocabulary"]
+        self.assertEqual(vocab["labels"]["Misdirection"][0], "\U0001f534")
+        self.assertIn("contradicted", vocab["meanings"]["Misdirection"])
+        self.assertEqual(set(vocab["meanings"]), set(vocab["labels"]))
+
+
+class RunAgainTest(ServerCase):
+    def _complete(self, count):
+        def ready():
+            snap = self.state()
+            done = [r for r in snap["runs"] if r["complete"]]
+            return snap if snap["process"]["state"] == "idle" and len(done) >= count else None
+        return _until(ready, 180)
+
+    def test_run_again_here_adds_a_comparable_attempt_and_a_fresh_folder_starts_over(self):
+        self.assertEqual(self.request("/api/start", {"plan": self.state()["plan"]["sha"]})[0], 202)
+        self._complete(1)
+        first = self.out()
+        self.assertEqual(self.request("/api/again", {"mode": "same-folder", "plan": self.state()["plan"]["sha"]})[0], 202)
+        snap = self._complete(2)
+        self.assertEqual([r["id"] for r in snap["runs"] if r["complete"]], ["demo-r1", "demo-r2"])
+        self.assertEqual(self.request("/api/again", {"mode": "fresh-folder", "plan": self.state()["plan"]["sha"]})[0], 202)
+        snap = _until(lambda: (lambda s: s if s["output"]["dir"] != str(first) and s["process"]["state"] == "idle"
+                               and sum(r["complete"] for r in s["runs"]) == 2 else None)(self.state()), 180)
+        self.assertTrue(all(r["verify"]["outcome"] == "succeeded" for r in snap["runs"]))
+        kinds = self.kinds()
+        self.assertEqual(kinds.count("run_again"), 2)
+        self.assertEqual(kinds.count("approved"), 3)
+
+    def test_restart_stops_the_run_then_starts_a_new_attempt(self):
+        os.environ["AJX_DEMO_PACE"] = "1"
+        self.request("/api/start", {"plan": self.state()["plan"]["sha"]})
+        _until(lambda: self.state()["runs"][0]["feed"], 60)
+        os.environ["AJX_DEMO_PACE"] = "0"
+        self.assertEqual(self.request("/api/restart", {"mode": "same-folder"})[0], 202)
+        snap = self._complete(2)
+        r1, r2 = snap["runs"][0], snap["runs"][1]
+        self.assertTrue(r1["execute"]["interrupted"])
+        self.assertEqual(r2["verify"]["outcome"], "succeeded")
+        kinds = self.kinds()
+        for kind in ("restart_requested", "stop_requested", "run_again"):
+            self.assertIn(kind, kinds)
+
+    def test_shutdown_stops_the_server_but_not_runs(self):
+        status, _, raw = self.request("/api/shutdown", {})
+        self.assertEqual(status, 200)
+        self.assertIn("ajx console open", json.loads(raw)["reopen"])
+        _until(lambda: not self.thread.is_alive(), 10)
+
+
+class ConsoleListTest(DemoCase):
+    def test_list_shows_a_running_console_and_stop_all_stops_it(self):
+        info = console.open_console(self.trial, open_browser=False)
+        found = [c for c in console.list_consoles() if c["pid"] == info["pid"]]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["url"], info["url"])
+        with mock.patch.object(console, "list_consoles", return_value=found):  # never touch other consoles
+            self.assertEqual(console.stop_all(), 1)
+        self.assertIsNone(console.server_info(self.trial))
+
+
+class ShellStartupTest(DemoCase):
+    @unittest.skipUnless(shutil.which("zsh"), "zsh not installed")
+    def test_skip_keeps_zshenv_out_of_the_tool_shell(self):
+        home = self.tmp / "home"
+        home.mkdir()
+        (home / ".zshenv").write_text("export AWS_PROFILE=from-zshenv\n")
+        env = {"HOME": str(home), "PATH": os.environ.get("PATH", ""), "AWS_PROFILE": "from-trial"}
+        zsh = shutil.which("zsh")
+        self.assertEqual(envcheck.shell_env(zsh, env, self.tmp)["AWS_PROFILE"], "from-zshenv")
+        self.assertEqual(envcheck.startup_source("AWS_PROFILE", env), "~/.zshenv line 1")
+        quiet = self.tmp / "quiet"
+        quiet.mkdir()
+        self.assertEqual(envcheck.shell_env(zsh, {**env, "ZDOTDIR": str(quiet)}, self.tmp)["AWS_PROFILE"], "from-trial")
+
+    def test_skip_gives_runs_and_doctor_an_empty_zdotdir(self):
+        self.trial.write_text(console.set_value(self.trial.read_text(), "trial", "shell_startup", "skip"))
+        spec = specmod.load(self.trial)
+        cell = spec["cells"][0]
+        auth = specmod.auth_for(spec, cell)
+        ctx = envcheck.placeholder_ctx(spec, cell, auth, specmod.runner_for(spec, cell), self.tmp / "doctor")
+        self.assertEqual(list(Path(ctx["env"]["ZDOTDIR"]).iterdir()), [])
+        self.assertIn("BASH_ENV", ctx["unset_env"])
+        self.trial.write_text(console.set_value(self.trial.read_text(), "trial", "shell_startup", "maybe"))
+        with self.assertRaises(specmod.SpecError):
+            specmod.load(self.trial)
