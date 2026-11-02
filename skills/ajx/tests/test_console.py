@@ -683,3 +683,19 @@ class ShellSyntaxTest(DemoCase):
                              timeout=60)
         self.assertIn("WARNING [[teardown]] 1 (diff stacks) uses process substitution", res.stdout)
         self.assertEqual(envcheck.shell_syntax_warnings(specmod.load(HERE.parent / "examples" / "console-demo" / "trial.toml")), [])
+
+
+class StopAllCommandTest(unittest.TestCase):
+    def test_stop_all_stops_every_console_server_and_no_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trials = [console.copy_demo(Path(tmp) / name) for name in ("one", "two")]
+            infos = [console.open_console(t, open_browser=False) for t in trials]
+            ours = [c for c in console.list_consoles() if c["pid"] in {i["pid"] for i in infos}]
+            self.assertEqual(len(ours), 2)
+            cli = _cli()
+            out = io.StringIO()
+            with mock.patch.object(cli.consolemod, "list_consoles", return_value=ours), contextlib.redirect_stdout(out):
+                self.assertEqual(cli.main(["console", "stop", "all"]), 0)  # never touches consoles outside the test
+            self.assertIn("stopped 2 console(s); runs keep going", out.getvalue())
+            for t in trials:
+                self.assertIsNone(console.server_info(t))

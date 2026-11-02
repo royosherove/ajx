@@ -579,12 +579,16 @@ def cmd_console(args):
         return consolemod.serve(args.trial, port=args.port, open_browser=args.open,
                                 announce=lambda url: print(f"serving {url}", flush=True))
     if act == "stop":
+        if args.trial == "all" and not Path("all").exists():
+            args.all = True
         if args.all:
             count = consolemod.stop_all()
             print(f"stopped {count} console(s); runs keep going" if count else "no console was running")
             return 0
         if not args.trial:
-            return _fail("console stop: name a trial, or pass --all")
+            running = consolemod.list_consoles()
+            return _fail("console stop: name a trial, or stop every console with: ajx console stop --all"
+                         + (f" ({len(running)} running; see ajx console list)" if running else " (none is running)"))
         print("console stopped; runs keep going" if consolemod.stop_console(args.trial)
               else "no console was running for this trial")
         return 0
@@ -667,8 +671,10 @@ def main(argv=None):
     c.add_argument("--port", type=int, default=0)
     c = acts.add_parser("serve", help="internal: serve in this process (`open` starts it in the background)")
     c.add_argument("trial"); c.add_argument("--port", type=int, default=0); c.add_argument("--open", action="store_true")
-    c = acts.add_parser("stop", help="stop this trial's console server, or every one with --all (never a run)")
-    c.add_argument("trial", nargs="?"); c.add_argument("--all", action="store_true")
+    c = acts.add_parser("stop", help="stop this trial's console server, or every one with --all (never a run)",
+                        description="Stop console servers. Runs keep going; reopen a console with `ajx console open`.")
+    c.add_argument("trial", nargs="?", help="trial.toml or its directory; `all` is the same as --all")
+    c.add_argument("--all", action="store_true", help="stop every console server running for you")
     c = acts.add_parser("list", help="console servers running for you"); c.add_argument("--json", action="store_true")
     c = acts.add_parser("state", help="everything the page shows, as JSON"); c.add_argument("trial")
     c = acts.add_parser("since", help="for agents: what changed after --cursor, as JSON")

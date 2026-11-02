@@ -97,7 +97,7 @@ terminal:
 ```sh
 ajx console list                 # every console server running for you, with its link
 ajx console stop trials/my-cli   # one trial's console
-ajx console stop --all           # every console
+ajx console stop --all           # every console (same as: ajx console stop all)
 ```
 
 ## For the coordinating agent
