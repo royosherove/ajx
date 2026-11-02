@@ -171,6 +171,8 @@ def cmd_doctor(args):
               f"verified_live={h.verified_live} resume={h.can_resume} clean={h.clean_supported} telemetry: {h.telemetry}")
         ok &= avail
     if spec:
+        for warning in envcheck.shell_syntax_warnings(spec):
+            print(f"    WARNING {warning}")
         with tempfile.TemporaryDirectory() as tmp:
             ok &= _doctor_cells(spec, Path(tmp))
         for cmd in spec["verify"]:
@@ -325,6 +327,8 @@ def cmd_validate(args):
     print(f"verify checks={len(spec['verify'])} setup={len(spec['setup'])} teardown={len(spec['teardown'])} "
           f"preflight={len(spec['preflight'])} task identity_cmd={'set' if spec['task'].get('identity_cmd') else 'unset'}")
     print(f"output_dir={spec['trial']['output_dir']}")
+    for warning in envcheck.shell_syntax_warnings(spec):
+        print(f"WARNING {warning}")
     wanted = {c["id"] for c, _ in plan}
     with tempfile.TemporaryDirectory() as tmp:  # probes the agent's tool shell; runs no identity commands
         ws = envcheck.scratch_workspace(spec, tmp)

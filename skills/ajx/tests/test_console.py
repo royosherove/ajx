@@ -670,3 +670,16 @@ class ShellStartupTest(DemoCase):
         self.trial.write_text(console.set_value(self.trial.read_text(), "trial", "shell_startup", "maybe"))
         with self.assertRaises(specmod.SpecError):
             specmod.load(self.trial)
+
+
+class ShellSyntaxTest(DemoCase):
+    def test_bash_only_lifecycle_commands_are_flagged_before_a_run(self):
+        text = self.trial.read_text() + '\n[[teardown]]\nname = "diff stacks"\nrun = "comm -13 base.txt <(echo now)"\n'
+        self.trial.write_text(text)
+        warnings = envcheck.shell_syntax_warnings(specmod.load(self.trial))
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("process substitution", warnings[0])
+        res = subprocess.run([sys.executable, str(AJX), "validate", str(self.trial)], capture_output=True, text=True,
+                             timeout=60)
+        self.assertIn("WARNING [[teardown]] 1 (diff stacks) uses process substitution", res.stdout)
+        self.assertEqual(envcheck.shell_syntax_warnings(specmod.load(HERE.parent / "examples" / "console-demo" / "trial.toml")), [])

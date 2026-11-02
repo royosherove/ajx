@@ -212,6 +212,26 @@ def env_findings(spec, cell, auth, view, shell_vars):
     return out
 
 
+_BASH_ONLY = ((re.compile(r"[<>]\("), "process substitution <(...)"), (re.compile(r"\[\["), "[[ ... ]] tests"),
+              (re.compile(r"\{[^{}\s]+\.\.[^{}\s]+\}"), "brace ranges {a..b}"),
+              (re.compile(r"(^|[;&|]\s*|\s)source\s"), "source (use . instead)"))
+
+
+def shell_syntax_warnings(spec):
+    """Lifecycle commands run as `/bin/sh -c`: flag bash-only syntax before a run, when a teardown that
+    cannot parse would leave the task's resources behind."""
+    out = []
+    for key in ("setup", "preflight", "verify", "teardown"):
+        for i, cmd in enumerate(spec.get(key) or []):
+            if cmd.get("type", "shell") != "shell" or not cmd.get("run"):
+                continue
+            found = [label for pattern, label in _BASH_ONLY if pattern.search(cmd["run"])]
+            if found:
+                out.append(f"[[{key}]] {i + 1} ({cmd.get('name')}) uses {', '.join(found)}, which /bin/sh may not "
+                           "support; AJX runs it with /bin/sh -c. Use POSIX syntax or wrap it in bash -c '...'")
+    return out
+
+
 def startup_source(name, env):
     """Where a non-login `zsh -c` or `bash -c` would set `name`: '~/.zshenv line 3', or None."""
     home = env.get("HOME") or str(Path.home())
