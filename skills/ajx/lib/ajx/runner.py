@@ -49,6 +49,22 @@ CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "crede
                     ".npmrc", ".netrc", ".pypirc", ".git-credentials")
 
 
+TASK_INPUT_KEYS = ("materials", "fixture_dir", "human", "identity_cmd")
+
+
+def task_inputs(spec):
+    """The checks, lifecycle commands and task conditions attempts were made with. Recorded in
+    matrix-plan.json so the console can keep a folder's attempts comparable (`ajx run` does not
+    enforce these). The fixture folder is relative to the trial folder, so moving both keeps it equal;
+    values JSON cannot hold (TOML dates) are recorded as text."""
+    task = spec["task"]
+    out = {"verify": spec["verify"], "setup": spec["setup"], "preflight": spec["preflight"],
+           "teardown": spec["teardown"], **{k: task.get(k) for k in TASK_INPUT_KEYS}}
+    if out.get("fixture_dir"):
+        out["fixture_dir"] = os.path.relpath(out["fixture_dir"], Path(spec["path"]).parent)
+    return json.loads(json.dumps(out, default=str))
+
+
 def cleanup_only(stages):
     return bool(stages) and set(stages) <= CLEANUP_STAGES
 
@@ -966,7 +982,7 @@ def run_matrix(spec, only_cells=None, stages=None, keep_workspace=False, log=pri
                 "trial_sha256": spec["sha256"], "task_prompt_sha256": spec["task"]["prompt_sha256"],
                 "skill_revision": skill_fingerprint(), "order_seed": spec["trial"]["order_seed"],
                 "order": [f"{c['id']}-r{r}" for c, r in plan], "parallel": parallel,
-                "cells_contract": cells_contract(spec),
+                "cells_contract": cells_contract(spec), "task_inputs": task_inputs(spec),
                 "wall_clock_comparable": parallel == 1, "planned_at": now(),
                 "normalized_profiles": profiles,
                 "configurations": [{

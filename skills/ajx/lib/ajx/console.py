@@ -9,6 +9,7 @@ coordinating agent see the same trial, and closing either one never stops a run.
 """
 
 import hashlib
+import codecs
 import hmac
 import http.server
 import json
@@ -19,6 +20,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -30,7 +32,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from . import base, plugins, runner, spec as specmod
+from . import base, plan_edit, plugins, runner, spec as specmod
 from .report_ui import LABELS, STATUSES
 from .util import SKILL_ROOT, now, parse_ts, read_json, sha256_bytes
 
@@ -694,6 +696,110 @@ def journal_progress(trial, out, spec=None):
     return changed
 
 
+SKIP_OUTPUTS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache"}
+
+
+def _workspace(d, st):
+    archived = (st.get("archived") or {}).get("workspace")
+    live = (st.get("paths") or {}).get("workspace")
+    for candidate in (archived, live, str(Path(d) / "workspace")):
+        if candidate and Path(candidate).is_dir():
+            return Path(candidate)
+    return None
+
+
+def _outputs(d, st, limit=200, budget=4000, fixture=None):
+    """(files, truncated): the worker's files in its workspace (names, sizes, times), each marked
+    `starting_file` when it is an unchanged copy of the trial's starting files. Bounded, and never
+    inside dependency or VCS folders, so it stays cheap on every poll."""
+    root = _workspace(d, st)
+    if root is None:
+        return [], False
+    found, seen = [], 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(x for x in dirnames if x not in SKIP_OUTPUTS)
+        for name in sorted(filenames):
+            seen += 1
+            if seen > budget or len(found) >= limit:
+                return found, True
+            path = Path(dirpath) / name
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                # A name that is not UTF-8 (possible on Linux) must not break the JSON of every poll.
+                rel = str(path.relative_to(root)).encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+                found.append({"path": rel, "size": info.st_size, "mtime": info.st_mtime,
+                              "starting_file": _same_file(path, info, Path(fixture) / rel) if fixture else False})
+    return found, False
+
+
+def _same_file(path, info, original, limit=1 << 20):
+    """Whether a workspace file is still the starting file it was copied from (bytes compared up to 1 MB)."""
+    try:
+        o = original.lstat()
+        if not stat.S_ISREG(o.st_mode) or o.st_size != info.st_size:
+            return False
+        if info.st_size > limit:
+            return True
+        return path.read_bytes() == original.read_bytes()
+    except OSError:
+        return False
+
+
+_STEP = re.compile(r"^\s*\d+[.)]\s+")
+
+
+def journey_highlights(markdown):
+    """Labeled steps of the journey's chronological account: [{label, text, refs}] in order."""
+    steps, block, in_chronology = [], [], False
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            if block:
+                steps.append(" ".join(block))
+                block = []
+            in_chronology = "chronolog" in line.lower()
+        elif in_chronology:
+            if _STEP.match(line) and block:
+                steps.append(" ".join(block))
+                block = []
+            if block or _STEP.match(line):
+                block.append(line.strip())
+    if block:
+        steps.append(" ".join(block))
+    out = []
+    for step in steps:
+        first = _STEP.sub("", step).lstrip("* ")
+        label = next((name for name, (icon, _) in LABELS.items()
+                      if re.match(rf"(?:{re.escape(icon)}\s*)?(?:\*\*)?{re.escape(name)}\b", first)), None)
+        text = first
+        if label:
+            icon = LABELS[label][0]
+            text = re.sub(rf"^(?:{re.escape(icon)}\s*)?(?:\*\*)?{re.escape(label)}(?:\*\*)?[.:]?\s*", "", first)
+        out.append({"label": label, "text": _clip(re.sub(r"\s+", " ", text), 280), "refs": re.findall(r"\bE-\d{3,}\b", step)})
+    return out
+
+
+def _journey_view(d, st):
+    path = Path(d) / "journey.md"
+    if not path.is_file():
+        return None
+    markdown = path.read_text(encoding="utf-8", errors="replace")
+    steps = journey_highlights(markdown)
+    counts = {}
+    for step in steps:
+        if step["label"]:
+            counts[step["label"]] = counts.get(step["label"], 0) + 1
+    narrate = st.get("narrate") or {}
+    ntel = read_json(Path(d) / "telemetry.narrate.json", None) or {}
+    return {"provenance": st.get("journey_provenance"), "steps": steps[:30], "total_steps": len(steps), "counts": counts,
+            # Why the journey is a labeled reconstruction rather than the worker's own account.
+            "reconstruction": bool(narrate.get("reconstruction")),
+            "self_narration_rejected": narrate.get("self_narration_rejected"),
+            "safety_stops": (ntel.get("harness_reported") or {}).get("safety_stops") or 0}
+
+
 def _run_view(spec, out, rid, planned, feed_limit):
     d = Path(out) / "runs" / rid
     st = read_json(d / "state.json", {}) or {}
@@ -717,6 +823,8 @@ def _run_view(spec, out, rid, planned, feed_limit):
     complete = (marks.get("render") or {}).get("status") == "done" or never_ran
     feed, note = (_feed(spec, d, feed_limit) if exec_mark.get("status") and feed_limit > 0 else ([], None))
     asks_data = read_json(d / "asks.json", None)
+    outputs, truncated = (_outputs(d, st, fixture=((spec or {}).get("task") or {}).get("fixture_dir"))
+                          if started and feed_limit > 0 else ([], False))
     view = {
         "id": rid, "planned": planned, "started": started, "has_state": (d / "state.json").is_file(),
         "complete": complete, "never_ran": never_ran, "current": current,
@@ -730,11 +838,19 @@ def _run_view(spec, out, rid, planned, feed_limit):
         "verify": None if verify is None else {
             "outcome": verify.get("outcome"), "passed": verify.get("passed"), "total": verify.get("total"),
             "auth_errors": verify.get("checks_with_auth_errors") or [],
-            "checks": [{"name": c.get("name"), "passed": c.get("passed"), "detail": _clip(c.get("detail"), 200)}
+            "checks": [{"name": c.get("name"), "passed": c.get("passed"), "detail": _clip(c.get("detail"), 200),
+                        "location": c.get("location") or (c.get("definition") or {}).get("location")}
                        for c in verify.get("checks") or []]},
         "teardown": teardown,
-        "environment_cleanup": None if not env_cleanup else {"status": env_cleanup.get("status"),
-                                                             "confirmed": env_cleanup.get("confirmed")},
+        "teardown_commands": [{"cmd": _clip(c.get("cmd"), 200), "exit_code": c.get("exit_code"),
+                               "timed_out": bool(c.get("timed_out")), "location": c.get("location"),
+                               "auth_errors": bool(c.get("auth_errors"))}
+                              for c in (read_json(d / "teardown.json", None) or []) if isinstance(c, dict)][:20],
+        "environment_cleanup": None if not env_cleanup else {
+            "status": env_cleanup.get("status"), "confirmed": env_cleanup.get("confirmed"),
+            "reason": _clip(env_cleanup.get("reason"), 300) or None, "error": _clip(env_cleanup.get("error"), 300) or None},
+        "cell": (cell or {}).get("id"), "group": (cell or {}).get("group"),
+        "attempt": int(rid.rsplit("-r", 1)[1]) if re.fullmatch(r".+-r\d+", rid) else None,
         "asks": _asks_view(asks_data, marks),
         "result": _execution(spec, d, st) if exec_mark.get("status") in runner.TERMINAL else None,
         "model": (((st.get("execute") or {}).get("requested") or {}).get("model") if (st.get("execute") or {}).get("requested")
@@ -747,6 +863,8 @@ def _run_view(spec, out, rid, planned, feed_limit):
                    "resolved": x.get("resolved"), "event_refs": x.get("event_refs") or []}
                   for x in ((asks_data or {}).get("gates") or [])[:8]],
         "review_status": run_json.get("review_status"),
+        "outputs": outputs, "outputs_truncated": truncated,
+        "journey": _journey_view(d, st) if feed_limit > 0 else None,
         "declared": _clip(run_json.get("task_outcome_declared"), 400) or None,
         "journey_provenance": st.get("journey_provenance"),
         "feed": feed, "feed_note": note,
@@ -865,7 +983,8 @@ def _check_view(c):
 def _trial_view(trial, spec, error, out):
     text = Path(trial).read_text(encoding="utf-8", errors="replace")
     raw = _raw(trial)
-    view = {"path": str(trial), "short": _short(trial), "dir": str(Path(trial).parent), "sha256": sha256_bytes(text.encode()),
+    view = {"path": str(trial), "short": _short(trial), "dir": str(Path(trial).parent),
+            "sha256": sha256_bytes(Path(trial).read_bytes()),  # what _write_trial checks (CRLF files too)
             "error": error, "text_size": len(text)}
     pp = prompt_path(trial, spec)
     prompt_bytes = pp.read_bytes() if pp and pp.is_file() else b""
@@ -1024,6 +1143,10 @@ def describe(e):
         return f"Did not start: {e.get('reason')}"
     if k == "settings_changed":
         return "Changed settings: " + ", ".join(e.get("changes") or [])
+    if k == "plan_changed":
+        items = e.get("changes") or []
+        return "Changed the plan: " + ("; ".join(items[:3]) + (f"; and {len(items) - 3} more" if len(items) > 3 else "")
+                                       if items else "no visible change")
     if k == "fresh_output":
         return f"Switched to a fresh output folder: {e.get('output_dir')}"
     if k in ("message", "note", "progress"):
@@ -1066,6 +1189,12 @@ def snapshot(trial, *, feed_limit=14, skip=()):
                      "in a fresh output folder." if started else None)
     texts = {m["n"]: m.get("text") for m in entries if m.get("kind") == "message"}
     replied = {m.get("reply_to") for m in entries if m.get("kind") == "note"}
+    try:
+        plan_model = plan_edit.read_model(trial)
+        plan_options = plan_edit.options(trial, plan_model)
+        plan_options["prompt_lint"] = [list(x) for x in PROMPT_LINT]
+    except Exception:  # noqa: BLE001 - an unreadable trial shows its error; the editor waits for a fix
+        plan_model, plan_options = None, None
     return {
         "schema": SCHEMA, "generated_at": now(),
         "trial": _trial_view(trial, spec, error, out),
@@ -1080,7 +1209,9 @@ def snapshot(trial, *, feed_limit=14, skip=()):
         "agent": presence(trial),
         "console": _console_view(trial),
         "pending_start": _pending_start(entries, ready),
-        "locks": {"prompt": lock_reason, "settings": settings_lock},
+        "locks": {"prompt": lock_reason, "settings": settings_lock, "kind": "job" if job else "attempts" if started else None},
+        "plan_model": plan_model,
+        "plan_options": plan_options,
         "vocabulary": {"labels": {k: list(v) for k, v in LABELS.items()},
                        "statuses": {k: list(v) for k, v in STATUSES.items()}, "meanings": label_meanings()},
     }
@@ -1389,82 +1520,15 @@ def message(trial, text, about=None):
 
 # --------------------------------------------------------------------------- editing trial files
 
-_HEADER = re.compile(r"^\s*(\[\[?)([^\[\]]+?)(\]\]?)\s*(#.*)?$")
-
-
-def _sections(lines):
-    """[(name, is_array, header_index, end_index)]; the root section has name None. Quoted or
-    dotted headers end a section but never match a plain table name."""
-    out, current = [], (None, False, -1)
-    for i, line in enumerate(lines):
-        m = _HEADER.match(line)
-        if m and (m.group(1) == "[[") == (m.group(3) == "]]"):
-            out.append((*current, i))
-            current = (m.group(2).strip(), m.group(1) == "[[", i)
-    out.append((*current, len(lines)))
-    return out
-
-
-def _toml_value(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return repr(value)
-    return json.dumps(str(value), ensure_ascii=False)
-
-
-def _trailing_comment(line, key):
-    for i, ch in enumerate(line):
-        if ch == "#":
-            try:
-                if key in tomllib.loads(line[:i]):
-                    return "  " + line[i:].strip()
-            except tomllib.TOMLDecodeError:
-                continue
-    return ""
+_sections = plan_edit.sections
 
 
 def set_value(text, table, key, value, index=0):
-    """Set (or with value None, remove) `key` in `[table]`, or in the index-th `[[cells]]`, keeping
-    the rest of the file as written. The result is re-parsed and compared before it is used."""
-    lines = text.split("\n")
-    sections = [s for s in _sections(lines) if s[0] == table and s[1] == (table == "cells")]
-    rendered = None if value is None else f"{key} = {_toml_value(value)}"
-    if table == "cells" and index >= len(sections):
-        raise ConsoleError(f"cells[{index}] not found")
-    section = sections[index if table == "cells" else 0] if sections else None
-    if section:
-        start, end = section[2] + 1, section[3]
-        live = re.compile(rf"^\s*{re.escape(key)}\s*=")
-        commented = re.compile(rf"^\s*#\s*{re.escape(key)}\s*=")
-        hit = next((i for i in range(start, end) if live.match(lines[i])), None)
-        if hit is not None:
-            if rendered is None:
-                del lines[hit]
-            else:
-                lines[hit] = rendered + _trailing_comment(lines[hit], key)
-        elif rendered is not None:
-            hint = next((i for i in range(start, end) if commented.match(lines[i])), None)
-            if hint is not None:
-                lines[hint] = rendered  # replace the scaffold's commented-out example in place
-            else:
-                at = end
-                while at > start and (not lines[at - 1].strip() or lines[at - 1].lstrip().startswith("#")):
-                    at -= 1
-                lines.insert(at, rendered)
-    elif rendered is not None:
-        while lines and lines[-1] == "":
-            lines.pop()
-        lines += ["", f"[{table}]", rendered, ""]
-    new = "\n".join(lines)
+    """Set (or with value None, remove) `key` in `[table]` or the index-th `[[cells]]` (see plan_edit)."""
     try:
-        parsed = tomllib.loads(new)
-    except tomllib.TOMLDecodeError as exc:
-        raise ConsoleError(f"could not update {table}.{key} safely ({exc}); edit trial.toml directly") from None
-    holder = (parsed.get("cells") or [{}])[index] if table == "cells" else (parsed.get(table) or {})
-    if (value is None and key in holder) or (value is not None and holder.get(key) != value):
-        raise ConsoleError(f"could not update {table}.{key} safely; edit trial.toml directly")
-    return new
+        return plan_edit.set_value(text, table, key, value, index)
+    except plan_edit.PlanError as exc:
+        raise ConsoleError(str(exc)) from None
 
 
 def _write_trial(trial, text, base_sha, actor, kind, **fields):
@@ -1475,7 +1539,7 @@ def _write_trial(trial, text, base_sha, actor, kind, **fields):
         tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConsoleError(f"not valid TOML: {exc}") from None
-    tmp = Path(trial).with_name(f".{Path(trial).name}.console-{os.getpid()}.tmp")
+    tmp = Path(trial).with_name(f".{Path(trial).name}.console-{os.getpid()}-{threading.get_ident()}.tmp")
     tmp.write_text(text, encoding="utf-8")
     try:
         specmod.load(tmp, readiness=False)
@@ -1606,6 +1670,154 @@ def add_attempt(trial, base_sha, actor="user"):
     return save_settings(trial, {"repetitions": spec["trial"]["repetitions"] + 1}, base_sha, actor)
 
 
+def _validated(trial, text, prompt=None):
+    """(spec, None) when AJX can load this trial text, else (None, why). Loaded beside the real file, so
+    relative paths resolve the same way; `prompt` (text) stands in for the task prompt file when the
+    edit changes it."""
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return None, f"not valid TOML: {exc}"
+    tag = f"check-{os.getpid()}-{threading.get_ident()}"
+    tmp = Path(trial).with_name(f".{Path(trial).name}.{tag}.tmp")
+    tmp_prompt = None
+    try:
+        if prompt is not None:
+            tmp_prompt = Path(trial).with_name(f".task-prompt.{tag}.tmp")
+            tmp_prompt.write_text(prompt, encoding="utf-8")
+            text = plan_edit.set_value(text, "task", "prompt_file", tmp_prompt.name)
+        tmp.write_text(text, encoding="utf-8")
+        return specmod.load(tmp, readiness=False), None
+    except Exception as exc:  # noqa: BLE001 - report, never raise from a preview
+        return None, str(exc)
+    finally:
+        tmp.unlink(missing_ok=True)
+        if tmp_prompt is not None:
+            tmp_prompt.unlink(missing_ok=True)
+
+
+def _folder_lock(trial, new_spec, before_text, text, prompt_bytes):
+    """Why these settings cannot be used in the output folder they point at, or []. The folder's own
+    record decides (as `ajx run` does); for the current folder the checks and task inputs are kept too."""
+    out = Path(new_spec["trial"]["output_dir"])
+    if not any((out / "runs").glob("*/state.json")):
+        return []
+    meta = read_json(out / "matrix-plan.json", {}) or {}
+    current, _ = load(trial)
+    same = bool(current) and Path(current["trial"]["output_dir"]) == out
+    profiles_of = lambda sp: {"schema_version": 1, "environments": sp.get("environments", {}),  # noqa: E731
+                              "agent_configurations": sp.get("agent_configurations", {})}
+    prompt_sha = meta.get("task_prompt_sha256") or (current["task"]["prompt_sha256"] if same else None)
+    recorded = meta.get("normalized_profiles") or (profiles_of(current) if same else None)
+    contract = meta.get("cells_contract") or (runner.cells_contract(current) if same else None)
+    found = []
+    if prompt_sha and prompt_sha != sha256_bytes(prompt_bytes):
+        found.append("the task prompt")
+    if recorded and runner._profile_contract(recorded) != runner._profile_contract(profiles_of(new_spec)):
+        found.append("the environments or agent configurations")
+    if contract:
+        found += runner.contract_changes(contract, runner.cells_contract(new_spec))
+    inputs = meta.get("task_inputs")
+    if inputs:  # recorded by `ajx run`: comparable for any folder, not only the current one
+        now = runner.task_inputs(new_spec)
+        for key, label in (("verify", "the success checks"), ("setup", "the setup commands"),
+                           ("preflight", "the preflight commands"), ("teardown", "the cleanup commands")):
+            if (inputs.get(key) or []) != (now.get(key) or []):
+                found.append(label)
+        for key in runner.TASK_INPUT_KEYS:
+            if inputs.get(key) != now.get(key):
+                found.append(f"task {key.replace('_', ' ')}")
+    elif same:  # folders made before task_inputs were recorded: compare with the current file
+        old, new = tomllib.loads(before_text), tomllib.loads(text)
+        for key, label in (("verify", "the success checks"), ("setup", "the setup commands"),
+                           ("preflight", "the preflight commands"), ("teardown", "the cleanup commands")):
+            if (old.get(key) or []) != (new.get(key) or []):
+                found.append(label)
+        for key in ("materials", "fixture_dir", "human", "identity_cmd"):
+            if (old.get("task") or {}).get(key) != (new.get("task") or {}).get(key):
+                found.append(f"task {key.replace('_', ' ')}")
+    if not found:
+        return []
+    return ["Locked for this output folder: its attempts used other settings (" + "; ".join(found[:4])
+            + "). Switch to a fresh output folder to change them."]
+
+
+def save_plan(trial, model, base_sha=None, prompt_sha=None, actor="user", dry_run=False):
+    """Preview (dry_run) or save the Plan tab's model: trial.toml section by section, and the prompt.
+    An output folder that holds attempts takes only more attempts, new workers, or a switch of folder."""
+    trial = trial_file(trial)
+    if not dry_run:
+        _ensure_idle(trial)
+    before_bytes = Path(trial).read_bytes()
+    before_text = before_bytes.decode("utf-8").replace("\r\n", "\n")  # edited and written with LF
+    try:
+        current = plan_edit.read_model(trial, before_text)
+        text, prompt, added = plan_edit.render(trial, model, before_text, current)
+        change_list = plan_edit.changes(current, model)
+    except plan_edit.PlanError as exc:
+        if dry_run:
+            return {"changes": [], "diff": [], "problems": [str(exc)], "added_auth": [], "text": before_text}
+        raise ConsoleError(str(exc)) from None
+    prompt_file = Path(trial).parent / (current["task"]["prompt_file"] or "task-prompt.md")
+    with_nl = lambda t: t if t.endswith("\n") else t + "\n"  # noqa: E731 - the prompt is saved with one
+    prompt_changed = prompt is not None and with_nl(prompt) != with_nl(current["task"]["prompt"] or "")
+    body = with_nl(prompt) if prompt_changed else None
+    problems = []
+    if prompt is not None and not prompt.strip():
+        problems.append("the task prompt cannot be empty")
+    # Always validated: an unchanged trial.toml that no longer loads cannot show whether its output
+    # folder would accept the edit, so a prompt-only edit is refused until the file loads again.
+    new_spec, error = _validated(trial, text, body)
+    if error:
+        problems.append(error)
+    if new_spec is not None:
+        prompt_bytes = body.encode("utf-8") if body is not None else (prompt_file.read_bytes() if prompt_file.is_file() else b"")
+        problems += _folder_lock(trial, new_spec, before_text, text, prompt_bytes)
+    diff = plan_edit.diff_lines(before_text, text, "trial.toml")
+    if prompt_changed:
+        diff += plan_edit.diff_lines(current["task"]["prompt"], prompt, current["task"]["prompt_file"] or "task-prompt.md")
+    if dry_run:
+        return {"changes": change_list, "diff": diff, "problems": problems, "added_auth": added, "text": text}
+    if problems:
+        raise ConsoleError(problems[0])
+    if not base_sha:
+        raise ConsoleError("the save did not say which version of trial.toml it edits; reload the page")
+    if base_sha != sha256_bytes(before_bytes):
+        raise Conflict("trial.toml changed on disk (by your agent or an editor). Reload to see the new version.")
+    tmp = None
+    if prompt_changed:
+        on_disk = prompt_file.read_bytes() if prompt_file.is_file() else b""
+        if not prompt_sha or prompt_sha != sha256_bytes(on_disk):
+            raise Conflict("the task prompt changed on disk (by your agent or an editor). Reload to see it.")
+        tmp = prompt_file.with_name(f".{prompt_file.name}.console-{os.getpid()}-{threading.get_ident()}.tmp")
+        tmp.write_text(body, encoding="utf-8")
+    texts = [c["text"] for c in change_list][:40]
+    if text == before_text and not prompt_changed:
+        return {"sha256": base_sha, "changes": change_list}  # nothing to write or to journal
+    old_prompt = prompt_file.read_bytes() if prompt_changed and prompt_file.is_file() else None
+    replaced = False
+    try:
+        if tmp is not None:  # the prompt first, so the journal never claims a change that failed
+            os.replace(tmp, prompt_file)
+            tmp, replaced = None, True
+        if text != before_text:
+            sha = _write_trial(trial, text, base_sha, actor, "plan_changed", changes=texts)
+        else:
+            sha = base_sha
+            record(trial, actor, "plan_changed", changes=texts)
+    except BaseException:
+        if replaced:  # the trial file was not written: put the old prompt back, all or nothing
+            if old_prompt is None:
+                prompt_file.unlink(missing_ok=True)
+            else:
+                prompt_file.write_bytes(old_prompt)
+        raise
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+    return {"sha256": sha, "changes": change_list}
+
+
 def save_prompt(trial, text, base_sha, actor="user"):
     trial = trial_file(trial)
     spec, _ = load(trial)
@@ -1622,7 +1834,7 @@ def save_prompt(trial, text, base_sha, actor="user"):
     if not text.strip():
         raise ConsoleError("the task prompt cannot be empty")
     text = text if text.endswith("\n") else text + "\n"
-    tmp = path.with_name(f".{path.name}.console-{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.console-{os.getpid()}-{threading.get_ident()}.tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     new = sha256_bytes(text.encode("utf-8"))
@@ -1697,6 +1909,8 @@ def _handler(app):
                     return self._file(path[len("/files/"):])
                 if method == "GET" and path.startswith("/logs/"):
                     return self._log(path[len("/logs/"):])
+                if method == "GET" and path.startswith("/workspace/"):
+                    return self._workspace_file(path[len("/workspace/"):])
                 body = self._body() if method == "POST" else {}
                 result = self._route(method, path, body)
                 if result is None:
@@ -1764,6 +1978,10 @@ def _handler(app):
                 return 200, {"ok": True, "entry": rebuild_reports(t, "user", app.watch)}
             if path == "/api/export":
                 return 200, export(t, "user", body.get("run"))
+            if path == "/api/plan/preview":
+                return 200, save_plan(t, body.get("model"), dry_run=True)
+            if path == "/api/plan/save":
+                return 200, save_plan(t, body.get("model"), body.get("base"), body.get("prompt_base"))
             if path == "/api/prompt":
                 return 200, save_prompt(t, body.get("text", ""), body.get("base"))
             if path == "/api/settings":
@@ -1883,6 +2101,29 @@ def _handler(app):
             # Reports quote worker output: run them as an opaque origin, without the console's cookie.
             extra = {"Content-Security-Policy": REPORT_CSP} if target.suffix in (".html", ".svg") else None
             self._send(200, target.read_bytes(), CONTENT_TYPES[target.suffix], extra)
+
+        def _workspace_file(self, rel):
+            """A file the worker wrote, as plain text (or a download), from inside its workspace only."""
+            run_id, _, inner = urllib.parse.unquote(rel).partition("/")
+            spec, _ = load(app.trial)
+            d = output_dir(app.trial, spec) / "runs" / Path(run_id).name
+            root = _workspace(d, read_json(d / "state.json", {}) or {})
+            if root is None or not inner:
+                return self._json(404, {"error": "not found"})
+            target = (root / inner).resolve()
+            if not target.is_relative_to(root.resolve()) or not target.is_file():
+                return self._json(404, {"error": "not found"})
+            with open(target, "rb") as fh:
+                data = fh.read(2_000_000)
+            try:
+                # The 2 MB cut can split a character: an incomplete UTF-8 tail is dropped, not called binary.
+                text = codecs.getincrementaldecoder("utf-8")().decode(data, final=False)
+                data = text.encode("utf-8")
+                ctype, extra = "text/plain; charset=utf-8", {"Content-Security-Policy": "sandbox"}
+            except UnicodeDecodeError:
+                safe = urllib.parse.quote(target.name, safe="")  # the worker chose this name: percent-encode it
+                ctype, extra = "application/octet-stream", {"Content-Disposition": f"attachment; filename*=UTF-8''{safe}"}
+            self._send(200, data, ctype, extra)
 
         def _log(self, name):
             target = state_dir(app.trial) / "logs" / Path(urllib.parse.unquote(name)).name

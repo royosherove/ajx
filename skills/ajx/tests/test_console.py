@@ -18,6 +18,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 from unittest import mock
 import urllib.request
 from importlib.machinery import SourceFileLoader
@@ -26,8 +27,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
-from ajx import console, envcheck, plugins, spec as specmod  # noqa: E402
+from ajx import console, envcheck, plan_edit, plugins, spec as specmod  # noqa: E402
 from ajx.util import now, read_json, sha256_bytes, write_json  # noqa: E402
+
+plan_edit._DOCKER.update(at=float("inf"), info={"images": [], "host": ""})  # never ask Docker in tests
 
 AJX = HERE.parent / "bin" / "ajx"
 
@@ -302,6 +305,67 @@ class ServerCase(DemoCase):
         status, _, raw = self.request("/api/state")
         self.assertEqual(status, 200)
         return json.loads(raw)
+
+
+class PlanApiTest(ServerCase):
+    def test_preview_and_save_go_through_the_api_with_the_key(self):
+        model = self.state()["plan_model"]
+        model["run"]["minutes"] = 3
+        status, _, raw = self.request("/api/plan/preview", {"model": model})
+        self.assertEqual(status, 200)
+        view = json.loads(raw)
+        self.assertIn("+timeout_seconds = 180", view["diff"])
+        status, _, _ = self.request("/api/plan/save", {"model": model}, token=False)
+        self.assertEqual(status, 403)
+        status, _, raw = self.request("/api/plan/save", {"model": model, "base": sha256_bytes(self.trial.read_bytes())})
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(console.load(self.trial)[0]["trial"]["timeout_seconds"], 180)
+        self.assertIn("plan_changed", self.kinds())
+        status, _, raw = self.request("/api/plan/save", {"model": model, "base": "0" * 64})
+        self.assertEqual(status, 409)
+        model["workers"][0]["model"] = "has space"
+        status, _, raw = self.request("/api/plan/preview", {"model": model})
+        self.assertEqual((status, "not a model name" in json.loads(raw)["problems"][0]), (200, True))
+        status, _, raw = self.request("/api/plan/preview", {"model": {"workers": "x"}})
+        self.assertEqual((status, "incomplete" in json.loads(raw)["problems"][0]), (200, True))
+
+    def test_worker_files_are_served_from_inside_the_workspace_only(self):
+        ws = self.tmp / "ws" / "attempt"
+        (ws / "sub").mkdir(parents=True)
+        (ws / "out.csv").write_text("id\n1\n")
+        (ws / 'we"ird;name\u00e9.bin').write_bytes(b"\xff\xfe\x00")
+        (self.tmp / "secret.txt").write_text("not for the page")
+        (ws / "link.txt").symlink_to(self.tmp / "secret.txt")
+        (ws / "sub" / "deep.txt").write_text("deep")
+        write_json(self.out() / "runs" / "demo-r1" / "state.json", {"paths": {"workspace": str(ws)}, "stages": {}})
+        status, headers, raw = self.request("/workspace/demo-r1/out.csv")
+        self.assertEqual((status, raw), (200, b"id\n1\n"))
+        self.assertTrue(headers["Content-Type"].startswith("text/plain"))
+        for bad in ("/workspace/demo-r1/link.txt", "/workspace/demo-r1/..%2F..%2Fsecret.txt",
+                    "/workspace/demo-r1/../../secret.txt", "/workspace/..%2Fdemo-r1/out.csv", "/workspace/demo-r1/"):
+            self.assertEqual(self.request(bad)[0], 404, bad)
+        status, headers, _ = self.request("/workspace/demo-r1/" + urllib.parse.quote('we"ird;name\u00e9.bin'))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Disposition"], "attachment; filename*=UTF-8''we%22ird%3Bname%C3%A9.bin")
+        self.assertEqual(self.request("/workspace/demo-r1/out.csv", token=False)[0], 403)
+        (ws / "euros.txt").write_text("\u20ac" * 700_000)  # 2.1 MB: the 2 MB cut splits a character
+        status, headers, raw = self.request("/workspace/demo-r1/euros.txt")
+        self.assertEqual(status, 200)
+        self.assertTrue(headers["Content-Type"].startswith("text/plain"))
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox")
+        self.assertEqual(len(raw) % 3, 0)
+        (ws / "euros.txt").unlink()
+        files, truncated = console._outputs(self.out() / "runs" / "demo-r1", {"paths": {"workspace": str(ws)}})
+        self.assertEqual([o["path"] for o in files], ["out.csv", 'we"ird;name\u00e9.bin', "sub/deep.txt"])
+        self.assertFalse(truncated)
+        fixture = self.out() / "start"
+        (fixture / "sub").mkdir(parents=True)
+        (fixture / "out.csv").write_bytes(b"id\n1\n")         # unchanged copy of a starting file
+        (fixture / "sub" / "deep.txt").write_text("before")      # the worker changed it
+        files, _ = console._outputs(self.out() / "runs" / "demo-r1", {"paths": {"workspace": str(ws)}}, fixture=fixture)
+        self.assertEqual({o["path"]: o["starting_file"] for o in files},
+                         {"out.csv": True, 'we"ird;name\u00e9.bin': False, "sub/deep.txt": False})
+        self.assertEqual(console._outputs(self.out() / "runs" / "demo-r1", {"paths": {"workspace": str(ws)}}, limit=2)[1], True)
 
 
 class ServerTest(ServerCase):
