@@ -1168,6 +1168,16 @@ class PortableReporterTest(unittest.TestCase):
                 self.assertEqual(spec["cells"][0]["harness"], harness)
                 self.assertEqual(spec["reporter"]["harness"], harness)
 
+    def test_init_turns_any_folder_name_into_a_trial_id_that_loads(self):
+        name = "Vercel CLI and Supabase CLI - Set up a TODO app that allows creating and listing todo items."
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = _run_cli(["init", str(Path(tmp) / name), "--product", "Vercel CLI"])
+            self.assertEqual(code, 0)
+            tid = specmod.load(Path(tmp) / name / "trial.toml")["trial"]["id"]
+            self.assertTrue(specmod._ID.match(tid) and len(tid) <= 48 and not tid.endswith("."), tid)
+            code, _ = _run_cli(["init", str(Path(tmp) / "My CLI"), "--product", "x"])
+            self.assertEqual(specmod.load(Path(tmp) / "My CLI" / "trial.toml")["trial"]["id"], "my-cli")
+
     def test_default_reporter_follows_first_capable_cell_and_auth(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = specmod.load(_trial(tmp, '[auth.model]\ntype = "openai-api"\n',

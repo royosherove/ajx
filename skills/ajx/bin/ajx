@@ -21,6 +21,7 @@ Commands:
 
 import argparse
 import json
+import re
 import os
 import signal
 import sys
@@ -106,7 +107,7 @@ def cmd_init(args):
         raise specmod.SpecError(f"{reporter_name!r} has no restricted reporter adapter")
     d = Path(args.dir).resolve()
     d.mkdir(parents=True, exist_ok=True)
-    tid = args.id or d.name.lower().replace(" ", "-")
+    tid = args.id or _trial_id(d.name)
     trial, prompt = d / "trial.toml", d / "task-prompt.md"
     for path, text in ((trial, TRIAL_TEMPLATE.format(id=tid, product=args.product, harness=args.harness, reporter=reporter_name)),
                        (prompt, PROMPT_TEMPLATE.format(product=args.product))):
@@ -118,6 +119,20 @@ def cmd_init(args):
     print(f"Next: describe the task in task-prompt.md and add a [[verify]] check, then review and start it in the "
           f"browser with: ajx console {consolemod._short(d)}")
     return 0
+
+
+def _trial_id(name):
+    """The folder name lowercased with dashes for spaces when that is a valid trial id; otherwise a
+    slug of it (at most 48 characters, cut at a dash), so the scaffold always loads."""
+    tid = name.lower().replace(" ", "-")
+    if specmod._ID.match(tid):
+        return tid
+    slug = re.sub(r"[^a-z0-9._]+", "-", name.strip().lower()).lstrip("-._")
+    if len(slug) > 48:
+        slug = slug[:48]
+        cut = slug.rfind("-")
+        slug = slug[:cut] if cut >= 24 else slug
+    return slug.rstrip("-._") or "my-trial"
 
 
 def cmd_example(args):
