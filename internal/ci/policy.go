@@ -2,6 +2,7 @@ package ci
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sort"
 
@@ -50,15 +51,20 @@ func LoadPolicy(path string) (Policy, error) {
 	}
 	p.Path = path
 	p.Sha256 = util.Sha256Bytes(data)
-	if v, ok := raw["schema_version"]; ok && util.Int(v, -1) != 1 {
-		return p, fmt.Errorf("%s: schema_version must be 1", path)
+	if v, ok := raw["schema_version"]; ok {
+		if n, integer := v.(int64); !integer || n != 1 {
+			return p, fmt.Errorf("%s: schema_version must be the integer 1", path)
+		}
 	}
 	for k := range raw {
 		if k != "schema_version" && k != "acceptance" {
 			return p, fmt.Errorf("%s: unknown key %q (expected schema_version and [acceptance])", path, k)
 		}
 	}
-	acc, _ := raw["acceptance"].(map[string]any)
+	acc, isTable := raw["acceptance"].(map[string]any)
+	if _, present := raw["acceptance"]; present && !isTable {
+		return p, fmt.Errorf("%s: acceptance must be a [acceptance] table", path)
+	}
 	var unknown []string
 	for k := range acc {
 		if !policyKeys[k] {
@@ -71,17 +77,17 @@ func LoadPolicy(path string) (Policy, error) {
 	}
 	if v, ok := acc["min_success_rate"]; ok {
 		f, isNum := util.Num(util.Normalize(v))
-		if !isNum || f < 0 || f > 1 {
-			return p, fmt.Errorf("%s: min_success_rate must be a number between 0 and 1", path)
+		if !isNum || !validRate(f) {
+			return p, fmt.Errorf("%s: min_success_rate must be a finite number between 0 and 1", path)
 		}
 		p.MinSuccessRate = f
 	}
 	if v, ok := acc["min_repetitions"]; ok {
-		n := util.Int(util.Normalize(v), -1)
-		if n < 0 {
-			return p, fmt.Errorf("%s: min_repetitions must be a whole number >= 0", path)
+		n, integer := v.(int64)
+		if !integer || n < 0 || uint64(n) > uint64(^uint(0)>>1) {
+			return p, fmt.Errorf("%s: min_repetitions must be a representable integer >= 0", path)
 		}
-		p.MinRepetitions = n
+		p.MinRepetitions = int(n)
 	}
 	for key, dst := range map[string]*bool{"require_cleanup": &p.RequireCleanup, "require_reports": &p.RequireReports} {
 		if v, ok := acc[key]; ok {
@@ -106,6 +112,10 @@ func LoadPolicy(path string) (Policy, error) {
 		}
 	}
 	return p, nil
+}
+
+func validRate(rate float64) bool {
+	return !math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 && rate <= 1
 }
 
 // Doc is the policy as recorded in ci-result.json.

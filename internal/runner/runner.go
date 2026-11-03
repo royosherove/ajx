@@ -109,8 +109,7 @@ var TaskInputKeys = []string{"materials", "fixture_dir", "human", "identity_cmd"
 
 // TaskInputs is what attempts were checked and started with: the [[verify]]
 // checks, lifecycle commands and task conditions. Recorded in matrix-plan.json
-// so the console can keep a folder's attempts comparable (`ajx run` does not
-// enforce these).
+// so resuming cannot attribute old evidence to different checks or commands.
 func TaskInputs(spec M) M {
 	out := M{"verify": spec["verify"], "setup": spec["setup"], "preflight": spec["preflight"],
 		"teardown": spec["teardown"]}

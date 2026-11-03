@@ -11,9 +11,9 @@ cleanup, and output destination. Ask no questions when these are already
 established. If required information or authorization is missing, report it and
 stop before launching. Do not open a browser login or wait for a human in CI.
 
-## Execute with the existing CLI
+## Run and gate a trial with the native CLI
 
-Install a pinned AJX revision and the selected worker and reporter CLIs. Supply
+Install a [pinned AJX release](../../../docs/INSTALL.md) and the selected worker and reporter CLIs. Supply
 their model credentials and the task's separate credentials through the job's
 configuration. For container profiles, preload the pinned image and make the
 local Docker daemon available; remote provisioning is not implemented.
@@ -22,9 +22,10 @@ With a completed `usability/trial.toml`:
 
 ```sh
 set -eu
-ajx validate usability/trial.toml </dev/null
-ajx doctor usability/trial.toml </dev/null
-ajx run usability/trial.toml </dev/null
+ajx validate usability/trial.toml --json </dev/null
+ajx doctor usability/trial.toml --json </dev/null
+ajx ci usability/trial.toml --output "$AJX_RESULTS_DIR" \
+  --policy usability/acceptance.toml --timeout-grace 60 </dev/null
 ```
 
 No `--headless` or `--yes` flag is needed by AJX. The selected harness, auth
@@ -44,35 +45,41 @@ it contains the matrix, per-run reports, traces and cleanup results. If a task
 requires unavailable human input, retain the blocked outcome and describe the
 interaction as a gate in its report.
 
-## Execution status is not product acceptance
+An agent can create the trial with `ajx init --no-input --json`, supplying the
+folder, `--product`, `--task`, worker/reporter choices and repeatable `--check`
+flags. Use the returned next steps, then inspect validation and readiness.
+Missing prerequisites return errors; do not retry them as if the product failed.
+`ajx ci` also validates and checks readiness itself, so a pipeline with a
+prepared trial can invoke that command directly.
 
-`ajx run` returns the current `status` result. Stage errors and recorded cleanup
-failures produce a nonzero status. A failed task verification alone can still
-leave the command with exit code zero. Missing or interrupted work is also not
-covered by a complete acceptance policy today.
+## Interpret the result
 
-Evaluate the planned cells, `verify.json`, `run.json`, measurement coverage and
-cleanup evidence before deciding whether a product is acceptable. Do not use
-the CLI exit code or an empty asks list as the sole product quality gate.
-
-## Decide acceptance with `ajx ci` (Go CLI)
-
-The [Go CLI](../../../docs/GO-CLI.md) adds `ajx ci`. It runs the same validate,
-doctor and run steps without prompting, in a fresh output folder, then decides
-from the recorded task checks of every planned attempt:
-
-```sh
-ajx ci usability/trial.toml --output "$AJX_RESULTS_DIR" \
-  --policy usability/acceptance.toml --timeout-grace 60 </dev/null
-```
-
-It exits 0 only when every cell meets the policy's verified-success target
+`ajx ci` exits 0 only when every cell meets the policy's verified-success target
 (default: every attempt). A failed target exits 1; missing, interrupted or
 untrustworthy evidence, a doctor problem or a trial without checks exits 4
 (inconclusive); configuration errors exit 2, a locked output folder 3, and
 cancellation 130 after cleanup. It writes `ci-result.json` and `junit.xml` in the
-output folder, including when it fails.
+output folder. An output reuse or concurrency refusal preserves the existing
+result. Artifact-write failures return nonzero, and a failed provisional write
+prevents execution.
+
+Use `ajx status "$AJX_RESULTS_DIR" --json` to inspect a pipeline's output.
+For a trial using its configured output folder, `ajx console since <trial>` or
+`wait <trial>` exposes progress without opening a browser. Honor `trial_error`
+and `process.stale_lock`; neither indicates readiness to start.
+
+Resume an interrupted evaluation with the same inputs and `--allow-reuse`.
+AJX checks its recorded worker ownership before recovery. If ownership cannot
+be established, it preserves the workspace and reports unconfirmed cleanup.
+Do not remove state files or change checks to force reuse. Choose a fresh output
+folder for a changed product, prompt, check or lifecycle command.
+
+`ajx run` performs an investigation without an acceptance policy. Its exit code
+reflects stage and cleanup status; failed task verification can still exit 0.
+Use `ajx ci` for an automated product gate, and inspect the evidence and asks
+when deciding what to improve.
 
 `ajx improve`, baseline regression gates, cost and time limits in the policy, and
 bounded automatic improvement loops remain proposals. The Python CLI has no
-`ajx ci`; use the checks above with it.
+`ajx ci`. For Python plugins, use the Python launcher's `validate`, `doctor` and
+`run`, then evaluate planned coverage, verification and cleanup explicitly.

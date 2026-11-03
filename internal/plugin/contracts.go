@@ -307,6 +307,7 @@ type AuthBase struct {
 	RequiredEnv      []string
 	IsolatesConfig   bool
 	ModelEnv         []string
+	identityProbe    *CommandProbe
 }
 
 // NewAuthBase builds the defaults for conf (Python Auth.__init__).
@@ -419,14 +420,13 @@ func (a *AuthBase) IdentityOf(argv []string, env map[string]string) (string, boo
 	if env == nil {
 		env = util.ChildEnv(a.self().Env(), a.self().Unset())
 	}
-	out, err := util.Output(argv, 30*time.Second, env)
-	if err != nil && out == "" {
-		var ee interface{ ExitCode() int }
-		if !errors.As(err, &ee) {
-			return fmt.Sprintf("identity check failed: %T", err), true
-		}
+	p := probeCommand(argv, 30*time.Second, env)
+	a.identityProbe = &p
+	out := Excerpt(p.Output, 400)
+	if !p.OK {
+		return strings.TrimSpace("identity check failed (" + p.Failure() + "): " + out), true
 	}
-	return Excerpt(out, 400), true
+	return out, true
 }
 
 // ---------------------------------------------------------------- runner

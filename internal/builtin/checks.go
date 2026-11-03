@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -57,6 +59,55 @@ func checkInt(check M, key string, def int) int {
 	return util.Int(v, def)
 }
 
+// FileCount accepts integer strings and integral JSON numbers for compatibility,
+// but never coerces a boolean, fraction, zero or negative count into success.
+func FileCount(check M) (int, error) {
+	v, present := check["min_count"]
+	if !present {
+		return 1, nil
+	}
+	var text string
+	switch n := v.(type) {
+	case int:
+		text = strconv.Itoa(n)
+	case int64:
+		text = strconv.FormatInt(n, 10)
+	case float64:
+		if !math.IsNaN(n) && !math.IsInf(n, 0) && math.Trunc(n) == n {
+			text = strconv.FormatFloat(n, 'f', -1, 64)
+		}
+	case string:
+		text = strings.TrimSpace(n)
+	}
+	n, err := strconv.ParseInt(text, 10, strconv.IntSize)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("min_count must be a positive integer")
+	}
+	return int(n), nil
+}
+
+var checkEnvRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// ValidateHTTPURL checks syntax without resolving credentials or making a
+// request. A complete ${VAR} URL remains deferred until runtime.
+func ValidateHTTPURL(raw string) error {
+	if raw == "" || strings.TrimSpace(raw) != raw || strings.ContainsAny(raw, "\x00\r\n\t ") {
+		return fmt.Errorf("url must be a non-empty http:// or https:// URL with a host")
+	}
+	if checkEnvRef.FindString(raw) == raw {
+		return nil
+	}
+	candidate := checkEnvRef.ReplaceAllString(raw, "1")
+	if strings.HasPrefix(raw, "${") && strings.Contains(candidate, "://") {
+		candidate = "http" + candidate[strings.Index(candidate, "://"):]
+	}
+	u, err := url.Parse(candidate)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fmt.Errorf("url must be a non-empty http:// or https:// URL with a host")
+	}
+	return nil
+}
+
 // ShellCheck: run = "<shell command>"; expect_exit (default 0);
 // expect_stdout = "<regex>" (optional).
 func ShellCheck(check M, ctx *plugin.Ctx) (M, error) {
@@ -87,6 +138,10 @@ func ShellCheck(check M, ctx *plugin.Ctx) (M, error) {
 // workspace is opened without following worker-created links.
 func FileExistsCheck(check M, ctx *plugin.Ctx) (M, error) {
 	started := util.Now()
+	minCount, err := FileCount(check)
+	if err != nil {
+		return nil, err
+	}
 	workspace := ctx.Workspace
 	pattern, isStr := check["path"].(string)
 	if !isStr || pattern == "" || strings.Contains(pattern, "\x00") || strings.HasPrefix(pattern, "/") ||
@@ -113,7 +168,6 @@ func FileExistsCheck(check M, ctx *plugin.Ctx) (M, error) {
 			root.Close()
 		}
 	}
-	minCount := checkInt(check, "min_count", 1)
 	shown := hits
 	if len(shown) > 20 {
 		shown = shown[:20]

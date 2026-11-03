@@ -14,23 +14,26 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/royosherove/ajx/internal/environments"
 	"github.com/royosherove/ajx/internal/plugin"
 	"github.com/royosherove/ajx/internal/spec"
+	"github.com/royosherove/ajx/internal/util"
 )
 
 // Options are everything `ajx init` can write. Zero values keep the Python
 // scaffold's defaults and placeholders.
 type Options struct {
-	Dir, Product, ID     string
-	Harness, Reporter    string
-	Model, ReporterModel string
-	Task                 string
-	Materials            []string
-	Checks               []string // shell command, "file:GLOB", "http:URL", "shell:CMD"
-	Timeout, Repetitions int
-	Fixture              string // as given (relative to the working directory or absolute)
-	Environment, Image   string // "" | "local" | "container"
-	Force                bool
+	Dir, Product, ID           string
+	Harness, Reporter          string
+	Model, ReporterModel       string
+	Task                       string
+	Materials                  []string
+	Checks                     []string // shell command, "file:GLOB", "http:URL", "shell:CMD"
+	Timeout, Repetitions       int
+	TimeoutSet, RepetitionsSet bool   // distinguish omitted CLI flags from explicit zero
+	Fixture                    string // as given (relative to the working directory or absolute)
+	Environment, Image         string // "" | "local" | "container"
+	Force                      bool
 }
 
 // Check is one parsed success check.
@@ -52,13 +55,19 @@ func ParseCheck(raw string) (Check, error) {
 			return Check{}, fmt.Errorf("--check file:%s must be a glob beneath the workspace, without '..'", rest)
 		}
 		return Check{"file_exists", rest + " exists", rest}, nil
-	case ok && kind == "http" && (strings.HasPrefix(rest, "//") || strings.HasPrefix(rest, "http")):
+	case ok && kind == "http":
 		url := raw
 		if strings.HasPrefix(rest, "http") { // "http:https://..." form
 			url = rest
 		}
+		if err := spec.ValidateHTTPURL(url); err != nil {
+			return Check{}, fmt.Errorf("--check %s: %w", raw, err)
+		}
 		return Check{"http", "responds at " + url, url}, nil
-	case ok && kind == "https" && strings.HasPrefix(rest, "//"):
+	case ok && kind == "https":
+		if err := spec.ValidateHTTPURL(raw); err != nil {
+			return Check{}, fmt.Errorf("--check %s: %w", raw, err)
+		}
 		return Check{"http", "responds at " + raw, raw}, nil
 	case ok && kind == "shell":
 		raw = strings.TrimSpace(rest)
@@ -141,17 +150,28 @@ func Resolve(o *Options) error {
 		if strings.TrimSpace(o.Image) == "" {
 			return spec.Errorf("--environment container needs --image: an immutable local image id (sha256:...) or name@sha256:digest")
 		}
+		if _, err := environments.NormalizeProfiles(util.M{"container": util.M{
+			"backend": "container", "image": o.Image,
+		}}, "."); err != nil {
+			return spec.Errorf("%s", err)
+		}
 	default:
 		return spec.Errorf("unknown environment %s; choose local or container", pyRepr(o.Environment))
 	}
 	o.Product = strings.TrimSpace(o.Product)
+	if o.Product == "" {
+		return spec.Errorf("--product must not be empty")
+	}
+	if o.ID != "" && !trialSlug.MatchString(o.ID) {
+		return spec.Errorf("--id must be a short lowercase slug")
+	}
 	for _, m := range []string{o.Model, o.ReporterModel} {
 		if err := ModelName(m); err != nil {
 			return spec.Errorf("%s", err.Error())
 		}
 	}
 	o.Model, o.ReporterModel = strings.TrimSpace(o.Model), strings.TrimSpace(o.ReporterModel)
-	if o.Timeout < 0 || o.Repetitions < 0 {
+	if o.Timeout < 0 || o.Repetitions < 0 || (o.TimeoutSet && o.Timeout == 0) || (o.RepetitionsSet && o.Repetitions == 0) {
 		return spec.Errorf("--timeout and --repetitions must be positive")
 	}
 	return nil
@@ -312,12 +332,7 @@ func Render(o Options, trialDir string) (string, string, error) {
 		id = TrialID(trialDir)
 	}
 	product := o.Product
-	quote := func(s string) string {
-		if strings.ContainsAny(s, "\"\\\n\r\t") {
-			return tomlString(s)
-		}
-		return `"` + s + `"`
-	}
+	quote := tomlString
 	t := strings.NewReplacer("\"{id}\"", quote(id), "\"{product}\"", quote(product),
 		"\"{harness}-default\"", quote(o.Harness+"-default"), "\"{harness}\"", quote(o.Harness),
 		"\"{reporter}\"", quote(o.Reporter)).Replace(trialTemplate)
@@ -443,10 +458,20 @@ type Result struct {
 	ID                         string
 	Valid                      bool
 	Problem                    string // why the written trial does not load, when !Valid
+	Harness, Reporter          string // effective values loaded from trial.toml
+	Harnesses                  []string
+	TaskSet                    bool
+	VerifyChecks               int
 }
 
 // Write renders and writes the files (existing files are kept unless Force).
 func Write(o Options) (*Result, error) {
+	if err := Resolve(&o); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(o.Dir) == "" {
+		return nil, spec.Errorf("trial directory must not be empty")
+	}
 	dir, err := ResolvePath(o.Dir)
 	if err != nil {
 		return nil, err
@@ -458,11 +483,7 @@ func Write(o Options) (*Result, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	res := &Result{Dir: dir, TrialFile: filepath.Join(dir, "trial.toml"), PromptFile: filepath.Join(dir, "task-prompt.md"),
-		ID: o.ID}
-	if res.ID == "" {
-		res.ID = TrialID(dir)
-	}
+	res := &Result{Dir: dir, TrialFile: filepath.Join(dir, "trial.toml"), PromptFile: filepath.Join(dir, "task-prompt.md")}
 	for _, f := range []struct{ path, text string }{{res.TrialFile, trialText}, {res.PromptFile, promptText}} {
 		if _, err := os.Stat(f.path); err == nil && !o.Force {
 			res.Kept = append(res.Kept, f.path)
@@ -473,10 +494,24 @@ func Write(o Options) (*Result, error) {
 		}
 		res.Written = append(res.Written, f.path)
 	}
-	if _, err := spec.Load(res.TrialFile, spec.LoadOpts{SkipReadiness: true}); err != nil {
+	if sp, err := spec.Load(res.TrialFile, spec.LoadOpts{SkipReadiness: true}); err != nil {
 		res.Problem = err.Error()
 	} else {
 		res.Valid = true
+		res.ID = util.S(util.Get(sp, "trial", "id"))
+		res.Reporter = util.S(util.Get(sp, "reporter", "harness"))
+		for _, c := range util.Maps(sp["cells"]) {
+			h := util.S(c["harness"])
+			if !util.Contains(res.Harnesses, h) {
+				res.Harnesses = append(res.Harnesses, h)
+			}
+		}
+		if len(res.Harnesses) == 1 {
+			res.Harness = res.Harnesses[0]
+		}
+		res.VerifyChecks = len(util.List(sp["verify"]))
+		placeholder := renderPrompt(Options{Product: util.S(util.Get(sp, "trial", "product"))})
+		res.TaskSet = strings.TrimSpace(util.S(util.Get(sp, "task", "prompt_text"))) != strings.TrimSpace(placeholder)
 	}
 	return res, nil
 }

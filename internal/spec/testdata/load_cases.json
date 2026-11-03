@@ -1102,7 +1102,7 @@
   "name": "verify-http-env",
   "files": {
    "task-prompt.md": "do the thing\n",
-   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"x\"\nlocation = \"environment\"\n"
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"http://example.invalid/\"\nlocation = \"environment\"\n"
   },
   "trial": "trial.toml",
   "opts": {},
@@ -1912,13 +1912,13 @@
   "name": "verify-name-from-type",
   "files": {
    "task-prompt.md": "do the thing\n",
-   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"x\"\n"
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"http://example.invalid/\"\n"
   },
   "trial": "trial.toml",
   "opts": {},
   "spec": {
    "path": "<TMP>/trial.toml",
-   "sha256": "67761d638cc46ef3baa8c46ae6e90095d89174655c5b37efd1e5725b0e03ea45",
+   "sha256": "be19788ec1693742cb458f0c1054bf20e30add7de30c8de01eb51d87cf7ff7c0",
    "trial": {
     "id": "t1",
     "product": "p",
@@ -1950,7 +1950,7 @@
    "verify": [
     {
      "type": "http",
-     "url": "x",
+     "url": "http://example.invalid/",
      "timeout": 600,
      "allow_auth_errors": false,
      "name": "http",

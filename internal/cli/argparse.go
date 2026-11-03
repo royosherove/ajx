@@ -231,10 +231,10 @@ func (p *Parser) Parse(argv []string) (*Namespace, error) {
 	ns := &Namespace{Values: map[string]any{}, Leaf: p}
 	extras, err := p.parseKnown(argv, ns)
 	if err != nil {
-		return nil, err
+		return ns, err
 	}
 	if len(extras) > 0 {
-		return nil, &UsageError{p, "unrecognized arguments: " + strings.Join(extras, " ")}
+		return ns, &UsageError{p, "unrecognized arguments: " + strings.Join(extras, " ")}
 	}
 	return ns, nil
 }

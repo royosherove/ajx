@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/royosherove/ajx/internal/ci"
+	"github.com/royosherove/ajx/internal/runner"
 	"github.com/royosherove/ajx/internal/util"
 )
 
@@ -39,7 +40,7 @@ func cmdCI(ns *Namespace) (int, error) {
 			code, lines, _, err := Doctor(trial, true)
 			return code, lines, err
 		},
-		Run: runMatrix,
+		Run: runner.RunMatrixLocked,
 	})
 	grace := ns.IntPtr("timeout_grace")
 
@@ -52,6 +53,7 @@ func cmdCI(ns *Namespace) (int, error) {
 	done := make(chan struct{})
 	go func() {
 		first := true
+		var timer *time.Timer
 		for {
 			select {
 			case sig := <-ch:
@@ -61,8 +63,16 @@ func cmdCI(ns *Namespace) (int, error) {
 				cancel()
 				if first && grace != nil && *grace >= 0 {
 					g := *grace
-					time.AfterFunc(time.Duration(g)*time.Second, func() {
+					timer = time.AfterFunc(time.Duration(g)*time.Second, func() {
+						select {
+						case <-done:
+							return
+						default:
+						}
 						code := sess.Abort(g)
+						if code != ci.ExitInterrupted {
+							return
+						}
 						fmt.Fprintln(Stderr, ci.Summary(sess.Result()))
 						if p, _ := sess.Paths(); p != "" {
 							fmt.Fprintln(Stderr, "ci: result "+p)
@@ -72,6 +82,9 @@ func cmdCI(ns *Namespace) (int, error) {
 				}
 				first = false
 			case <-done:
+				if timer != nil {
+					timer.Stop()
+				}
 				return
 			}
 		}
@@ -95,7 +108,7 @@ func cmdCI(ns *Namespace) (int, error) {
 	if resultPath != "" {
 		say("ci: result " + resultPath)
 	} else {
-		say("ci: result not written (the output folder is unknown; pass --output or --result)")
+		say("ci: result not written (output unavailable, invocation refused, or artifact write failed; see the reasons above)")
 	}
 	if junitPath != "" {
 		say("ci: junit  " + junitPath)

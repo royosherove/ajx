@@ -55,7 +55,7 @@ column names, and every value. Check the actual CSV after the worker stops.
 Materials: jq's built-in help only.
 
 Start with one attempt using my current agent CLI if supported.
-Check Python, the worker and reporter CLIs, authentication, and jq first.
+Check AJX, the worker and reporter CLIs, authentication, and jq first.
 Use a disposable local workspace; no cloud resources or system installations.
 Propose a short time limit and explain any model costs and access limits.
 Show me the task, success check, environment, and run plan before starting.
@@ -100,7 +100,7 @@ After I choose the change, prepare a fresh follow-up trial with the same
 task and comparable conditions. Show what will stay fixed and what changes.</pre></div>
 <div class="aside"><h3>Use a new output directory</h3><p>The old directory resumes its saved attempt. A changed product, task, or profile needs a fresh evaluation. Keep the task and reporter comparable; label intentional differences.</p></div>
 <p>Add other harnesses, models, skill selections, or repetitions when they answer a question your team has. Each extra attempt may add costs.</p>
-<details><summary>Can this run from CI?</summary><p>Yes, a prepared, authorized trial can run without an interview. Configure tools and credentials before the job. Full product acceptance gating is still proposed: a task verification failure can currently return exit code zero. <a href="../skills/ajx/references/headless.md">Read the headless guide.</a></p></details>
+<details><summary>Can this run from CI?</summary><p>Yes. Configure the worker tools and credentials, then invoke <code>ajx ci</code> with a prepared trial and acceptance policy. It runs without an interview and writes a passed, failed, or inconclusive decision, plus JSON and JUnit results. Use a fresh output folder for each product revision. <a href="../skills/ajx/references/headless.md">Read the headless guide.</a></p></details>
 <details><summary>Does AJX automatically fix the project?</summary><p>No. Your team chooses changes and requests follow-up trials. The built-in automatic improvement loop is proposed. Fewer asks alone do not establish release readiness.</p></details>
 <details><summary>What if setup or cleanup fails?</summary><p>Resolve the named prerequisite before launching. If cleanup fails, treat it as unfinished and use the recovery guidance. Preserve evidence and never silently replay the task. <a href="GETTING-STARTED.md#if-you-get-stuck">Find the next step.</a></p></details>
 </div><figure class="diagram"><img src="images/improvement.svg" width="640" height="569" alt="Inspect an ask, make one useful change, run a fresh trial, compare outcomes and coverage, and repeat with evidence."></figure></div>

@@ -1003,7 +1003,7 @@ func processView(trial string, entries []M, job M, out string, ready M, parallel
 		src = lastJob
 	}
 	logName := util.MapOr(src)["log"]
-	view := M{"state": "idle", "stale_lock": lock != nil && !util.Truthy(lock["alive"]), "parallel": parallel,
+	view := M{"state": "idle", "stale_lock": lock != nil && util.Truthy(lock["same_host"]) && !util.Truthy(lock["alive"]), "parallel": parallel,
 		"log": logName, "log_tail": logTail(trial, logName, 40)}
 	if job != nil {
 		stop := last(entries, "stop_requested")
@@ -1178,7 +1178,6 @@ func Snapshot(trial string, o SnapshotOpts) (M, error) {
 func snapshot(trial string, feedLimit int, skip map[int]bool) (M, error) {
 	sp, loadErr := load(trial)
 	out := outputDir(trial, sp)
-	journalProgress(trial, out, sp)
 	entries, _ := readEntries(trial, 0)
 	if reconcile(trial, entries, skip) {
 		entries, _ = readEntries(trial, 0)
@@ -1191,6 +1190,11 @@ func snapshot(trial string, feedLimit int, skip map[int]bool) (M, error) {
 	ready := readiness(trial, sha)
 	job := activeJob(trial, entries, out)
 	runs := runViews(sp, out, feedLimit)
+	// Capture milestones after the run records: a fast worker may finish
+	// while this snapshot is being assembled. Its completed report must not
+	// be shown with a journal cursor that predates that report.
+	journalProgress(trial, out, sp)
+	entries, _ = readEntries(trial, 0)
 	output := outputView(sp, out, runs)
 	parallel := util.Int(util.Get(sp, "trial", "parallel"), 1)
 	if parallel == 0 {

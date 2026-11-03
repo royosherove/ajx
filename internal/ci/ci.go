@@ -20,6 +20,7 @@ import (
 
 	ajx "github.com/royosherove/ajx"
 	"github.com/royosherove/ajx/internal/console"
+	"github.com/royosherove/ajx/internal/render"
 	"github.com/royosherove/ajx/internal/runner"
 	"github.com/royosherove/ajx/internal/spec"
 	"github.com/royosherove/ajx/internal/util"
@@ -76,20 +77,23 @@ type Options struct {
 type Hooks struct {
 	Validate func(trial string, cells []string) (lines []string, doc util.M, err error)
 	Doctor   func(trial string) (code int, lines []string, err error)
-	Run      func(ctx context.Context, sp util.M, o runner.MatrixOpts) (util.M, error)
+	Run      func(ctx context.Context, sp util.M, o runner.MatrixOpts, lock *runner.MatrixLock) (util.M, error)
 }
 
 // Session is one `ajx ci` evaluation.
 type Session struct {
-	o      Options
-	h      Hooks
-	mu     sync.Mutex
-	result util.M
-	paths  struct{ result, junit, out string }
-	sp     util.M
-	policy Policy
-	plan   []spec.PlanItem
-	done   bool
+	o              Options
+	h              Hooks
+	mu             sync.Mutex
+	result         util.M
+	paths          struct{ result, junit, out string }
+	written        struct{ result, junit string }
+	lock           *runner.MatrixLock
+	suppressWrites bool
+	sp             util.M
+	policy         Policy
+	plan           []spec.PlanItem
+	done           bool
 }
 
 // New creates a session.
@@ -100,7 +104,7 @@ func New(o Options, h Hooks) *Session {
 	if o.Say == nil {
 		o.Say = func(string) {}
 	}
-	s := &Session{o: o, h: h}
+	s := &Session{o: o, h: h, suppressWrites: true}
 	s.result = util.M{
 		"schema_version": SchemaVersion,
 		"tool":           util.M{"name": "ajx", "implementation": "go", "version": ajx.Version},
@@ -125,11 +129,16 @@ func reason(code, sev, msg string, extra util.M) util.M {
 
 // Run performs the evaluation and returns the exit code.
 func (s *Session) Run(ctx context.Context) int {
-	code := s.run(ctx)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.done = true
-	return code
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.done = true
+		if err := s.lock.Close(); err != nil {
+			s.o.Say("ci: cannot release output lock: " + err.Error())
+		}
+		s.lock = nil
+	}()
+	return s.run(ctx)
 }
 
 func (s *Session) finish(decision string, code int, reasons ...util.M) int {
@@ -146,8 +155,14 @@ func (s *Session) finish(decision string, code int, reasons ...util.M) int {
 	}
 	s.result["reasons"] = list
 	s.result["finished_at"] = util.Now()
-	s.writeLocked()
-	return code
+	// Early invalid input may only have an explicit standalone result path.
+	// Exclusive publication in writeLocked preserves any prior file there.
+	if s.paths.out == "" && s.lock == nil {
+		s.suppressWrites = false
+	}
+	s.writeLocked(ExitInconclusive)
+	s.done = true
+	return util.Int(s.result["exit_code"], code)
 }
 
 // Abort records an interruption that outlived the grace period and writes
@@ -165,23 +180,8 @@ func (s *Session) Abort(graceSeconds int) int {
 		reason("interrupted", SevInconclusive, fmt.Sprintf("cancelled; cleanup had not finished %ds after the signal, so ajx ci exited without waiting", graceSeconds), nil),
 		reason("cleanup_not_confirmed", SevInconclusive, "cleanup was still running when ajx ci exited; check the output folder and rerun the same ajx command to finish it", nil))
 	s.result["finished_at"] = util.Now()
-	s.writeLocked()
+	s.writeLocked(ExitInterrupted)
 	return ExitInterrupted
-}
-
-func (s *Session) writeLocked() {
-	if s.paths.result != "" {
-		if err := util.WriteJSON(s.paths.result, s.result); err != nil {
-			s.o.Say("ci: cannot write " + s.paths.result + ": " + err.Error())
-		}
-	}
-	if s.paths.junit != "" {
-		if err := os.MkdirAll(filepath.Dir(s.paths.junit), 0o755); err == nil {
-			if err := util.WriteFileAtomic(s.paths.junit, []byte(JUnit(s.result)), 0o644); err != nil {
-				s.o.Say("ci: cannot write " + s.paths.junit + ": " + err.Error())
-			}
-		}
-	}
 }
 
 func abs(p string) string {
@@ -205,23 +205,21 @@ func (s *Session) Result() util.M {
 func (s *Session) Paths() (result, junit string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.paths.result, s.paths.junit
+	return s.written.result, s.written.junit
 }
 
 func (s *Session) set(key string, v any) {
 	s.mu.Lock()
-	s.result[key] = v
+	if !s.done {
+		s.result[key] = v
+	}
 	s.mu.Unlock()
-}
-
-func hasAttempts(out string) bool {
-	matches, _ := filepath.Glob(filepath.Join(out, "runs", "*", "state.json"))
-	return len(matches) > 0
 }
 
 func (s *Session) run(ctx context.Context) int {
 	o := s.o
 	// Where the result goes is known before anything can fail.
+	s.mu.Lock()
 	s.paths.result, s.paths.junit = abs(o.Result), abs(o.JUnit)
 	if o.Output != "" {
 		if s.paths.result == "" {
@@ -231,13 +229,19 @@ func (s *Session) run(ctx context.Context) int {
 			s.paths.junit = filepath.Join(abs(o.Output), "junit.xml")
 		}
 	}
+	s.mu.Unlock()
+	if o.Output != "" {
+		if err := s.claimOutput(abs(o.Output)); err != nil {
+			return s.refuseOutput(err)
+		}
+	}
 	pol, err := LoadPolicy(o.Policy)
 	if err != nil {
 		return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, "acceptance policy: "+err.Error(), nil))
 	}
 	if o.MinSuccessRate != nil {
-		if *o.MinSuccessRate < 0 || *o.MinSuccessRate > 1 {
-			return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, "--min-success-rate must be between 0 and 1", nil))
+		if !validRate(*o.MinSuccessRate) {
+			return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, "--min-success-rate must be a finite number between 0 and 1", nil))
 		}
 		pol.MinSuccessRate = *o.MinSuccessRate
 	}
@@ -266,8 +270,8 @@ func (s *Session) run(ctx context.Context) int {
 		out = util.S(util.Get(sp, "trial", "output_dir"))
 	}
 	util.MapOr(sp["trial"])["output_dir"] = out
-	s.paths.out = out
 	s.mu.Lock()
+	s.paths.out = out
 	if s.paths.result == "" {
 		s.paths.result = filepath.Join(out, "ci-result.json")
 	}
@@ -275,6 +279,11 @@ func (s *Session) run(ctx context.Context) int {
 		s.paths.junit = filepath.Join(out, "junit.xml")
 	}
 	s.mu.Unlock()
+	if s.lock == nil {
+		if err := s.claimOutput(out); err != nil {
+			return s.refuseOutput(err)
+		}
+	}
 	plan, err := spec.RunPlan(sp, o.Cells)
 	if err != nil {
 		return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, err.Error(), nil))
@@ -301,18 +310,33 @@ func (s *Session) run(ctx context.Context) int {
 				fmt.Sprintf("the policy requires cell %s, which this plan does not run", c), util.M{"cell": c}))
 		}
 	}
-	if hasAttempts(out) && !o.AllowReuse {
-		return s.finish(Inconclusive, ExitInvalid, reason("output_not_fresh", SevInconclusive,
-			fmt.Sprintf("%s already holds attempts; pass a fresh --output for a new evaluation, or --allow-reuse to resume them", out),
-			util.M{"output_dir": out}))
-	}
-	if err := os.MkdirAll(out, 0o755); err != nil {
+	if err := s.checkArtifactPaths(); err != nil {
+		s.mu.Lock()
+		s.suppressWrites = true
+		s.mu.Unlock()
 		return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, err.Error(), nil))
 	}
+	matrixOpts := runner.MatrixOpts{OnlyCells: o.Cells, Synthesize: !o.NoSynthesis, Log: o.Log}
+	// Refuse incompatible or damaged saved attempts before publishing anything.
+	// The same held lock covers this read-only check, execution and final writes.
+	if err := runner.ValidateMatrixLocked(sp, matrixOpts, s.lock); err != nil {
+		return s.refuseOutput(err)
+	}
 	s.mu.Lock()
+	if s.done {
+		code := util.Int(s.result["exit_code"], ExitInterrupted)
+		s.mu.Unlock()
+		return code
+	}
+	s.suppressWrites = false
 	s.result["reasons"] = []any{reason("incomplete", SevInconclusive,
 		"the evaluation has not finished; this file is replaced when it does", nil)}
-	s.writeLocked()
+	if err := s.writeLocked(ExitInvalid); err != nil {
+		s.done = true
+		code := util.Int(s.result["exit_code"], ExitInvalid)
+		s.mu.Unlock()
+		return code
+	}
 	s.result["reasons"] = []any{}
 	s.mu.Unlock()
 	s.o.Say(fmt.Sprintf("ci: validate ok (%d run(s) planned, plan %s)", len(plan), util.Clip(planSha, 12)))
@@ -322,7 +346,9 @@ func (s *Session) run(ctx context.Context) int {
 	}
 	code, dlines, err := s.h.Doctor(o.Trial)
 	doctorFile := filepath.Join(out, "ci-doctor.txt")
-	_ = util.WriteFileAtomic(doctorFile, []byte(strings.Join(dlines, "\n")+"\n"), 0o644)
+	if err := writeArtifact(doctorFile, []byte(strings.Join(dlines, "\n")+"\n"), true); err != nil {
+		return s.finish(Inconclusive, ExitInconclusive, reason("artifact_write_error", SevInconclusive, err.Error(), nil))
+	}
 	s.set("doctor", util.M{"ready": err == nil && code == 0, "exit_code": code, "lines": strs(dlines), "file": doctorFile})
 	if err != nil {
 		return s.finish(Inconclusive, ExitInvalid, reason("invalid_config", SevInconclusive, "doctor: "+err.Error(), nil))
@@ -338,7 +364,7 @@ func (s *Session) run(ctx context.Context) int {
 		s.o.Say("ci: doctor ready")
 	}
 
-	_, runErr := s.h.Run(ctx, sp, runner.MatrixOpts{OnlyCells: o.Cells, Synthesize: !o.NoSynthesis, Log: o.Log})
+	_, runErr := s.h.Run(ctx, sp, matrixOpts, s.lock)
 	var extra []util.M
 	exitOverride := -1
 	if runErr != nil {
@@ -399,20 +425,21 @@ func nilIfEmpty(s string) any {
 
 // RunRecord is one planned attempt as recorded on disk.
 type RunRecord struct {
-	ID, Cell     string
-	Rep          int
-	Dir          string
-	Outcome      string // passed | failed | error | missing | interrupted | untrusted | not_run
-	Verify       util.M
-	StageErrors  []util.M
-	Stages       util.M
-	Cleanup      string
-	CleanupOK    bool
-	ReportDone   bool
-	Seconds      any
-	Harness      any
-	Model        any
-	VerifyReason string
+	ID, Cell       string
+	Rep            int
+	Dir            string
+	Outcome        string // passed | failed | error | missing | interrupted | untrusted | not_run
+	Verify         util.M
+	StageErrors    []util.M
+	Stages         util.M
+	Cleanup        string
+	CleanupOK      bool
+	ReportDone     bool
+	ReportProblems []string
+	Seconds        any
+	Harness        any
+	Model          any
+	VerifyReason   string
 }
 
 func readRecord(sp util.M, out string, it spec.PlanItem) RunRecord {
@@ -423,7 +450,9 @@ func readRecord(sp util.M, out string, it spec.PlanItem) RunRecord {
 	stPath := filepath.Join(dir, "state.json")
 	if _, err := os.Stat(stPath); err != nil {
 		r.Outcome = "missing"
-		r.Cleanup, r.CleanupOK = "not run", true
+		r.Cleanup = "not run"
+		_, dirErr := os.Stat(dir)
+		r.CleanupOK = os.IsNotExist(dirErr)
 		return r
 	}
 	st := util.ReadMap(stPath)
@@ -454,15 +483,32 @@ func readRecord(sp util.M, out string, it spec.PlanItem) RunRecord {
 	default:
 		r.Cleanup = "not run"
 	}
-	executeStarted := util.Truthy(stages["execute"])
-	r.CleanupOK = r.Cleanup == "ok" || r.Cleanup == "none defined" || (r.Cleanup == "not run" && !executeStarted)
-	r.ReportDone = util.S(util.Get(stages, "render", "status")) == "done" && util.S(util.Get(stages, "extract", "status")) == "done"
+	// Preparation can create resources before the worker starts. A missing
+	// teardown is only harmless when no preparation or execution was attempted.
+	attemptStarted := util.Truthy(stages["prepare"]) || util.Truthy(stages["execute"]) ||
+		util.Truthy(st["paths"]) || util.Truthy(st["setup_started"]) || fileExists(filepath.Join(dir, "setup.json"))
+	r.CleanupOK = r.Cleanup == "ok" || r.Cleanup == "none defined" || (r.Cleanup == "not run" && !attemptStarted)
+	if worker, present := st["worker_cleanup"]; present && !util.Truthy(util.Get(worker, "confirmed")) {
+		r.CleanupOK = false
+		r.Cleanup += "; worker termination not confirmed"
+	}
+	if util.Truthy(st["environment"]) && !util.Truthy(util.Get(st, "environment_cleanup", "confirmed")) {
+		r.CleanupOK = false
+		r.Cleanup += "; environment release not confirmed"
+	}
+	r.ReportProblems = reportProblems(dir, st)
+	r.ReportDone = len(r.ReportProblems) == 0
 	verify := util.ReadMap(filepath.Join(dir, "verify.json"))
 	r.Verify = verify
 	outcome := util.S(verify["outcome"])
 	switch {
-	case outcome == "succeeded" && len(util.List(verify["checks_with_auth_errors"])) > 0:
+	case verificationHasAuthErrors(verify):
 		r.Outcome = "untrusted"
+	case util.S(util.Get(stages, "execute", "status")) == "interrupted" ||
+		util.Truthy(util.Get(st, "execute", "interrupted")) || util.S(util.Get(st, "execute", "stop_reason")) == "interrupted":
+		r.Outcome = "interrupted"
+	case util.S(util.Get(stages, "prepare", "status")) == "error" || util.S(util.Get(stages, "execute", "status")) == "error":
+		r.Outcome = "error"
 	case outcome == "succeeded":
 		r.Outcome = "passed"
 	case outcome == "failed" || outcome == "partial":
@@ -475,6 +521,41 @@ func readRecord(sp util.M, out string, it spec.PlanItem) RunRecord {
 		r.Outcome = "error"
 	}
 	return r
+}
+
+func verificationHasAuthErrors(verify util.M) bool {
+	if len(util.List(verify["checks_with_auth_errors"])) > 0 {
+		return true
+	}
+	for _, check := range util.Maps(verify["checks"]) {
+		if len(util.List(check["auth_errors"])) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func reportProblems(dir string, state util.M) []string {
+	var problems []string
+	for _, stage := range []string{"extract", "render"} {
+		if util.S(util.Get(state, "stages", stage, "status")) != "done" {
+			problems = append(problems, stage+" did not finish")
+		}
+	}
+	for _, name := range []string{"report.html", "pretty-journey.html", "journey.md", "asks.md"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+			problems = append(problems, name+" is missing, empty or unreadable")
+		}
+	}
+	run, err := util.ReadMapStrict(filepath.Join(dir, "run.json"))
+	if err != nil || run["review_status"] != "ready" {
+		problems = append(problems, "run.json does not record a ready review")
+	}
+	if render.ReviewStatus(dir, state) != "ready" {
+		problems = append(problems, "journey or extraction is incomplete")
+	}
+	return problems
 }
 
 func (r RunRecord) doc() util.M {
@@ -500,7 +581,8 @@ func (r RunRecord) doc() util.M {
 			"total": r.Verify["total"], "checks": checks,
 			"checks_with_auth_errors": util.Or(r.Verify["checks_with_auth_errors"], []any{})},
 		"cleanup": util.M{"status": r.Cleanup, "confirmed": r.CleanupOK}, "report_complete": r.ReportDone,
-		"artifacts": art}
+		"report_problems": strs(r.ReportProblems),
+		"artifacts":       art}
 }
 
 func fileExists(p string) bool {
@@ -512,7 +594,7 @@ var unknownReason = map[string][2]string{
 	"missing":     {"run_missing", "no attempt was recorded for this planned run"},
 	"error":       {"stage_error", "the attempt stopped with a stage error before verification produced an outcome"},
 	"interrupted": {"interrupted", "the attempt was interrupted before verification produced an outcome"},
-	"untrusted":   {"verification_untrusted", "the checks passed but printed credential or permission errors"},
+	"untrusted":   {"verification_untrusted", "the checks printed credential or permission errors; their outcome is not trustworthy"},
 	"not_run":     {"verification_missing", "no verification checks ran for this attempt"},
 }
 
@@ -574,7 +656,7 @@ func (s *Session) evaluate() (string, int, []util.M) {
 				sev = SevInconclusive
 			}
 			reasons = append(reasons, reason("reporting_incomplete", sev,
-				r.ID+": the report was not completed (extract or render did not finish)", util.M{"run_id": r.ID, "cell": r.Cell}))
+				r.ID+": the report was not completed ("+strings.Join(r.ReportProblems, "; ")+")", util.M{"run_id": r.ID, "cell": r.Cell}))
 		}
 	}
 	if len(util.List(s.sp["verify"])) == 0 {

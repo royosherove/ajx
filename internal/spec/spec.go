@@ -79,6 +79,10 @@ type DecodeError struct {
 
 func (e *DecodeError) Error() string { return e.Msg }
 
+// Preserve the concrete compatibility error and its parser location, while
+// exposing all malformed input to callers as a trial-file error (exit 2).
+func (e *DecodeError) Unwrap() error { return &Error{Msg: e.Msg} }
+
 // TypeName is the Python exception class name.
 func (e *DecodeError) TypeName() string { return "TOMLDecodeError" }
 
@@ -88,6 +92,8 @@ func (e *DecodeError) TypeName() string { return "TOMLDecodeError" }
 type PyError struct{ Type, Msg string }
 
 func (e *PyError) Error() string { return e.Msg }
+
+func (e *PyError) Unwrap() error { return &Error{Msg: e.Msg} }
 
 // TypeName is the Python exception class name.
 func (e *PyError) TypeName() string { return e.Type }
@@ -380,10 +386,10 @@ func Load(path string, o LoadOpts) (M, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, Errorf("cannot read trial file %s: %v", path, err)
 	}
 	if !utf8.Valid(data) {
-		return nil, fmt.Errorf("UnicodeDecodeError: %s is not valid UTF-8", path)
+		return nil, Errorf("trial file %s is not valid UTF-8", path)
 	}
 	raw, err := DecodeTOML(string(data))
 	if err != nil {
@@ -405,6 +411,9 @@ func Load(path string, o LoadOpts) (M, error) {
 	}
 	if err := need(util.Truthy(trial["product"]), "trial.product is required"); err != nil {
 		return nil, err
+	}
+	if s, ok := trial["product"].(string); ok && strings.TrimSpace(s) == "" {
+		return nil, Errorf("trial.product is required")
 	}
 	for _, d := range []struct {
 		k string
@@ -517,7 +526,7 @@ func Load(path string, o LoadOpts) (M, error) {
 	}
 	promptBytes, err := os.ReadFile(promptPath)
 	if err != nil {
-		return nil, err
+		return nil, Errorf("cannot read task prompt %s: %v", promptPath, err)
 	}
 	if err := need(len(stripBytes(promptBytes)) > 0, "task prompt is empty"); err != nil {
 		return nil, err
@@ -529,7 +538,7 @@ func Load(path string, o LoadOpts) (M, error) {
 		}
 	}
 	if !utf8.Valid(promptBytes) {
-		return nil, fmt.Errorf("UnicodeDecodeError: %s is not valid UTF-8", promptPath)
+		return nil, Errorf("task prompt %s is not valid UTF-8", promptPath)
 	}
 	task["prompt_path"] = promptPath
 	task["prompt_sha256"] = promptSha
@@ -594,6 +603,9 @@ func Load(path string, o LoadOpts) (M, error) {
 		if err := need(isList && util.Truthy(conf["execute"]), "adapters.%s.execute must be a non-empty argv list", name); err != nil {
 			return nil, err
 		}
+		if err := validateAdapterFields(conf, "adapters."+name); err != nil {
+			return nil, err
+		}
 	}
 	authProfiles := M{}
 	if util.Truthy(raw["auth"]) {
@@ -613,6 +625,9 @@ func Load(path string, o LoadOpts) (M, error) {
 	for _, name := range util.SortedKeys(authProfiles) {
 		t, _ := authProfiles[name].(M)["type"].(string)
 		if err := need(util.Contains(authNames, t), "auth.%s.type must be one of %s", name, ReprList(authNames)); err != nil {
+			return nil, err
+		}
+		if err := validateAuthFields(authProfiles[name].(M), "auth."+name); err != nil {
 			return nil, err
 		}
 	}
@@ -670,6 +685,12 @@ func Load(path string, o LoadOpts) (M, error) {
 	}
 	for _, k := range []string{"harness", "model", "effort", "auth"} {
 		setDefault(reporter, k, nil)
+	}
+	if err := validateStrings(reporter, "reporter", "model", "effort"); err != nil {
+		return nil, err
+	}
+	if err := validateStringList(task, "materials", "task"); err != nil {
+		return nil, err
 	}
 
 	commands := map[string][]any{}
@@ -732,6 +753,13 @@ func Load(path string, o LoadOpts) (M, error) {
 			{"runner", nil}, {"environment", trial["environment"]}, {"agent_configuration", trial["agent_configuration"]},
 			{"shell_startup", trial["shell_startup"]}} {
 			setDefault(cell, d.k, d.v)
+		}
+		field := fmt.Sprintf("cells[%d]", i)
+		if err := validateStrings(cell, field, "model", "effort"); err != nil {
+			return nil, err
+		}
+		if err := validateEnv(cell, "env", field); err != nil {
+			return nil, err
 		}
 		if err := need(cell["config"] == "clean" || cell["config"] == "user", "cells[%d].config must be clean|user", i); err != nil {
 			return nil, err
@@ -900,6 +928,9 @@ func loadCommands(raw M, key string) ([]any, error) {
 			return nil, Errorf("%s[%d].timeout must be an integer", key, i)
 		}
 		entry["timeout"] = t
+		if t < 1 {
+			return nil, Errorf("%s[%d].timeout must be >= 1 second", key, i)
+		}
 		if key != "verify" {
 			if err := need(entry["type"] == "shell", "%s[%d].type must be shell (only [[verify]] has other check types)", key, i); err != nil {
 				return nil, err
@@ -907,6 +938,11 @@ func loadCommands(raw M, key string) ([]any, error) {
 		}
 		if entry["type"] == "shell" {
 			if err := need(util.Truthy(m["run"]), "%s[%d].run is required for type=shell", key, i); err != nil {
+				return nil, err
+			}
+			run, isString := m["run"].(string)
+			if err := need(isString && strings.TrimSpace(run) != "" && !strings.ContainsRune(run, '\x00'),
+				"%s[%d].run must be a non-empty command string", key, i); err != nil {
 				return nil, err
 			}
 		}
@@ -929,7 +965,19 @@ func loadCommands(raw M, key string) ([]any, error) {
 				if err := need(valid, "verify[%d].path must be a non-empty glob beneath the workspace, without '..'", i); err != nil {
 					return nil, err
 				}
+				if _, err := builtin.FileCount(entry); err != nil {
+					return nil, Errorf("verify[%d].%s", i, err)
+				}
 			}
+			if typ == "http" {
+				u, _ := entry["url"].(string)
+				if err := builtin.ValidateHTTPURL(u); err != nil {
+					return nil, Errorf("verify[%d].%s", i, err)
+				}
+			}
+		}
+		if err := validateCheckPatterns(entry, fmt.Sprintf("%s[%d]", key, i)); err != nil {
+			return nil, err
 		}
 		if key == "verify" {
 			setDefault(entry, "location", "host")

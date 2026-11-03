@@ -203,6 +203,17 @@ class ConsoleDemo(Harness):
             data = {"asks": [a for a in ASKS if set(a["event_refs"]) <= known],
                     "strengths": [s for s in STRENGTHS if set(s["event_refs"]) <= known],
                     "journey_errata": [], "gates": [], "no_obstacles_observed": False}
+        elif "clusters" in ((schema or {}).get("properties") or {}):
+            groups = {}
+            for path in sorted((Path(ctx["run_dir"]).parent / "runs").glob("*/asks.json")):
+                for ask in (read_json(path, {}) or {}).get("asks", []):
+                    key = (ask["title"], ask["requested_behavior"], ask["evidence_status"])
+                    cluster = groups.setdefault(key, {
+                        "title": ask["title"], "requested_behavior": ask["requested_behavior"],
+                        "evidence_status": ask["evidence_status"], "members": [],
+                        "representative_observation": {"run_id": path.parent.name, "text": ask["how_observed"]}})
+                    cluster["members"].append({"run_id": path.parent.name, "ask_id": ask["id"]})
+            data = {"clusters": list(groups.values())}
         proc.update(model_ids="simulated", output_tokens=None, result_subtype="success" if data else "unsupported",
                     is_error=data is None)
         return {"proc": proc, "text": json.dumps(data) if data else "", "structured": data}

@@ -17,6 +17,10 @@ func headline(snap M) string {
 	runs := util.Maps(snap["runs"])
 	state := util.S(proc["state"])
 	switch {
+	case util.Truthy(util.Get(snap, "trial", "error")):
+		return "The trial configuration is invalid: " + util.S(util.Get(snap, "trial", "error"))
+	case util.Truthy(proc["stale_lock"]):
+		return "The runner is no longer active; inspect the interrupted attempt and resume cleanup before trusting its results"
 	case state == "running" || state == "stopping":
 		var active []string
 		for _, r := range runs {
@@ -107,6 +111,14 @@ func Since(trial string, cursor int, touch bool) (M, error) {
 	ready := util.MapOr(snap["readiness"])
 	output := util.MapOr(snap["output"])
 	process := util.MapOr(snap["process"])
+	trialError := util.Get(snap, "trial", "error")
+	if util.Truthy(trialError) {
+		ready = util.Copy(ready)
+		ready["status"], ready["current"] = "invalid", true
+		ready["problems"] = append(append([]any{}, listOr(ready["problems"])...), trialError)
+		output = util.Copy(output)
+		output["blocker"], output["blocker_kind"] = trialError, "invalid_trial"
+	}
 	where, short := Short(filepath.Dir(trial)), util.S(plan["short"])
 	doNot := []any{fmt.Sprintf("approve, start, stop or retry for the user. If they approve in chat, run `ajx console start %s "+
 		"--plan %s --quote \"<their words>\"`", where, short)}
@@ -169,14 +181,14 @@ func Since(trial string, cursor int, touch bool) (M, error) {
 	}
 	problems, warnings := listOr(ready["problems"]), listOr(ready["warnings"])
 	return M{
-		"schema": Schema, "trial": trial, "since": cursor, "cursor": newCursor,
+		"schema": Schema, "trial": trial, "trial_error": trialError, "since": cursor, "cursor": newCursor,
 		"headline":           head,
 		"changes":            changes,
 		"messages_for_agent": messages,
 		"plan":               M{"sha": short, "complete": plan["complete"], "approval": plan["approval"]},
 		"readiness": M{"status": ready["status"], "current": ready["current"], "problems": problems, "warnings": warnings,
 			"warnings_need_acceptance": util.Truthy(ready["needs_ack"])},
-		"process": pick(process, "state", "job", "pid", "since", "by", "command"),
+		"process": pick(process, "state", "job", "pid", "since", "by", "command", "stale_lock"),
 		"output": pick(output, "dir", "started", "planned", "complete", "blocker", "blocker_kind", "index",
 			"pending_reports", "unstarted"),
 		"runs":    runs,

@@ -228,17 +228,21 @@ func Main(argv []string) int {
 	ns, err := p.Parse(argv)
 	if err != nil {
 		var ex *Exit
-		var ue *UsageError
-		switch {
-		case errors.As(err, &ex):
+		if errors.As(err, &ex) {
 			fmt.Fprint(Stdout, ex.Text)
 			return ex.Code
-		case errors.As(err, &ue):
-			PrintUsageError(Stderr, ue)
-			return 2
 		}
-		fmt.Fprintln(Stderr, err)
-		return 2
+		// Parsing may fail before reaching --json. Preserve the requested
+		// output mode even for malformed calls, but honor the "--" delimiter.
+		for _, arg := range argv {
+			if arg == "--" {
+				break
+			}
+			if arg == "--json" {
+				ns.Values["json"] = true
+			}
+		}
+		return reportError(ns, err)
 	}
 	f := handlers[ns.Leaf]
 	if f == nil {
@@ -257,6 +261,8 @@ func ExitCode(err error) (int, string, string) {
 	var se *spec.Error
 	var ce *console.Error
 	var le *runner.LockedError
+	var sr *runner.StageRefusalError
+	var pr *runner.ProcessRecoveryError
 	var ue *UsageError
 	switch {
 	case errors.As(err, &ue):
@@ -267,6 +273,10 @@ func ExitCode(err error) (int, string, string) {
 		return 2, "console_error", "console: " + ce.Error()
 	case errors.As(err, &le):
 		return 3, "locked", "locked: " + le.Error()
+	case errors.As(err, &sr):
+		return 2, "stage_refused", "stage refused: " + sr.Error()
+	case errors.As(err, &pr):
+		return 1, "cleanup_unconfirmed", "cleanup unconfirmed: " + pr.Error()
 	case util.Interrupted(err):
 		return 130, "interrupted", "ajx: interrupted. Captured evidence is kept; rerun the same command to finish the remaining stages."
 	}
@@ -275,12 +285,12 @@ func ExitCode(err error) (int, string, string) {
 
 func reportError(ns *Namespace, err error) int {
 	var ue *UsageError
+	code, kind, line := ExitCode(err)
 	if errors.As(err, &ue) {
 		PrintUsageError(Stderr, ue)
-		return 2
+	} else {
+		fmt.Fprintln(Stderr, line)
 	}
-	code, kind, line := ExitCode(err)
-	fmt.Fprintln(Stderr, line)
 	if ns != nil && ns.Bool("json") && ns.Values["cmd"] != "console" {
 		msg := line
 		if i := strings.Index(line, ": "); i >= 0 && kind != "interrupted" && kind != "error" {

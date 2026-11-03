@@ -332,7 +332,10 @@ func interruptAt(t *testing.T, r *Run, stage, source string, cancel context.Canc
 	hit := interruptWithEvidence(t, r, source, cancel)
 	switch stage {
 	case "prepare":
-		commandHook = func(*Run, M) error { return hit() }
+		commandHook = func(*Run, M) error {
+			commandHook = nil // one interruption; allow cleanup commands to run
+			return hit()
+		}
 		t.Cleanup(func() { commandHook = nil })
 	case "execute":
 		probeOf(t, r).execute = func(*envProbe, *plugin.Ctx) (M, error) { return nil, hit() }
@@ -378,7 +381,8 @@ func TestHandledInterruptionArchivesEvidenceAndPurgesAuthWithoutReplay(t *testin
 				t.Fatal("original paths remain")
 			}
 			if stage == "prepare" {
-				if r.Status("execute") != "" || r.Status("teardown") != "" {
+				if r.Status("execute") != "" || r.Status("teardown") != "done" ||
+					util.Get(r.State, "teardown", "status") != "ok" {
 					t.Fatalf("%v", statuses(r.State))
 				}
 			} else {
@@ -403,7 +407,10 @@ func TestHandledInterruptionArchivesEvidenceAndPurgesAuthWithoutReplay(t *testin
 				return M{}, nil
 			}
 			for _, st := range [][]string{{"execute"}, {"archive"}} {
-				if _, err := resumed.Go(context.Background(), st, false); err != nil {
+				_, err := resumed.Go(context.Background(), st, false)
+				if st[0] == "execute" && stage != "prepare" {
+					requireStageRefusal(t, err)
+				} else if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -452,7 +459,10 @@ func TestHandledInterruptionKeepsRequestedWorkspaceButPurgesCredentials(t *testi
 				t.Error("execute must not be replayed")
 				return M{}, nil
 			}
-			if _, err := resumed.Go(context.Background(), []string{stage}, true); err != nil {
+			_, err = resumed.Go(context.Background(), []string{stage}, true)
+			if stage == "execute" {
+				requireStageRefusal(t, err)
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			if resumed.State["archived"] != nil || !allDirs(resumed.paths()) {
@@ -491,9 +501,8 @@ func TestHandledInterruptionRetainsFailedReleasePathsAndPurgesAuthBeforeRetry(t 
 	if _, err := resumed.Go(context.Background(), []string{"release", "archive"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resumed.Go(context.Background(), []string{"execute"}, false); err != nil {
-		t.Fatal(err)
-	}
+	_, err := resumed.Go(context.Background(), []string{"execute"}, false)
+	requireStageRefusal(t, err)
 	if rs.releases != 1 || !PyEqual(util.Get(rs.releaseStates[0], "paths"), paths) {
 		t.Fatalf("release calls %d", rs.releases)
 	}
@@ -980,9 +989,8 @@ func TestLocalTaskTimeoutStillRunsDefaultEnvironmentTeardown(t *testing.T) {
 		t.Fatal("teardown location / release / archive")
 	}
 	n := probeOf(t, r).execs
-	if _, err := r.Go(context.Background(), []string{"execute"}, false); err != nil {
-		t.Fatal(err)
-	}
+	_, err := r.Go(context.Background(), []string{"execute"}, false)
+	requireStageRefusal(t, err)
 	if probeOf(t, r).execs != n {
 		t.Fatal("executed twice")
 	}

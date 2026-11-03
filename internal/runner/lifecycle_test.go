@@ -151,7 +151,22 @@ func newRun(t *testing.T, sp M, log func(string)) *Run {
 	if err != nil {
 		t.Fatalf("NewRun: %v", err)
 	}
+	t.Cleanup(func() {
+		if exists(r.processRecordPath()) {
+			if err := util.StopRecordedProcess(r.processRecordPath()); err != nil {
+				t.Errorf("test worker cleanup: %v", err)
+			}
+		}
+	})
 	return r
+}
+
+func requireStageRefusal(t *testing.T, err error) {
+	t.Helper()
+	var refused *StageRefusalError
+	if !errors.As(err, &refused) {
+		t.Fatalf("want StageRefusalError, got %T: %v", err, err)
+	}
 }
 
 func noModelExtract(r *Run) error {
@@ -389,15 +404,13 @@ func TestResumeSkipsDoneAndRunsPendingTeardown(t *testing.T) {
 	execAt := util.Get(r3.State, "stages", "execute", "at")
 	var logs []string
 	r4 := newRun(t, sp, func(m string) { logs = append(logs, m) })
-	if _, err := r4.Go(context.Background(), []string{"execute"}, false); err != nil {
-		t.Fatal(err)
-	}
+	_, err := r4.Go(context.Background(), []string{"execute"}, false)
+	requireStageRefusal(t, err)
 	if util.Get(r4.State, "stages", "execute", "at") != execAt {
 		t.Fatal("a task was re-run in place")
 	}
-	want := fmt.Sprintf("[f-r1] refusing to redo ['execute']: a task runs once per repetition; add a repetition or delete %s", r4.RunDir)
-	if len(logs) != 1 || logs[0] != want {
-		t.Fatalf("logs %q", logs)
+	if len(logs) != 0 {
+		t.Fatalf("refusal must be returned as an error, not logged as success: %q", logs)
 	}
 }
 
@@ -415,6 +428,9 @@ func TestInterruptedExecuteKeepsEvidenceAndProducesArtifactsWithoutLLM(t *testin
 	}
 	// simulate ajx dying mid-execute: planned session recorded, stage left "running"
 	r.State["execute"] = M{"session_id": "fake-sid", "started_at": util.Now(), "stopped_at": nil, "stop_reason": "running"}
+	// This synthetic fixture has no OS worker. Real SIGKILL recovery is covered
+	// by TestCrashRecoveryStopsOriginalWorkerBeforeVerification.
+	r.State["worker_cleanup"] = M{"status": "not_started", "confirmed": true}
 	if err := r.mark("execute", "running", nil); err != nil {
 		t.Fatal(err)
 	}

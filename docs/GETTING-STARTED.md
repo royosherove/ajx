@@ -164,7 +164,8 @@ repetitions help reveal variation, and every extra attempt can add model costs.
 
 AJX does not automatically fix the project or certify release readiness.
 Prepared trials can run [headlessly](../skills/ajx/references/headless.md);
-full product acceptance gating is proposed.
+the native CLI's `ajx ci` checks acceptance targets and writes JSON and JUnit
+results. Baseline regression gates and automatic improvement loops remain proposals.
 
 ## If you get stuck
 

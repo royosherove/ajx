@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ajx "github.com/royosherove/ajx"
 	"github.com/royosherove/ajx/internal/plugin"
@@ -25,6 +26,7 @@ func initOptions(ns *Namespace) wizard.Options {
 		Harness: ns.Str("harness"), Reporter: ns.Str("reporter"), Model: ns.Str("model"),
 		ReporterModel: ns.Str("reporter_model"), Task: ns.Str("task"), Materials: ns.List("material"),
 		Checks: ns.List("check"), Timeout: ns.Int("timeout", 0), Repetitions: ns.Int("repetitions", 0),
+		TimeoutSet: ns.Has("timeout"), RepetitionsSet: ns.Has("repetitions"),
 		Fixture: ns.Str("fixture"), Environment: ns.Str("environment"), Image: ns.Str("image"),
 	}
 }
@@ -70,24 +72,50 @@ func cmdInit(ns *Namespace) (int, error) {
 	for _, w := range wizard.Warnings(o) {
 		fmt.Fprintln(Stderr, "note: "+w)
 	}
-	short := shortHome(r.Dir)
-	extended := o.Task != "" || len(o.Checks) > 0
-	next := fmt.Sprintf("Next: describe the task in task-prompt.md and add a [[verify]] check, then review and start it in the "+
-		"browser with: ajx console %s", short)
-	switch {
-	case o.Task != "" && len(o.Checks) > 0:
-		next = "Next: review and start it in the browser with: ajx console " + short
-	case o.Task != "":
-		next = "Next: add a [[verify]] check of the requested outcome to trial.toml, then review and start it in the browser with: ajx console " + short
-	case len(o.Checks) > 0:
-		next = "Next: describe the task in task-prompt.md, then review and start it in the browser with: ajx console " + short
+	headless := noInput || !canAsk
+	missing := []string{}
+	if !r.TaskSet {
+		missing = append(missing, "describe the task in "+r.PromptFile)
+	}
+	if r.VerifyChecks == 0 {
+		missing = append(missing, "add a [[verify]] check of the requested outcome to "+r.TrialFile)
+	}
+	lastAction, lastPath := "console", r.Dir
+	if headless {
+		lastAction, lastPath = "run", r.TrialFile
+	}
+	nextArgv := [][]string{{"ajx", "validate", r.TrialFile}, {"ajx", "doctor", r.TrialFile}, {"ajx", lastAction, lastPath}}
+	nextCommands := []string{}
+	for _, argv := range nextArgv {
+		nextCommands = append(nextCommands, initCommand(argv[1], argv[2]))
+	}
+	code := 0
+	var problem any
+	if !r.Valid {
+		code = 2
+		problem = util.M{"type": "trial_file_error", "message": r.Problem}
+		missing = []string{"fix trial.toml: " + r.Problem}
+		nextCommands, nextArgv = []string{}, [][]string{}
+		fmt.Fprintln(Stderr, "trial file error: "+r.Problem)
+	}
+	next := "Next: "
+	if len(missing) > 0 {
+		next += strings.Join(missing, " and ") + ". "
+	}
+	if r.Valid && headless {
+		next += "Validate with " + nextCommands[0] + ", then check readiness with " + nextCommands[1] +
+			". When ready and authorized, use " + nextCommands[2] + "; use " + initCommand("ci", r.TrialFile) + " instead for acceptance checks."
+	} else if r.Valid {
+		next += "review and start it in the browser with: " + nextCommands[2]
 	}
 	if ns.Bool("json") {
-		emitJSON(util.M{"schema_version": SchemaVersion, "command": "init", "ok": true, "dir": r.Dir,
+		emitJSON(util.M{"schema_version": SchemaVersion, "command": "init", "ok": r.Valid, "exit_code": code, "dir": r.Dir,
 			"trial_file": r.TrialFile, "prompt_file": r.PromptFile, "written": strs(r.Written), "kept": strs(r.Kept),
-			"trial_id": r.ID, "harness": o.Harness, "reporter": o.Reporter, "valid": r.Valid, "problem": nilIfEmpty(r.Problem),
-			"next": []any{"ajx validate " + r.TrialFile, "ajx doctor " + r.TrialFile, "ajx console " + short}})
-		return 0, nil
+			"trial_id": nilIfEmpty(r.ID), "harness": nilIfEmpty(r.Harness), "harnesses": strs(r.Harnesses),
+			"reporter": nilIfEmpty(r.Reporter), "valid": r.Valid, "problem": nilIfEmpty(r.Problem), "error": problem,
+			"next": nextCommands, "next_argv": nextArgv, "missing": missing,
+			"run_requires": []string{"complete the task and success checks", "doctor reports ready", "the trial scope is authorized"}})
+		return code, nil
 	}
 	for _, path := range []string{r.TrialFile, r.PromptFile} {
 		if util.Contains(r.Kept, path) {
@@ -97,16 +125,11 @@ func cmdInit(ns *Namespace) (int, error) {
 		}
 	}
 	outln(next)
-	if !r.Valid && (extended || asked) {
-		fmt.Fprintf(Stderr, "note: the trial does not load yet: %s\n", r.Problem)
+	if !r.Valid {
+		return code, nil
 	}
 	if !asked {
 		return 0, nil
-	}
-	if !r.Valid {
-		// Never hand an unloadable trial to the console or doctor as if it were ready.
-		fmt.Fprintf(Stderr, "Fix trial.toml first (or run ajx init %s --force again), then: ajx console %s\n", short, short)
-		return 1, nil
 	}
 	if !wizardIO.Accessible && os.Getenv("ACCESSIBLE") == "" {
 		// The full-screen form clears its Review step; keep the plan on screen.
@@ -124,6 +147,12 @@ func cmdInit(ns *Namespace) (int, error) {
 		return runDoctor(r.TrialFile, false)
 	}
 	return 0, nil
+}
+
+func initCommand(action, path string) string {
+	// Always quote the absolute path. Quoting "~" would suppress tilde
+	// expansion; an absolute path also works for argv-based callers.
+	return "ajx " + action + " '" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 }
 
 func usageErr(ns *Namespace, msg string) error { return &UsageError{ns.Leaf, msg} }

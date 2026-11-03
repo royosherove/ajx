@@ -135,26 +135,14 @@ func (r *Run) cleanupInterrupted(stage string, keepWorkspace bool) error {
 		}
 	}
 
-	stopProcesses := func() error {
-		execution := r.execState()
-		if execution == nil {
-			return nil
-		}
-		if pid := util.Int(execution["pid"], 0); pid != 0 && !util.Truthy(execution["reaped"]) {
-			util.KillGroup(pid)
-			execution["reaped"] = true
-			return r.save()
-		}
-		return nil
-	}
 	released := func() bool {
 		return r.EnvironmentProfile == nil || !util.Truthy(r.State["environment"]) || cleanupConfirmed(r.State)
 	}
 
 	// Harness.Run reaps an interrupted launch and cancels container workers.
 	// A completed execution can still have descendants retained for verification.
-	attempt("stop_processes", stopProcesses)
-	if r.done("prepare") && isTerminal(r.Status("execute")) && !r.done("teardown") && stage != "teardown" {
+	attempt("stop_processes", r.ensureWorkerStopped)
+	if ((r.done("prepare") && isTerminal(r.Status("execute"))) || r.setupStarted()) && !r.done("teardown") && stage != "teardown" {
 		attempt("teardown", func() error { return r.callStage("teardown") })
 	}
 	if !released() {
@@ -178,7 +166,7 @@ func (r *Run) cleanupInterrupted(stage string, keepWorkspace bool) error {
 }
 
 func (r *Run) detectInterrupted() error {
-	if r.EnvironmentProfile != nil && r.Status("prepare") == "running" {
+	if (r.EnvironmentProfile != nil || r.setupStarted()) && r.Status("prepare") == "running" {
 		if err := r.mark("prepare", "interrupted", M{"note": "ajx stopped during preparation; keeping the original " +
 			"owned paths and environment for cleanup without replay"}); err != nil {
 			return err
@@ -186,15 +174,22 @@ func (r *Run) detectInterrupted() error {
 		r.Log(fmt.Sprintf("[%s] prepare was interrupted; cleaning up the recorded attempt", r.RunID))
 	}
 	if r.Status("execute") == "running" {
+		if err := r.ensureWorkerStopped(); err != nil {
+			return err
+		}
 		ex := util.Copy(r.execState())
 		ex["stop_reason"] = "interrupted"
 		ex["interrupted"] = true
+		ex["stopped_at"] = util.Now()
 		r.State["execute"] = ex
 		if err := r.mark("execute", "interrupted", M{"note": "ajx was not running when this run was resumed; the worker " +
 			"may have been killed or finished unobserved"}); err != nil {
 			return err
 		}
 		r.Log(fmt.Sprintf("[%s] execute was interrupted; keeping its evidence, not re-running the task", r.RunID))
+	}
+	if isTerminal(r.Status("execute")) || util.Get(r.State, "worker_cleanup", "confirmed") == false {
+		return r.ensureWorkerStopped()
 	}
 	return nil
 }
@@ -215,6 +210,9 @@ func (r *Run) skip(stage string) bool {
 	st := r.Status(stage)
 	if stage == "prepare" && r.EnvironmentProfile != nil && isTerminal(st) {
 		return true // A failed owned attempt is evidence, not permission to allocate a replacement.
+	}
+	if stage == "prepare" && r.setupStarted() && isTerminal(st) {
+		return true
 	}
 	if st == "interrupted" && util.Contains(RedoWhenInterrupted, stage) {
 		return false // e.g. Stop during reporting: finish the report instead of leaving it half written
@@ -258,11 +256,14 @@ func (r *Run) Go(ctx context.Context, stages []string, keepWorkspace bool) (M, e
 				if err := r.cleanupInterrupted("prepare", true); err != nil {
 					return r.State, err
 				}
-			} else if err := r.safe("archive"); err != nil {
+			} else if err := r.cleanupFailedPrepare(false); err != nil {
 				return r.State, err
 			}
 		}
 		return r.State, nil
+	}
+	if r.setupStarted() && isTerminal(r.Status("prepare")) && !r.done("prepare") {
+		return r.State, r.cleanupFailedPrepare(keepWorkspace)
 	}
 	if len(stages) > 0 {
 		var blocked []string
@@ -272,9 +273,7 @@ func (r *Run) Go(ctx context.Context, stages []string, keepWorkspace bool) (M, e
 			}
 		}
 		if len(blocked) > 0 {
-			r.Log(fmt.Sprintf("[%s] refusing to redo %s: a task runs once per repetition; add a "+
-				"repetition or delete %s", r.RunID, pyList(blocked), r.RunDir))
-			return r.State, nil
+			return r.State, &StageRefusalError{RunID: r.RunID, Stages: blocked}
 		}
 		if util.Truthy(r.State["archived"]) {
 			var late, keep []string
@@ -355,8 +354,15 @@ func (r *Run) Go(ctx context.Context, stages []string, keepWorkspace bool) (M, e
 		}
 		_ = r.mark(stage, "error", M{"error": pyErrString(err), "trace": traceText(err)})
 		r.Log(fmt.Sprintf("[%s] %s failed: %s", r.RunID, stage, pyMessage(err)))
+		if stage == "execute" {
+			// A lost process owner is not a normal task failure. Verification
+			// and reporting must not race a worker whose stop is uncertain.
+			if serr := r.ensureWorkerStopped(); serr != nil {
+				return r.State, serr
+			}
+		}
 		if stage == "prepare" {
-			if serr := r.safe("archive"); serr != nil {
+			if serr := r.cleanupFailedPrepare(keepWorkspace); serr != nil {
 				return r.State, serr
 			}
 			break

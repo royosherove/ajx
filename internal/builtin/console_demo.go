@@ -229,6 +229,8 @@ func (h *ConsoleDemo) Report(ctx *plugin.Ctx, prompt string, schema M) (M, error
 		}
 		data = s.obj("asks", pick(demoAsksJSON), "strengths", pick(demoStrengthsJSON),
 			"journey_errata", []any{}, "gates", []any{}, "no_obstacles_observed", false)
+	} else if _, ok := util.MapOr(schema["properties"])["clusters"]; ok {
+		data = M{"clusters": demoClusters(filepath.Dir(ctx.RunDir))}
 	}
 	subtype := "unsupported"
 	if data != nil {
@@ -242,6 +244,33 @@ func (h *ConsoleDemo) Report(ctx *plugin.Ctx, prompt string, schema M) (M, error
 		return M{"proc": proc, "text": "", "structured": nil}, nil
 	}
 	return M{"proc": proc, "text": s.dumps(data, true), "structured": data}, nil
+}
+
+// demoClusters compares only the canned asks actually present in each attempt.
+// Interrupted attempts may have fewer asks and must not gain invented evidence.
+func demoClusters(out string) []any {
+	clusters := []any{}
+	groups := map[string]M{}
+	entries, _ := os.ReadDir(filepath.Join(out, "runs"))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		asks := util.ReadMap(filepath.Join(out, "runs", entry.Name(), "asks.json"))
+		for _, ask := range util.Maps(asks["asks"]) {
+			key := util.S(ask["title"]) + "\x00" + util.S(ask["requested_behavior"]) + "\x00" + util.S(ask["evidence_status"])
+			cluster := groups[key]
+			if cluster == nil {
+				cluster = M{"title": ask["title"], "requested_behavior": ask["requested_behavior"],
+					"evidence_status": ask["evidence_status"], "members": []any{},
+					"representative_observation": M{"run_id": entry.Name(), "text": ask["how_observed"]}}
+				groups[key] = cluster
+				clusters = append(clusters, cluster)
+			}
+			cluster["members"] = append(util.List(cluster["members"]), M{"run_id": entry.Name(), "ask_id": ask["id"]})
+		}
+	}
+	return clusters
 }
 
 func stoppedJourney(events []M) string {

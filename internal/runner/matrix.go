@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -31,13 +30,28 @@ type MatrixOpts struct {
 // archive) and returns an error satisfying util.Interrupted; the lock is
 // always released.
 func RunMatrix(ctx context.Context, sp M, o MatrixOpts) (M, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	if util.Truthy(sp["_cleanup_only"]) && !isDir(util.S(util.Get(sp, "trial", "output_dir"))) {
+		return nil, spec.Errorf("cleanup requires an existing matrix output directory")
 	}
-	log := o.Log
-	if log == nil {
-		log = func(m string) { fmt.Println(m) }
+	l, err := AcquireMatrixLock(util.S(util.Get(sp, "trial", "output_dir")))
+	if err != nil {
+		return nil, err
 	}
+	defer l.Close()
+	return RunMatrixLocked(ctx, sp, o, l)
+}
+
+// matrixInspection is a read-only snapshot taken while the caller holds the
+// output lock. Both validation and execution use this same contract check.
+type matrixInspection struct {
+	trial, meta, profiles M
+	out                   string
+	plan                  []spec.PlanItem
+	parallel              int
+	recovery              bool
+}
+
+func inspectMatrix(sp M, o MatrixOpts) (*matrixInspection, error) {
 	recovery := util.Truthy(sp["_cleanup_only"])
 	if recovery && !CleanupOnly(o.Stages) {
 		return nil, spec.Errorf("saved cleanup profiles allow only teardown, release, render and archive")
@@ -46,9 +60,6 @@ func RunMatrix(ctx context.Context, sp M, o MatrixOpts) (M, error) {
 	out := util.S(trial["output_dir"])
 	if recovery && !isDir(out) {
 		return nil, spec.Errorf("cleanup requires an existing matrix output directory")
-	}
-	if err := os.MkdirAll(out, 0o755); err != nil {
-		return nil, err
 	}
 	var unknown []string
 	for _, s := range o.Stages {
@@ -64,12 +75,6 @@ func RunMatrix(ctx context.Context, sp M, o MatrixOpts) (M, error) {
 		return nil, err
 	}
 	parallel := util.Int(trial["parallel"], 1)
-	lock, err := AcquireLock(out)
-	if err != nil {
-		return nil, err
-	}
-	defer ReleaseLock(lock)
-
 	metaV, err := ReadJSON(filepath.Join(out, "matrix-plan.json"), nil)
 	if err != nil {
 		return nil, err
@@ -79,6 +84,17 @@ func RunMatrix(ctx context.Context, sp M, o MatrixOpts) (M, error) {
 		"agent_configurations": valueOr(sp, "agent_configurations", M{})}
 	states, _ := filepath.Glob(filepath.Join(out, "runs", "*", "state.json"))
 	hasStates := len(states) > 0
+	if !recovery && hasStates {
+		saved, recorded := meta["task_inputs"]
+		if !recorded {
+			return nil, spec.Errorf("the existing attempts have no recorded task-input contract; " +
+				"use a new output directory, or request only cleanup stages")
+		}
+		if !PyEqual(saved, TaskInputs(sp)) {
+			return nil, spec.Errorf("verification, setup, preflight, teardown or task inputs changed; " +
+				"use a new output directory, or request only cleanup stages to recover the original attempts")
+		}
+	}
 	if !recovery && util.Truthy(meta["normalized_profiles"]) && hasStates {
 		// A subset run must not replace the only saved inputs for another cell's cleanup.
 		if ProfileContract(util.MapOr(meta["normalized_profiles"])) != ProfileContract(profiles) ||
@@ -108,6 +124,48 @@ func RunMatrix(ctx context.Context, sp M, o MatrixOpts) (M, error) {
 		if len(plan) == 0 {
 			return nil, spec.Errorf("no recorded attempts were found for cleanup")
 		}
+	}
+	// Refuse the entire explicit replay request before updating provenance or
+	// starting any newly added cells/repetitions in the same matrix.
+	for _, it := range plan {
+		run, err := loadRun(sp, it.Cell, it.Rep, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		if o.DryRun {
+			continue
+		}
+		var blocked []string
+		for _, stage := range o.Stages {
+			if util.Contains(NotRedoable, stage) && isTerminal(run.Status(stage)) &&
+				!(run.setupStarted() && !run.done("prepare")) {
+				blocked = append(blocked, stage)
+			}
+		}
+		if len(blocked) > 0 {
+			return nil, &StageRefusalError{RunID: run.RunID, Stages: blocked}
+		}
+	}
+	return &matrixInspection{trial: trial, meta: meta, profiles: profiles,
+		out: out, plan: plan, parallel: parallel, recovery: recovery}, nil
+}
+
+func runMatrixLocked(ctx context.Context, sp M, o MatrixOpts) (M, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	log := o.Log
+	if log == nil {
+		log = func(m string) { fmt.Println(m) }
+	}
+	checked, err := inspectMatrix(sp, o)
+	if err != nil {
+		return nil, err
+	}
+	trial, out, plan := checked.trial, checked.out, checked.plan
+	meta, profiles := checked.meta, checked.profiles
+	parallel, recovery := checked.parallel, checked.recovery
+	if recovery {
 		log("Recovering original attempts with cleanup and offline rendering only.")
 	}
 	logf := log

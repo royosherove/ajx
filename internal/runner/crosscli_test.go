@@ -136,14 +136,8 @@ func TestGoStartedRunIsResumedByPython(t *testing.T) {
 	checkCrossState(t, tmp)
 	// Go refuses to redo the task Python resumed, like Python does.
 	sp := loadSpec(t, path)
-	var logs []string
-	if _, err := RunMatrix(context.Background(), sp, MatrixOpts{Stages: []string{"execute"},
-		Log: func(m string) { logs = append(logs, m) }}); err != nil {
-		t.Fatal(err)
-	}
-	if len(logs) == 0 || !strings.Contains(logs[0], "[s-r1] refusing to redo ['execute']") {
-		t.Fatalf("logs %q", logs)
-	}
+	_, err := RunMatrix(context.Background(), sp, MatrixOpts{Stages: []string{"execute"}, Log: func(string) {}})
+	requireStageRefusal(t, err)
 }
 
 func TestGoCrashedExecuteIsMarkedInterruptedByPython(t *testing.T) {

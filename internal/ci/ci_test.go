@@ -55,9 +55,15 @@ type attempt struct {
 	authErrs bool
 }
 
-func fakeRun(attempts map[string]attempt, err error) func(context.Context, util.M, runner.MatrixOpts) (util.M, error) {
-	return func(ctx context.Context, sp util.M, o runner.MatrixOpts) (util.M, error) {
+func fakeRun(attempts map[string]attempt, err error) func(context.Context, util.M, runner.MatrixOpts, *runner.MatrixLock) (util.M, error) {
+	return func(ctx context.Context, sp util.M, o runner.MatrixOpts, lock *runner.MatrixLock) (util.M, error) {
 		out := util.S(util.Get(sp, "trial", "output_dir"))
+		if len(attempts) > 0 {
+			// The real read-only preflight needs the contract for later reuse.
+			if e := util.WriteJSON(filepath.Join(out, "matrix-plan.json"), util.M{"task_inputs": runner.TaskInputs(sp)}); e != nil {
+				return nil, e
+			}
+		}
 		for id, a := range attempts {
 			dir := filepath.Join(out, "runs", id)
 			stages := util.M{}
@@ -67,11 +73,16 @@ func fakeRun(attempts map[string]attempt, err error) func(context.Context, util.
 			if a.errStage != "" {
 				stages[a.errStage] = util.M{"status": "error", "error": "RuntimeError: boom"}
 			}
-			st := util.M{"stages": stages, "execute": util.M{"started_at": "2026-01-01T00:00:00Z", "stopped_at": "2026-01-01T00:00:05Z"}}
+			st := util.M{"stages": stages, "journey_provenance": "reconstructed", "execute": util.M{"started_at": "2026-01-01T00:00:00Z", "stopped_at": "2026-01-01T00:00:05Z"}}
 			if a.teardown != "" {
 				st["teardown"] = util.M{"status": a.teardown}
 			}
 			util.WriteJSON(filepath.Join(dir, "state.json"), st)
+			util.WriteJSON(filepath.Join(dir, "run.json"), util.M{"review_status": "ready"})
+			util.WriteJSON(filepath.Join(dir, "asks.json"), util.M{"extraction_status": "ok"})
+			for _, name := range []string{"report.html", "pretty-journey.html", "journey.md", "asks.md"} {
+				os.WriteFile(filepath.Join(dir, name), []byte("synthetic report\n"), 0o644)
+			}
 			if a.outcome != "" {
 				v := util.M{"outcome": a.outcome, "passed": 1, "total": 1, "checks": []any{util.M{"name": "ok", "passed": a.outcome == "succeeded"}},
 					"checks_with_auth_errors": []any{}}
@@ -85,7 +96,7 @@ func fakeRun(attempts map[string]attempt, err error) func(context.Context, util.
 	}
 }
 
-func hooks(doctorCode int, run func(context.Context, util.M, runner.MatrixOpts) (util.M, error)) Hooks {
+func hooks(doctorCode int, run func(context.Context, util.M, runner.MatrixOpts, *runner.MatrixLock) (util.M, error)) Hooks {
 	return Hooks{
 		Validate: func(trial string, cells []string) ([]string, util.M, error) { return []string{"ok"}, util.M{}, nil },
 		Doctor:   func(trial string) (int, []string, error) { return doctorCode, []string{"doctor"}, nil },
@@ -100,9 +111,9 @@ func evaluate(t *testing.T, o Options, h Hooks) (int, util.M, string) {
 	}
 	s := New(o, h)
 	code := s.Run(context.Background())
-	result := util.ReadMap(filepath.Join(o.Output, "ci-result.json"))
-	if o.Result != "" {
-		result = util.ReadMap(o.Result)
+	result := s.Result()
+	if resultPath, _ := s.Paths(); resultPath != "" {
+		result = util.ReadMap(resultPath)
 	}
 	junit, _ := os.ReadFile(filepath.Join(o.Output, "junit.xml"))
 	if len(junit) > 0 {
@@ -205,7 +216,7 @@ func TestCleanupPolicy(t *testing.T) {
 func TestStopsEarlyAndMapsExitCodes(t *testing.T) {
 	trial := writeTrial(t, 1, oneCheck)
 	called := false
-	runFn := func(ctx context.Context, sp util.M, o runner.MatrixOpts) (util.M, error) {
+	runFn := func(ctx context.Context, sp util.M, o runner.MatrixOpts, lock *runner.MatrixLock) (util.M, error) {
 		called = true
 		return nil, nil
 	}
@@ -255,7 +266,7 @@ func TestAbortWritesAnInconclusiveResult(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	block := make(chan struct{})
 	var s *Session
-	runFn := func(ctx context.Context, sp util.M, o runner.MatrixOpts) (util.M, error) {
+	runFn := func(ctx context.Context, sp util.M, o runner.MatrixOpts, lock *runner.MatrixLock) (util.M, error) {
 		if code := s.Abort(5); code != ExitInterrupted {
 			t.Errorf("abort code %d", code)
 		}

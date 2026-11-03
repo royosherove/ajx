@@ -1,10 +1,9 @@
 # The Go CLI
 
-`ajx` is also available as a single native binary built from `cmd/ajx`. It has
-the same commands, options, output lines and exit codes as the Python CLI in
-`skills/ajx/bin/ajx`, and it reads and writes the same trial files and output
-folders. A trial started with one can be checked, resumed, reported, exported or
-watched with the other.
+The release installer provides a native `ajx` binary built from `cmd/ajx`.
+It reads the same trial files and report formats as the Python CLI, with
+additional setup, JSON, recovery and CI features. Use the same executable to
+run and recover an attempt; either implementation can view completed reports.
 
 The Go CLI adds:
 
@@ -71,7 +70,7 @@ does not use them.
 
 ## Build from source
 
-You need Go 1.25 or newer. Dependencies are vendored, so no network access is
+You need Go 1.25.8 or newer. Dependencies are vendored, so no network access is
 needed to build.
 
 ```sh
@@ -91,14 +90,18 @@ disk instead. `ajx version` prints the fingerprint of the resources in use.
 
 ## Relation to the Python CLI
 
-Use either one. The coordinating skill and the AJX Console run whichever `ajx`
-you invoke. Both CLIs:
+The coordinating skill and the AJX Console run whichever `ajx` you invoke.
+Both CLIs:
 
-- validate trial files with the same rules and messages;
-- write `state.json`, `run.json`, `verify.json`, reports and console journals with
-  the same keys and values (JSON key order is sorted in Go);
+- read the common trial format;
+- write compatible `state.json`, `run.json`, `verify.json`, reports and console journals;
 - take the same matrix lock, so they never run the same output folder at once;
-- resume each other's attempts without repeating a task.
+- preserve the rule that a completed task is not silently repeated.
+
+Native AJX additionally rejects malformed input and incompatible reuse, and
+records ownership of running workers for crash recovery. An older attempt
+without that identity may need manual cleanup; AJX refuses to claim it stopped
+a worker it cannot identify. Python plugins require the Python launcher.
 
 The repository's parity tests run both CLIs side by side; see
 [Testing](#testing).
@@ -151,7 +154,8 @@ ajx init trials/jq --product jq --harness codex --no-input \
 Without these flags, `ajx init` writes exactly the Python CLI's scaffold. A
 container trial still needs an image prepared as described in
 [environments](../skills/ajx/references/environments.md), and credentials that
-work in a fresh HOME; `ajx init` reports when the written trial does not load yet.
+work in a fresh HOME. Invalid input returns a nonzero exit. If existing files
+are kept, the result describes those files rather than the unapplied options.
 
 ## Output for agents and pipelines
 
@@ -176,9 +180,22 @@ may appear within a schema version; existing fields keep their meaning.
 
 When a `--json` command fails, it prints the usual error line on stderr and a
 document with `ok: false`, `exit_code` and `error` (`type`: `trial_file_error`,
-`console_error`, `locked`, `interrupted` or `error`; `message`) on stdout.
+`usage`, `console_error`, `locked`, `stage_refused`, `cleanup_unconfirmed`,
+`interrupted` or `error`; `message`) on stdout. This includes missing arguments
+and malformed options. Help remains human-readable.
 `ajx console state`, `since`, `wait` and `list --json` print the console's own
 JSON, as in the Python CLI.
+
+`init --no-input` provides headless next steps; commands quote accepted paths,
+including spaces, and `next_argv` supplies argument arrays for direct execution.
+`doctor --json` includes `coordinator` readiness for local process control,
+with specific problems and remediation when a sandbox prevents it.
+`status --json` includes the observed `runner` state and a
+`runner_state` per attempt. A missing or unrelated folder is an error; a valid
+unstarted trial has an empty run list. Cleanup is confirmed only from recorded
+cleanup results. `console since` and `wait` retain `trial_error` and
+`process.stale_lock`, so invalid configuration or a vanished runner cannot
+look like an ordinary idle trial.
 
 ## Headless evaluation: `ajx ci`
 
@@ -237,7 +254,10 @@ required_cells = ["cc-sonnet", "codex"]   # cells the plan must include
 ```
 
 Unknown keys are an error, so a misspelled setting cannot be ignored silently.
-The result records the policy file's SHA-256.
+Rates must be finite numbers from 0 to 1; `min_repetitions` must be a
+non-negative integer (default 1).
+The result records the policy file's SHA-256. With `require_reports = true`,
+incomplete reviews and missing or empty report artifacts are inconclusive.
 
 ### How the decision is made
 
@@ -293,10 +313,14 @@ Reason codes: `invalid_config`, `output_not_fresh`, `not_ready`, `locked`,
 `verification_missing`, `verification_untrusted`, `verification_failed`
 (warning), `success_rate_below_target`, `insufficient_evidence`,
 `insufficient_repetitions`, `no_checks`, `cleanup_not_confirmed`,
-`reporting_incomplete`.
+`reporting_incomplete`, `artifact_write_error`.
 
 When the trial file cannot be loaded, the output folder is unknown: the result is
 written only where `--result` or `--output` points.
+An invocation refused because the folder is busy or already contains attempts
+preserves the previous result. Failure to write a provisional result stops
+execution before a worker starts; failure to publish final results returns
+nonzero. Keep separate result paths for separate evaluations.
 
 ### `junit.xml`
 
@@ -310,6 +334,10 @@ One `testsuites` document with two suites:
 - `ajx.<trial-id>.acceptance`: one test case per cell's success-rate target, plus
   "verification checks defined", "cleanup confirmed" and "evaluation completed".
 
+A policy may tolerate some failed attempts. JUnit still reports those individual
+failures, so configure your CI publisher accordingly when the acceptance target
+is below 100%. The CLI exit and `ci-result.json` hold the policy decision.
+
 ### What `ajx ci` does not cover
 
 - No baseline comparison, regression gate or `baseline-comparison.json`.
@@ -318,13 +346,24 @@ One `testsuites` document with two suites:
 - No aggregation of shards run by separate jobs.
 - A hard kill (SIGKILL, or a job deadline without a grace signal) can leave
   cleanup unfinished. The provisional result stays `inconclusive`; rerun the same
-  command with `--allow-reuse` to finish cleanup and reporting.
+  command with `--allow-reuse` to recover the recorded worker, cleanup and reporting.
+  Recovery refuses to verify or archive a workspace while worker termination
+  remains uncertain. It never signals an unrelated process based on an old PID.
 - Harnesses, auth profiles and setup commands must themselves work without
   interaction. `ajx ci` cannot make an interactive login unattended.
 
 Keep the whole output folder as a CI artifact, including on failure.
+Do not delete `state.json` to force another run. An existing attempt with missing
+state is an integrity error. Changed verification, setup, preflight or teardown
+also requires a new output folder; old passing checks cannot certify a new plan.
 
 ## Interruption
+
+The native coordinator needs permission to create a local Unix socket and
+inspect its process groups with `ps`. These let it identify and stop its own
+workers after an interruption. A sandbox that forbids local IPC or process
+inspection must permit those operations, or run the coordinator outside it.
+This is separate from the restrictions of the worker's configured environment.
 
 `ajx run` and `ajx ci` treat SIGINT, SIGTERM and SIGHUP alike: the worker is
 stopped, teardown runs, the environment is released and copied credentials are

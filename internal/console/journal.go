@@ -277,7 +277,7 @@ func lockInfo(out string) M {
 		return nil
 	}
 	same := util.S(info["host"]) == hostname()
-	isAlive := same && alive(info["pid"]) && isAjx(info["pid"], "run") != 0
+	isAlive := same && alive(info["pid"]) && (isAjx(info["pid"], "run") != 0 || isAjx(info["pid"], "ci") != 0)
 	res := util.Copy(info)
 	res["alive"] = isAlive
 	res["same_host"] = same

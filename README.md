@@ -178,8 +178,8 @@ the old directory resumes its saved attempt.
 The skill can coordinate from a compatible Agent Skills host; launching a
 worker requires a supported CLI adapter. Local and local Docker environments
 are implemented, and `ajx console` serves a local page for one trial. Remote
-provisioning, selected plugins/hooks, a remote or shared live dashboard, and
-automated acceptance/improvement loops remain [designs](docs/design/).
+provisioning, selected plugins/hooks, a remote or shared live dashboard,
+baseline regression gates and automatic improvement loops remain [designs](docs/design/).
 
 ## Work directly with the CLI
 

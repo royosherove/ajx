@@ -260,6 +260,30 @@ func TestParityInit(t *testing.T) {
 		py, gov := filepath.Join(base, "py", "My Trial"), filepath.Join(base, "go", "My Trial")
 		rp := runCLI(t, "py", base, "init", py, "--product", "example", "--harness", harness)
 		rg := runCLI(t, "go", base, "init", gov, "--product", "example", "--harness", harness)
+		// Native init adds headless guidance. Check that contract explicitly;
+		// the written scaffold and all remaining output must still match.
+		for _, command := range []string{"ajx validate '", "ajx doctor '", "ajx run '", "ajx ci '"} {
+			if !strings.Contains(rg.stdout, command) {
+				t.Fatalf("native headless guidance lacks %q: %s", command, rg.stdout)
+			}
+		}
+		withoutNext := func(text string) string {
+			lines := strings.Split(text, "\n")
+			out := []string{}
+			found := 0
+			for _, line := range lines {
+				if strings.HasPrefix(line, "Next: ") {
+					found++
+				} else {
+					out = append(out, line)
+				}
+			}
+			if found != 1 {
+				t.Fatalf("expected one next-step explanation, got %d", found)
+			}
+			return strings.Join(out, "\n")
+		}
+		rp.stdout, rg.stdout = withoutNext(rp.stdout), withoutNext(rg.stdout)
 		same(t, "init "+harness, rp, rg, marks("DIR", py, gov))
 		for _, f := range []string{"trial.toml", "task-prompt.md"} {
 			a, _ := os.ReadFile(filepath.Join(py, f))
@@ -285,6 +309,17 @@ func TestParityValidateAndDoctor(t *testing.T) {
 		// the first line names the implementation (python 3.x / go 1.x)
 		py.stdout = strings.SplitN(py.stdout, "\n", 2)[1]
 		gov.stdout = strings.SplitN(gov.stdout, "\n", 2)[1]
+		// Native readiness now rejects a failed identity command even when
+		// its text contains no recognized credential error. The fake aws
+		// deliberately exits 97; assert that new diagnostic before comparing
+		// every other line with the Python implementation.
+		if trial == example("") || trial == example("aws-cloud") {
+			if gov.code == 0 || !strings.Contains(gov.stdout, "    FAILED model identity check: exit 97\n") {
+				t.Fatalf("native doctor did not reject the blocked identity probe: %d %s", gov.code, gov.stdout)
+			}
+			gov.stdout = strings.ReplaceAll(gov.stdout, "    FAILED model identity check: exit 97\n", "")
+			gov.stdout = strings.ReplaceAll(gov.stdout, "    PROBLEMS: ['model identity check failed: exit 97']\n", "")
+		}
 		same(t, "doctor "+path, py, gov, nil)
 	}
 }
@@ -435,7 +470,20 @@ func TestParityFullRunStatusReport(t *testing.T) {
 	if vp["outcome"] != vg["outcome"] || fmt.Sprint(vp["passed"]) != fmt.Sprint(vg["passed"]) {
 		t.Errorf("verify.json: python %v/%v go %v/%v", vp["outcome"], vp["passed"], vg["outcome"], vg["passed"])
 	}
-	diff(t, "run files", strings.Join(listFiles(t, filepath.Join(py, runDir)), "\n"), strings.Join(listFiles(t, filepath.Join(gov, runDir)), "\n"))
+	// Native execution records worker ownership for recovery. This extra file
+	// must confirm a stopped group after a complete run, while common evidence
+	// and reports remain present in both implementations.
+	record := readJSON(filepath.Join(gov, runDir, "execute.process.json"))
+	if record["stopped"] != true || record["version"] != float64(1) {
+		t.Fatal("native run did not retain a stopped worker ownership record")
+	}
+	nativeFiles := []string{}
+	for _, name := range listFiles(t, filepath.Join(gov, runDir)) {
+		if name != "execute.process.json" {
+			nativeFiles = append(nativeFiles, name)
+		}
+	}
+	diff(t, "run files", strings.Join(listFiles(t, filepath.Join(py, runDir)), "\n"), strings.Join(nativeFiles, "\n"))
 	// each CLI reads the other's output the same way
 	for _, d := range []string{py, gov} {
 		trial := filepath.Join(d, "trial.toml")

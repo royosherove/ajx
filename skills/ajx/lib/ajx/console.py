@@ -403,7 +403,8 @@ def _lock(out):
     if not isinstance(info, dict):
         return None
     same = info.get("host") == socket.gethostname()
-    alive = same and _alive(info.get("pid")) and _is_ajx(info.get("pid"), "run") is not False
+    alive = same and _alive(info.get("pid")) and (
+        _is_ajx(info.get("pid"), "run") is not False or _is_ajx(info.get("pid"), "ci") is not False)
     return {**info, "alive": alive, "same_host": same}
 
 
@@ -1082,7 +1083,7 @@ def _pending_start(entries, ready):
 def _process(trial, entries, job, out, ready, parallel=1):
     lock = _lock(out)
     last_job = _last(entries, "job_started")
-    view = {"state": "idle", "stale_lock": bool(lock and not lock["alive"]), "parallel": parallel,
+    view = {"state": "idle", "stale_lock": bool(lock and lock["same_host"] and not lock["alive"]), "parallel": parallel,
             "log": (job or last_job or {}).get("log"), "log_tail": _log_tail(trial, (job or last_job or {}).get("log"))}
     if job:
         stop = _last(entries, "stop_requested")
@@ -1171,7 +1172,6 @@ def snapshot(trial, *, feed_limit=14, skip=()):
     trial = trial_file(trial)
     spec, error = load(trial)
     out = output_dir(trial, spec)
-    journal_progress(trial, out, spec)
     entries, _ = read_entries(trial)
     if reconcile(trial, entries, skip=skip):
         entries, _ = read_entries(trial)
@@ -1179,6 +1179,8 @@ def snapshot(trial, *, feed_limit=14, skip=()):
     ready = readiness(trial, plan["sha"])
     job = active_job(trial, entries, out)
     runs = _runs(spec, out, feed_limit)
+    journal_progress(trial, out, spec)
+    entries, _ = read_entries(trial)
     output = _output(spec, out, runs)
     process = _process(trial, entries, job, out, ready, int(((spec or {}).get("trial") or {}).get("parallel") or 1))
     started = any(r["has_state"] for r in runs)
@@ -1227,7 +1229,11 @@ def _console_view(trial):
 
 def _headline(snap):
     proc, out, runs = snap["process"], snap["output"], snap["runs"]
-    if proc["state"] in ("running", "stopping"):
+    if snap["trial"].get("error"):
+        head = "The trial configuration is invalid: " + snap["trial"]["error"]
+    elif proc.get("stale_lock"):
+        head = "The runner is no longer active; inspect the interrupted attempt and resume cleanup before trusting its results"
+    elif proc["state"] in ("running", "stopping"):
         active = [f"{r['id']} at {r['current']}" for r in runs if r.get("current")]
         head = ("Stopping the run" if proc["state"] == "stopping" else "A run is in progress") + \
                (": " + ", ".join(active) if active else "")
@@ -1255,6 +1261,11 @@ def since(trial, cursor=0, touch=True):
     """What changed after `cursor`, for an agent catching up before it replies."""
     trial = trial_file(trial)
     snap = snapshot(trial, feed_limit=3)
+    trial_error = snap["trial"].get("error")
+    if trial_error:
+        snap["readiness"] = {**snap["readiness"], "status": "invalid", "current": True,
+                             "problems": [*(snap["readiness"].get("problems") or []), trial_error]}
+        snap["output"] = {**snap["output"], "blocker": trial_error, "blocker_kind": "invalid_trial"}
     entries, _ = read_entries(trial, cursor)
     new_cursor = snap["journal"]["cursor"]
     if touch:
@@ -1282,7 +1293,7 @@ def since(trial, cursor=0, touch=True):
     info = server_info(trial)
     out = Path(snap["output"]["dir"])
     return {
-        "schema": SCHEMA, "trial": str(trial), "since": cursor, "cursor": new_cursor,
+        "schema": SCHEMA, "trial": str(trial), "trial_error": trial_error, "since": cursor, "cursor": new_cursor,
         "headline": _headline(snap).rstrip(".") + "." + (f" {len(messages)} message(s) for you." if messages else ""),
         "changes": [{"n": e["n"], "at": e.get("at"), "actor": e.get("actor"), "kind": e.get("kind"),
                      "text": _clip(describe(e), 600)} for e in entries],
@@ -1292,7 +1303,7 @@ def since(trial, cursor=0, touch=True):
                       "problems": snap["readiness"].get("problems") or [],
                       "warnings": snap["readiness"].get("warnings") or [],
                       "warnings_need_acceptance": bool(snap["readiness"].get("needs_ack"))},
-        "process": {k: snap["process"].get(k) for k in ("state", "job", "pid", "since", "by", "command")},
+        "process": {k: snap["process"].get(k) for k in ("state", "job", "pid", "since", "by", "command", "stale_lock")},
         "output": {k: snap["output"][k] for k in ("dir", "started", "planned", "complete", "blocker", "blocker_kind",
                                                    "index", "pending_reports", "unstarted")},
         "runs": [{"id": r["id"], "stage": r["current"], "complete": r["complete"], "model": r.get("model"),

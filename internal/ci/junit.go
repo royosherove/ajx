@@ -126,7 +126,7 @@ func JUnit(result util.M) string {
 		case "missing":
 			tc.errorTag = [2]string{"run_missing", "no attempt was recorded for this planned run"}
 		case "untrusted":
-			tc.errorTag = [2]string{"verification_untrusted", "the checks passed but printed credential or permission errors"}
+			tc.errorTag = [2]string{"verification_untrusted", "the checks printed credential or permission errors; their outcome is not trustworthy"}
 		case "not_run":
 			tc.errorTag = [2]string{"verification_missing", "no verification checks ran"}
 		default:
@@ -180,8 +180,15 @@ func JUnit(result util.M) string {
 		}
 	}
 	acc.cases = append(acc.cases, cleanup)
+	if util.Truthy(util.Get(result, "policy", "require_reports")) {
+		reports := testcase{class: class, name: "reports complete"}
+		if rs := byCode["reporting_incomplete"]; len(rs) > 0 {
+			reports.errorTag = [2]string{"reporting_incomplete", util.S(rs[0]["message"])}
+		}
+		acc.cases = append(acc.cases, reports)
+	}
 	evaluation := testcase{class: class, name: "evaluation completed"}
-	for _, code := range []string{"invalid_config", "output_not_fresh", "not_ready", "locked", "interrupted", "run_error", "incomplete"} {
+	for _, code := range []string{"invalid_config", "output_not_fresh", "not_ready", "locked", "interrupted", "run_error", "artifact_write_error", "incomplete"} {
 		if rs := byCode[code]; len(rs) > 0 {
 			evaluation.errorTag = [2]string{code, util.S(rs[0]["message"])}
 			break

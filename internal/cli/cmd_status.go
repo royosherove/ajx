@@ -57,7 +57,55 @@ func outputOf(path string) (string, util.M, error) {
 		}
 		return util.S(util.Get(sp, "trial", "output_dir")), sp, nil
 	}
+	if !isDir(path) {
+		return "", nil, spec.Errorf("status input does not exist or is not readable: %s; pass a trial.toml or matrix output directory", path)
+	}
+	if !isDir(filepath.Join(path, "runs")) && !isFile(filepath.Join(path, "matrix-plan.json")) && !isFile(filepath.Join(path, "matrix.json")) {
+		return "", nil, spec.Errorf("not a trial or matrix output directory: %s; pass the trial.toml for a trial that has not started", path)
+	}
 	return path, nil, nil
+}
+
+// statusRunDirs distinguishes a valid, unstarted trial from unreadable output.
+func statusRunDirs(out string, sp util.M) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(out, "runs"))
+	if os.IsNotExist(err) && (sp != nil || isFile(filepath.Join(out, "matrix-plan.json"))) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, spec.Errorf("cannot read matrix runs in %s: %v", out, err)
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, filepath.Join(out, "runs", entry.Name()))
+		}
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+// statusRunner reports only observable liveness. A lock on another host or
+// running stages without a lock are unknown, never proof that a worker is dead.
+func statusRunner(out string) util.M {
+	path := filepath.Join(out, ".lock")
+	value, err := util.ReadJSON(path, nil)
+	if err != nil {
+		return util.M{"state": "unknown", "problem": err.Error()}
+	}
+	if value == nil {
+		return util.M{"state": "unlocked"}
+	}
+	info := util.MapOr(value)
+	host, _ := os.Hostname()
+	state := "unknown"
+	if info["host"] == host && util.Int(info["pid"], 0) > 0 {
+		state = "stale"
+		if runner.PidAlive(util.Int(info["pid"], 0)) {
+			state = "running"
+		}
+	}
+	return util.M{"state": state, "pid": info["pid"], "host": info["host"], "since": info["at"]}
 }
 
 // runDirs lists <out>/runs/* directories, sorted by name.
@@ -87,22 +135,30 @@ type runRow struct {
 	authErrs []string
 	teardown string
 	bad      bool
+	liveness string
 }
 
 func readRun(d string) (runRow, []string, error) {
 	row := runRow{dir: d}
-	st, err := util.ReadJSON(filepath.Join(d, "state.json"), util.M{"stages": util.M{}})
+	st, err := util.ReadJSON(filepath.Join(d, "state.json"), nil)
 	if err != nil {
 		return row, nil, fmt.Errorf("%s: %w", filepath.Join(d, "state.json"), err)
 	}
 	row.state = util.MapOr(st)
+	if row.state == nil || row.state["stages"] == nil {
+		return row, nil, spec.Errorf("missing or invalid run state: %s; preserve this output and recover it before starting another attempt", filepath.Join(d, "state.json"))
+	}
 	stages := util.MapOr(row.state["stages"])
 	row.stages = util.M{}
+	row.liveness = util.S(statusRunner(filepath.Dir(filepath.Dir(d)))["state"])
 	var cleanup []string
 	td := util.S(util.Get(row.state, "teardown", "status"))
 	row.teardown = td
 	for _, s := range runner.Stages {
 		v := util.S(util.Get(stages, s, "status"))
+		if v == "running" && row.liveness == "stale" {
+			v = "interrupted"
+		}
 		row.stages[s] = nilIfEmpty(v)
 		mark, known := stageMarks[v]
 		if !known {
@@ -116,7 +172,7 @@ func readRun(d string) (runRow, []string, error) {
 			}
 		}
 		row.marks = append(row.marks, mark)
-		if v == "error" || mark == "AUTH" || mark == "FAIL" || mark == "SKIP" {
+		if v == "error" || v == "interrupted" || mark == "AUTH" || mark == "FAIL" || mark == "SKIP" {
 			row.bad = true
 		}
 	}
@@ -141,7 +197,7 @@ func countBad(rows []runRow) int {
 	for _, r := range rows {
 		for i, s := range runner.Stages {
 			v := util.S(r.stages[s])
-			if v == "error" || (r.marks[i] == "AUTH" || r.marks[i] == "FAIL" || r.marks[i] == "SKIP") {
+			if v == "error" || v == "interrupted" || (r.marks[i] == "AUTH" || r.marks[i] == "FAIL" || r.marks[i] == "SKIP") {
 				n++
 			}
 		}
@@ -156,6 +212,10 @@ func status(path string, tail int, _ bool) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	dirs, err := statusRunDirs(out, sp)
+	if err != nil {
+		return 2, err
+	}
 	header := fmt.Sprintf("%-20s ", "run")
 	var cols []string
 	for _, s := range runner.Stages {
@@ -164,7 +224,7 @@ func status(path string, tail int, _ bool) (int, error) {
 	outln(header + strings.Join(cols, " ") + "  verified")
 	var rows []runRow
 	var cleanup []string
-	for _, d := range runDirs(out) {
+	for _, d := range dirs {
 		row, c, err := readRun(d)
 		if err != nil {
 			return 1, err
@@ -199,11 +259,16 @@ func statusDoc(path string, tail *int) (int, util.M, error) {
 	if err != nil {
 		return 2, nil, err
 	}
-	doc := util.M{"schema_version": SchemaVersion, "command": "status", "output_dir": out, "stages": strs(runner.Stages)}
+	dirs, err := statusRunDirs(out, sp)
+	if err != nil {
+		return 2, nil, err
+	}
+	doc := util.M{"schema_version": SchemaVersion, "command": "status", "output_dir": out, "stages": strs(runner.Stages),
+		"runner": statusRunner(out)}
 	var runs []any
 	var cleanup []any
 	var rows []runRow
-	for _, d := range runDirs(out) {
+	for _, d := range dirs {
 		row, c, err := readRun(d)
 		if err != nil {
 			return 1, nil, err
@@ -212,10 +277,18 @@ func statusDoc(path string, tail *int) (int, util.M, error) {
 		for _, line := range c {
 			cleanup = append(cleanup, line)
 		}
-		confirmed := !util.Contains([]string{"auth_errors", "failed", "skipped"}, row.teardown)
+		confirmed := row.teardown == "ok" && row.stages["teardown"] == "done" &&
+			row.stages["execute"] != "running" &&
+			(row.stages["execute"] != "interrupted" || util.Get(row.state, "worker_cleanup", "confirmed") == true)
+		if util.Get(row.state, "worker_cleanup", "confirmed") == false {
+			confirmed = false
+		}
+		if util.Truthy(row.state["environment"]) && util.Get(row.state, "environment_cleanup", "confirmed") != true {
+			confirmed = false
+		}
 		rec := util.M{"run_id": filepath.Base(d), "dir": d, "stages": row.stages, "marks": strs(row.marks),
 			"verified": row.outcome, "checks_with_auth_errors": strs(row.authErrs), "teardown_status": nilIfEmpty(row.teardown),
-			"cleanup_confirmed": confirmed, "stage_errors": stageErrors(row.state)}
+			"cleanup_confirmed": confirmed, "runner_state": row.liveness, "stage_errors": stageErrors(row.state)}
 		if tail != nil && *tail > 0 {
 			rec["events"] = tailEvents(sp, row, *tail)
 		}

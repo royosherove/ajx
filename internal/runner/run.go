@@ -55,6 +55,12 @@ type Run struct {
 
 // NewRun loads (or starts) the state of one attempt.
 func NewRun(sp, cell M, rep int, log func(string)) (*Run, error) {
+	return loadRun(sp, cell, rep, log, false)
+}
+
+// loadRun also supports input validation without creating directories,
+// constructing plugins, or persisting a legacy fingerprint upgrade.
+func loadRun(sp, cell M, rep int, log func(string), readOnly bool) (*Run, error) {
 	if log == nil {
 		log = func(m string) { fmt.Println(m) }
 	}
@@ -62,8 +68,20 @@ func NewRun(sp, cell M, rep int, log func(string)) (*Run, error) {
 	r.RunID = fmt.Sprintf("%s-r%d", util.Str(cell["id"]), rep)
 	r.OutDir = util.S(util.Get(sp, "trial", "output_dir"))
 	r.RunDir = filepath.Join(r.OutDir, "runs", r.RunID)
-	if err := os.MkdirAll(r.RunDir, 0o755); err != nil {
+	// A missing state file is not permission to replay a partially recorded
+	// attempt. Inspect before creating anything or replacing its evidence.
+	if entries, err := os.ReadDir(r.RunDir); err == nil && len(entries) > 0 {
+		if _, err := os.Stat(filepath.Join(r.RunDir, "state.json")); errors.Is(err, os.ErrNotExist) {
+			return nil, spec.Errorf("%s: state.json is missing from a nonempty run directory; "+
+				"preserve this evidence and use a new output directory", r.RunID)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
+	}
+	if !readOnly {
+		if err := os.MkdirAll(r.RunDir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	r.StatePath = filepath.Join(r.RunDir, "state.json")
 	st, err := ReadJSON(r.StatePath, nil)
@@ -71,24 +89,40 @@ func NewRun(sp, cell M, rep int, log func(string)) (*Run, error) {
 		return nil, err
 	}
 	if st == nil {
+		if exists(r.StatePath) {
+			return nil, spec.Errorf("%s: state.json contains no run state; preserve the evidence and use a new output directory", r.RunID)
+		}
 		st = M{"stages": M{}}
 	}
 	state, ok := st.(M)
 	if !ok {
 		return nil, runtimeErr("%s: state.json is not an object", r.RunID)
 	}
-	if util.Map(state["stages"]) == nil {
-		state["stages"] = M{}
+	stages := util.Map(state["stages"])
+	if stages == nil {
+		return nil, spec.Errorf("%s: state.json has no valid stages object; refusing to treat it as an unstarted attempt", r.RunID)
+	}
+	for name, record := range stages {
+		status := util.S(util.Get(record, "status"))
+		if status != "running" && !isTerminal(status) {
+			return nil, spec.Errorf("%s: state.json has an invalid %s stage record; preserve the original attempt", r.RunID, name)
+		}
+	}
+	if util.Truthy(state["execute"]) && stages["execute"] == nil ||
+		util.Truthy(state["paths"]) && stages["prepare"] == nil {
+		return nil, spec.Errorf("%s: state.json is missing stage history for an existing attempt; refusing to replay it", r.RunID)
 	}
 	r.State = state
-	if r.Harness, err = spec.HarnessFor(sp, util.S(cell["harness"])); err != nil {
-		return nil, err
-	}
-	if r.Auth, err = spec.AuthFor(sp, cell, ""); err != nil {
-		return nil, err
-	}
-	if r.Runner, err = spec.RunnerFor(sp, cell); err != nil {
-		return nil, err
+	if !readOnly {
+		if r.Harness, err = spec.HarnessFor(sp, util.S(cell["harness"])); err != nil {
+			return nil, err
+		}
+		if r.Auth, err = spec.AuthFor(sp, cell, ""); err != nil {
+			return nil, err
+		}
+		if r.Runner, err = spec.RunnerFor(sp, cell); err != nil {
+			return nil, err
+		}
 	}
 	r.EnvironmentProfile = spec.EnvironmentFor(sp, cell)
 	r.ConfigurationProfile = spec.AgentConfigurationFor(sp, cell)
@@ -106,7 +140,7 @@ func NewRun(sp, cell M, rep int, log func(string)) (*Run, error) {
 					"use a new trial output directory for a new comparison", r.RunID)
 			}
 		}
-		if saved != r.ContractSHA256 {
+		if saved != r.ContractSHA256 && !readOnly {
 			r.State["environment_contract_sha256"] = r.ContractSHA256
 			if err := r.save(); err != nil {
 				return nil, err
@@ -513,6 +547,12 @@ func (r *Run) stagePrepare() error {
 	}
 	setupResults := []any{}
 	for _, cmd := range util.Maps(r.Spec["setup"]) {
+		// A setup command can mutate resources before it fails or AJX dies.
+		// Persist that cleanup is owed before invoking the first command.
+		r.State["setup_started"] = true
+		if err := r.save(); err != nil {
+			return err
+		}
 		res, err := r.command(cmd, ctx, "environment")
 		if err != nil {
 			return err
@@ -719,14 +759,14 @@ func (r *Run) stageExecute() error {
 	exec["started_at"] = util.Now()
 	exec["stopped_at"] = nil
 	exec["stop_reason"] = "running"
+	exec["process_record"] = r.processRecordPath()
 	r.State["execute"] = exec
 	if err := r.save(); err != nil {
 		return err
 	}
-	proc, err := r.Harness.Execute(r.Ctx())
-	if err != nil {
-		return err
-	}
+	ctx = r.Ctx()
+	ctx.Go = util.WithProcessRecord(ctx.Context(), r.processRecordPath())
+	proc, executeErr := r.Harness.Execute(ctx)
 	if proc == nil {
 		proc = M{}
 	}
@@ -742,7 +782,16 @@ func (r *Run) stageExecute() error {
 	}
 	merged["stop_reason"] = stop
 	r.State["execute"] = merged
-	return r.save()
+	if !exists(r.processRecordPath()) {
+		// The live call returned without entering the process launcher.
+		delete(merged, "process_record")
+		r.State["worker_cleanup"] = M{"status": "not_started", "confirmed": true,
+			"reason": "harness returned without launching a tracked process"}
+	}
+	if err := r.save(); err != nil {
+		return err
+	}
+	return executeErr
 }
 
 func (r *Run) stageVerify() error {
@@ -826,17 +875,11 @@ func runCheck(plug plugin.Check, check M, ctx *plugin.Ctx) (res M, err error) {
 }
 
 func (r *Run) stageTeardown() error {
+	if err := r.ensureWorkerStopped(); err != nil {
+		return err
+	}
 	ctx := r.Ctx()
 	results := []M{}
-	if ex := r.execState(); ex != nil {
-		if pid := util.Int(ex["pid"], 0); pid != 0 && r.Status("execute") == "done" && !util.Truthy(ex["reaped"]) {
-			util.KillGroup(pid) // servers the agent left running were kept alive for verification
-			ex["reaped"] = true // a redone teardown must not signal a reused pid
-			if err := r.save(); err != nil {
-				return err
-			}
-		}
-	}
 	teardown := util.Maps(r.Spec["teardown"])
 	ran := exists(ctx.Workspace)
 	if ran {
@@ -1094,7 +1137,7 @@ func (r *Run) stageExtract() error {
 // teardownNeedsEnvironment: a teardown retry repeats every command, including
 // previously successful environment steps.
 func (r *Run) teardownNeedsEnvironment() bool {
-	if r.EnvironmentProfile == nil || !r.done("prepare") || !isTerminal(r.Status("teardown")) {
+	if r.EnvironmentProfile == nil || (!r.done("prepare") && !r.setupStarted()) || !isTerminal(r.Status("teardown")) {
 		return false
 	}
 	required := false
@@ -1116,6 +1159,9 @@ func cleanupConfirmed(state M) bool {
 
 // stageRelease releases the worker after narration; reporting consumes exported evidence.
 func (r *Run) stageRelease() error {
+	if err := r.ensureWorkerStopped(); err != nil {
+		return err
+	}
 	if r.EnvironmentProfile == nil || !util.Truthy(r.State["environment"]) {
 		return nil
 	}
@@ -1190,7 +1236,8 @@ func (r *Run) ownedPath(p string) bool {
 // auth cleanup hooks are deferred until a confirmed release.
 func (r *Run) purgeCredentials() error {
 	paths, archived := r.paths(), r.archived()
-	confirmed := r.EnvironmentProfile == nil || !util.Truthy(r.State["environment"]) || cleanupConfirmed(r.State)
+	confirmed := (r.EnvironmentProfile == nil || !util.Truthy(r.State["environment"]) || cleanupConfirmed(r.State)) &&
+		util.Get(r.State, "worker_cleanup", "confirmed") != false
 	type rootRec struct {
 		path string
 		dir  *pinnedDir
@@ -1273,6 +1320,13 @@ func callCleanup(a plugin.Auth, ctx *plugin.Ctx) (err error) {
 // later workers cannot discover them; purges copied credentials; drops
 // package caches; repoints evidence paths.
 func (r *Run) stageArchive() error {
+	if err := r.ensureWorkerStopped(); err != nil {
+		return err
+	}
+	if r.setupStarted() && !r.done("prepare") && util.Get(r.State, "teardown", "status") != "ok" {
+		_ = r.purgeCredentials()
+		return runtimeErr("setup may have changed resources and teardown is not confirmed; retaining original paths for cleanup")
+	}
 	paths := r.paths()
 	moved := util.Copy(r.archived())
 	// A confirmed release is durable; archiving no longer needs the backend to be available.

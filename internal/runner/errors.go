@@ -11,6 +11,34 @@ import (
 	"github.com/royosherove/ajx/internal/util"
 )
 
+// StageRefusalError means an explicit request would replay an existing task.
+// It is distinct from an idempotent resume, which may have nothing left to do.
+type StageRefusalError struct {
+	RunID  string
+	Stages []string
+}
+
+func (e *StageRefusalError) Error() string {
+	return fmt.Sprintf("%s: refusing to redo %s: a task runs once per repetition; use a new repetition or output directory",
+		e.RunID, pyList(e.Stages))
+}
+
+func (e *StageRefusalError) TypeName() string { return "StageRefusalError" }
+
+// ProcessRecoveryError leaves an attempt intact when its worker cannot be
+// confirmed stopped. Retrying must not verify or archive that workspace.
+type ProcessRecoveryError struct {
+	RunID  string
+	Reason string
+}
+
+func (e *ProcessRecoveryError) Error() string {
+	return fmt.Sprintf("%s: worker cleanup is not confirmed: %s; preserving the original workspace and evidence",
+		e.RunID, e.Reason)
+}
+
+func (e *ProcessRecoveryError) TypeName() string { return "ProcessRecoveryError" }
+
 // pyError is an error carrying the Python exception class name it ports.
 type pyError struct {
 	kind string

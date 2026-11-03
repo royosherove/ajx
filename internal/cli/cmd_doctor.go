@@ -118,7 +118,7 @@ func doctor(trial string, r *report) (int, error) {
 			wanted[n], hostRequired[n] = true, true
 		}
 	}
-	ok := true
+	ok := doctorCoordinatorChecks.run(r)
 	r.doc["harnesses"] = []any{}
 	for _, name := range names {
 		if !wanted[name] {
@@ -141,14 +141,28 @@ func doctor(trial string, r *report) (int, error) {
 		}
 		b := h.Base()
 		avail := h.Available()
-		version := h.Version()
+		probe := plugin.CommandProbe{}
+		if avail {
+			probe = plugin.ProbeHarnessVersion(h)
+		}
+		version := probe.Output
+		problems := []string{}
+		if probe.Checked && !probe.OK {
+			problems = append(problems, "version command failed: "+probe.Failure())
+			if version == "" {
+				version = "unavailable (" + probe.Failure() + ")"
+			}
+		}
 		r.line("harness %-14s installed=%s version=%s verified_live=%s resume=%s clean=%s telemetry: %s",
 			name, yesNo(avail, "NO "), util.OrStr(version, "n/a"), pyBool(b.VerifiedLive), pyBool(b.CanResume),
 			pyBool(b.CleanSupported), b.TelemetrySummary())
 		r.list("harnesses", util.M{"name": name, "checked": "host", "installed": avail, "version": nilIfEmpty(version),
 			"verified_live": b.VerifiedLive, "resume": b.CanResume, "reporter": b.CanReport, "clean": b.CleanSupported,
-			"telemetry": b.TelemetrySummary()})
-		ok = ok && avail
+			"telemetry": b.TelemetrySummary(), "version_probe": commandProbeDoc(probe), "problems": strs(problems)})
+		for _, problem := range problems {
+			r.line("    FAILED %s: %s", name, problem)
+		}
+		ok = ok && avail && len(problems) == 0
 	}
 	if sp != nil {
 		warnings := envcheck.ShellSyntaxWarnings(sp)
@@ -175,6 +189,17 @@ func doctor(trial string, r *report) (int, error) {
 			util.Str(util.Get(sp, "trial", "output_dir")))
 		r.doc["workspace_root"] = util.Get(sp, "trial", "workspace_root")
 		r.doc["output_dir"] = util.Get(sp, "trial", "output_dir")
+		r.doc["paths"] = []any{}
+		for _, key := range []string{"workspace_root", "output_dir"} {
+			path := util.S(util.Get(sp, "trial", key))
+			problem := doctorDirectory(path)
+			r.list("paths", util.M{"field": "trial." + key, "path": path,
+				"ready": problem == "", "problem": nilIfEmpty(problem)})
+			if problem != "" {
+				r.line("    FAILED trial.%s: %s", key, problem)
+				ok = false
+			}
+		}
 		if !ok {
 			r.line("NOT READY: fix the FAILED/PROBLEMS lines above before `ajx run`.")
 		}
@@ -222,6 +247,19 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 	ctx := context.Background()
 	ok := true
 	memo := map[string]any{}
+	once := func(key string, fn func() any) any {
+		if v, seen := memo[key]; seen {
+			return v
+		}
+		v := fn()
+		memo[key] = v
+		return v
+	}
+	probeAuth := func(auth plugin.Auth, env map[string]string) plugin.CommandProbe {
+		return once("auth\x00"+auth.Base().Harness+"\x00"+auth.Base().Profile+"\x00"+envSig(env), func() any {
+			return plugin.ProbeAuthIdentity(auth, env)
+		}).(plugin.CommandProbe)
+	}
 	var groupOrder []string
 	groups := map[string]*cmdGroup{}
 	rep := util.MapOr(sp["reporter"])
@@ -233,24 +271,20 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 	r.line("reporter harness=%s model=%s auth=%s", util.Str(rep["harness"]), util.OrStr(util.S(rep["model"]), "harness default"),
 		reporterAuth.Base().Profile)
 	reporterProblems := reporterAuth.Problems(nil)
+	reporterProbe := probeAuth(reporterAuth, util.ChildEnv(reporterAuth.Env(), reporterAuth.Unset()))
+	if failure := authProbeFailure(reporterProbe); failure != "" {
+		reporterProblems = append(reporterProblems, "model identity check failed: "+failure)
+	}
 	if len(reporterProblems) > 0 {
 		r.line("    PROBLEMS: %s", spec.ReprList(reporterProblems))
 		ok = false
 	}
 	r.doc["reporter"] = util.M{"harness": rep["harness"], "model": rep["model"], "auth": reporterAuth.Base().Profile,
-		"problems": strs(reporterProblems)}
+		"problems": strs(reporterProblems), "auth_identity_probe": commandProbeDoc(reporterProbe)}
 	identCmd := util.S(util.Get(sp, "task", "identity_cmd"))
 	ws, err := envcheck.ScratchWorkspace(sp, tmp)
 	if err != nil {
 		return false, err
-	}
-	once := func(key string, fn func() any) any {
-		if v, seen := memo[key]; seen {
-			return v
-		}
-		v := fn()
-		memo[key] = v
-		return v
 	}
 	r.doc["cells"] = []any{}
 	for _, cell := range util.Maps(sp["cells"]) {
@@ -322,7 +356,8 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		eff := envcheck.Effective(view)
 		shell := envcheck.ViewShell(view)
 		ab := auth.Base()
-		checks["auth_identity"] = once("auth\x00"+ab.Profile+"\x00"+envSig(eff), func() any { return envcheck.AuthIdentity(auth, eff) })
+		authProbe := probeAuth(auth, eff)
+		checks["auth_identity"] = authProbe.Output
 		r.line("cell %-16s harness=%s model=%s config=%s", util.Str(cell["id"]), util.Str(cell["harness"]), model, util.Str(cell["config"]))
 		r.line("    auth=%s (%s) env=%s unset=%s isolates_config=%s", ab.Profile, auth.Name(),
 			spec.ReprList(util.SortedKeys(auth.Env())), spec.ReprList(auth.Unset()), pyBool(ab.IsolatesConfig))
@@ -332,11 +367,14 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		}
 		authIdent := util.Str(checks["auth_identity"])
 		r.line("    harness auth identity (model credentials): %s", util.OrStr(authIdent, "n/a"))
-		authOK := true
-		if authIdent != "" && len(envcheck.AuthErrorLines(authIdent)) > 0 {
-			r.line("    FAILED the model credentials above do not authenticate; every model call would fail")
+		var authOK any
+		if authProbe.Checked {
+			authOK = authProbe.OK
+		}
+		if failure := authProbeFailure(authProbe); failure != "" {
+			r.line("    FAILED model identity check: %s", failure)
 			ok, authOK = false, false
-			cellProblems = append(cellProblems, "the model credentials do not authenticate")
+			cellProblems = append(cellProblems, "model identity check failed: "+failure)
 		}
 		checks["task_identity"] = nil
 		local := util.Truthy(checks["local_runner"])
@@ -400,6 +438,7 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		cellDoc["tool_shell"] = checks["tool_shell"]
 		cellDoc["auth_identity"] = nilIfEmpty(authIdent)
 		cellDoc["auth_identity_ok"] = authOK
+		cellDoc["auth_identity_probe"] = commandProbeDoc(authProbe)
 		cellDoc["task_identity"] = identityDoc(checks["task_identity"])
 		cellDoc["default_aws_identity"] = identityDoc(checks["default_aws_identity"])
 		cellDoc["warnings"] = strs(ws2)
@@ -472,4 +511,59 @@ func identityDoc(v any) any {
 	}
 	return util.M{"ok": util.Truthy(m["ok"]), "output": m["output"], "exit_code": m["exit_code"],
 		"timed_out": util.Truthy(m["timed_out"]), "shell": m["shell"]}
+}
+
+func commandProbeDoc(p plugin.CommandProbe) util.M {
+	var ok, code any
+	if p.Checked {
+		ok = p.OK
+	}
+	if p.ExitCode != nil {
+		code = *p.ExitCode
+	}
+	return util.M{"checked": p.Checked, "ok": ok, "exit_code": code,
+		"timed_out": p.TimedOut, "output": p.Output, "error": nilIfEmpty(p.Error)}
+}
+
+func authProbeFailure(p plugin.CommandProbe) string {
+	if p.Checked && !p.OK {
+		return p.Failure()
+	}
+	if len(envcheck.AuthErrorLines(p.Output)) > 0 {
+		return "credential errors in identity output"
+	}
+	return ""
+}
+
+// doctorDirectory checks the existing directory or nearest existing parent.
+// It does not create the configured tree; the write probe is removed at once.
+func doctorDirectory(path string) string {
+	for dir := path; ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Sprintf("%s is not a directory", dir)
+			}
+			probe, err := os.CreateTemp(dir, ".ajx-doctor-*")
+			if err != nil {
+				return fmt.Sprintf("cannot write beneath %s: %v", dir, err)
+			}
+			name := probe.Name()
+			closeErr := probe.Close()
+			removeErr := os.Remove(name)
+			if closeErr != nil {
+				return fmt.Sprintf("directory write probe failed: %v", closeErr)
+			}
+			if removeErr != nil {
+				return fmt.Sprintf("cannot remove directory write probe %s: %v", name, removeErr)
+			}
+			return ""
+		}
+		if !os.IsNotExist(err) || filepath.Dir(dir) == dir {
+			return fmt.Sprintf("cannot access %s: %v", dir, err)
+		}
+		if _, linkErr := os.Lstat(dir); linkErr == nil {
+			return fmt.Sprintf("%s is a dangling link", dir)
+		}
+	}
 }
