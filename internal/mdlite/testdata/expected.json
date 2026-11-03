@@ -1,0 +1,110 @@
+[
+ {
+  "render": "<h1 id=\"t\">T</h1>\n<div class=\"table-wrap\"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>&lt;x&gt;</td></tr></tbody></table></div>\n<ul><li><code>c</code> <strong>b</strong> <a href=\"http://x\">l</a></li></ul>\n<pre><code class=\"lang-sh\">echo &lt;hi&gt;</code></pre>",
+  "inline": "# T\n\n| a | b |\n|---|---|\n| 1 | &lt;x&gt; |\n\n- <code>c</code> <strong>b</strong> <a href=\"http://x\">l</a>\n\n``<code>sh\necho &lt;hi&gt;\n</code>``"
+ },
+ {
+  "render": "<p><a href=\"#\">x</a>) <a href=\"#\">y</a></p>",
+  "inline": "<a href=\"#\">x</a>) <a href=\"#\">y</a>"
+ },
+ {
+  "render": "<p><a href=\"#\">unsafe</a></p>",
+  "inline": "<a href=\"#\">unsafe</a>"
+ },
+ {
+  "render": "<p><a href=\"#\">unsafe</a></p>",
+  "inline": "<a href=\"#\">unsafe</a>"
+ },
+ {
+  "render": "<p><a href=\"#\">unsafe</a></p>",
+  "inline": "<a href=\"#\">unsafe</a>"
+ },
+ {
+  "render": "<p><a href=\"#\">unsafe</a></p>",
+  "inline": "<a href=\"#\">unsafe</a>"
+ },
+ {
+  "render": "<p><a href=\"http://[::1]/x\">ok</a> <a href=\"http://[v1.x]/\">v</a> <a href=\"#\">v4</a> <a href=\"#\">p</a></p>",
+  "inline": "<a href=\"http://[::1]/x\">ok</a> <a href=\"http://[v1.x]/\">v</a> <a href=\"#\">v4</a> <a href=\"#\">p</a>"
+ },
+ {
+  "render": "<p><em>a</em> <em>b * * c</em> x*y* <em>z*w <strong>bold</strong> <strong>*both</strong></em> <em>mul ti</em></p>",
+  "inline": "<em>a</em> <em>b * * c</em> x*y* <em>z*w <strong>bold</strong> <strong>*both</strong></em> *mul\nti*"
+ },
+ {
+  "render": "<p>a*b*c _x_ <em>é</em> é*x* *x*é</p>",
+  "inline": "a*b*c _x_ <em>é</em> é*x* *x*é"
+ },
+ {
+  "render": "<blockquote><p>quote <em>a</em> more</p></blockquote>\n<ol><li>one</li><li>two cont</li><li>x</li><li>y</li></ol>\n<hr>\n<hr>\n<hr>",
+  "inline": "&gt; quote <em>a</em>\n&gt; more\n\n1. one\n2) two\n   cont\n- x\n  - y\n\n---\n<em>*</em>\n___"
+ },
+ {
+  "render": "<h2 id=\"heading-code-stuff\">Heading <code>code</code> &amp; stuff!</h2>\n<p>para one para two</p>\n<div class=\"table-wrap\"><table><thead><tr><th>x</th></tr></thead><tbody><tr><td>`a</td><td>b`</td><td>c</td></tr></tbody></table></div>",
+  "inline": "## Heading <code>code</code> &amp; stuff!\n\n&lt;!-- comment --&gt;\npara one\npara two\n\n|x|\n|--|\n|<code>a|b</code>|c|"
+ },
+ {
+  "render": "<p>Text with &amp;amp; and &lt;b&gt; and \"quotes\" 'single'</p>",
+  "inline": "Text with &amp;amp; and &lt;b&gt; and \"quotes\" 'single'"
+ },
+ {
+  "render": "<p><a href=\"http://x?a=1&amp;amp;b=2\">a&amp;b</a> <a href=\"&amp;amp;#106;avascript:x\">e</a> [t](java\tscript:x)</p>",
+  "inline": "<a href=\"http://x?a=1&amp;amp;b=2\">a&amp;b</a> <a href=\"&amp;amp;#106;avascript:x\">e</a> [t](java\tscript:x)"
+ },
+ {
+  "render": "<pre><code>unterminated\n&lt;code&gt;</code></pre>",
+  "inline": "```\nunterminated\n&lt;code&gt;"
+ },
+ {
+  "render": "<p>Tab\tline CRLF</p>\n<p>indented para</p>\n<p>#nospace ####### seven</p>",
+  "inline": "Tab\tline\r\nCRLF\r\n\n  indented para\n\n#nospace\n####### seven"
+ },
+ {
+  "render": "<ol><li>[E-001] <strong>Fork</strong> text</li></ol>\n<ol><li>arabic digit item</li></ol>",
+  "inline": "1. [E-001] <strong>Fork</strong> text\n\n٣. arabic digit item"
+ },
+ {
+  "render": "<ul><li>star item</li><li>plus item</li></ul>\n<p><em>not list</em></p>",
+  "inline": "* star item\n+ plus item\n\n<em>not list</em>"
+ },
+ {
+  "render": "<p><code>a</code> <code>b</code> `<code> </code>x` \u0000 1 \u0000</p>",
+  "inline": "<code>a</code> <code>b</code> `<code> </code>x` \u0000 1 \u0000"
+ },
+ {
+  "render": "<p>line nbsp em</p>",
+  "inline": "line nbsp em"
+ },
+ {
+  "render": "<p><strong>a <em>b</em> c</strong></p>",
+  "inline": "<strong>a <em>b</em> c</strong>"
+ },
+ {
+  "render": "<p><em>a <strong>b</strong> c</em></p>",
+  "inline": "<em>a <strong>b</strong> c</em>"
+ },
+ {
+  "render": "<p>a * b * c</p>",
+  "inline": "a * b * c"
+ },
+ {
+  "render": "<p>*</p>",
+  "inline": "*"
+ },
+ {
+  "render": "<div class=\"table-wrap\"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr><tr><td>only</td></tr></tbody></table></div>",
+  "inline": "| a | b |\n| :-- | --: |\n| 1 | 2 | 3 |\n| only |"
+ },
+ {
+  "render": "<p>[link with spaces](http://x y)</p>",
+  "inline": "[link with spaces](http://x y)"
+ },
+ {
+  "render": "<p>[](http://x)</p>",
+  "inline": "[](http://x)"
+ },
+ {
+  "render": "<p>[x]()</p>",
+  "inline": "[x]()"
+ }
+]

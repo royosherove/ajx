@@ -171,7 +171,7 @@ the old directory resumes its saved attempt.
 | Can I see the flow interactively? | Open [the visual walkthrough](docs/start-here.html) locally after cloning |
 | How does another harness or model perform? | [Harness support](docs/HARNESS-SUPPORT.md) and [trial options](skills/ajx/examples/trial.toml) |
 | What if the worker has different tools, skills, or access? | [Environment and agent profiles](skills/ajx/references/environments.md), with a [plain vs guided CSV example](skills/ajx/examples/environment-profiles/) |
-| Can a pipeline run this without an interview? | [Headless execution](skills/ajx/references/headless.md). Full acceptance gating is still proposed; task verification failure can return exit code zero. |
+| Can a pipeline run this without an interview? | [Headless execution](skills/ajx/references/headless.md). `ajx run` can return exit code zero when task verification fails; the Go CLI's [`ajx ci`](docs/GO-CLI.md#headless-evaluation-ajx-ci) decides passed, failed or inconclusive from the task checks. |
 | How does the evidence become a report? | [Architecture](docs/ARCHITECTURE.md) and [reporting method](skills/ajx/references/reporting.md) |
 | Can I review, start and watch a trial in a browser? | [The AJX Console](skills/ajx/references/console.md). Try it free with `python3 skills/ajx/bin/ajx console demo trials/console-demo`. |
 
@@ -204,6 +204,20 @@ Choose `claude-code` or `kiro-cli` instead of `codex` as needed. `init` selects
 the same reporter when supported; use `--reporter` to choose another.
 `ajx plugins` describes adapters and their validation status. To rebuild
 existing reports without model synthesis: `ajx report trial.toml --no-synthesis`.
+
+### Native binary
+
+The same CLI is also available as a single Go binary that reads and writes the
+same trials and output folders. It adds a setup wizard for `ajx init`, `--json`
+output, and `ajx ci` for pipelines. With Go 1.25 or newer:
+
+```sh
+go build -o bin/ajx ./cmd/ajx
+bin/ajx init        # in a terminal, asks for the product, task, check and limits
+```
+
+See [the Go CLI](docs/GO-CLI.md) for installation, `ajx ci`, the JSON formats
+and the differences from the Python CLI.
 
 ## Share and contribute
 

@@ -1,0 +1,2007 @@
+[
+ {
+  "name": "ok-minimal",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "fb615913bc67e0df6c8aa7e0158dc99623bcb5c150300a0ea415ea8655995d3f",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "ok-full",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "fix/a.txt": "x",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nrepetitions = \"3\"\nparallel = 2.7\norder_seed = true\noutput_dir = \"out/x\"\ncache = \"shared\"\nshell_startup = \"skip\"\nmax_budget_usd = 2.5\n[task]\nprompt_file = \"task-prompt.md\"\nidentity_cmd = [\"aws\", \"sts\", \"get-caller-identity\", \"--profile\", \"my sb\"]\nfixture_dir = \"fix\"\nhuman = \"available\"\n[env]\nA = 1\nB = true\nC = 1.5\nD = \"x\"\n[[setup]]\nrun = \"echo yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\"\n[[setup]]\nrun = \"true\"\nname = \"named\"\ntimeout = \"30\"\nallow_auth_errors = 1\n[[verify]]\nrun = \"test -f x\"\n[[verify]]\ntype = \"file_exists\"\npath = \"out/*.txt\"\n[[verify]]\ntype = \"http\"\nurl = \"http://localhost\"\n[[verify]]\nrun = \"true\"\nlocation = \"environment\"\n[[teardown]]\nrun = \"echo bye\"\nlocation = \"host\"\n[[preflight]]\nrun = \"true\"\ntimeout = 5.9\n[adapters.mytool]\nexecute = [\"mytool\", \"run\", \"{prompt}\"]\n[auth.gw]\ntype = \"env\"\nenv = { MY_KEY = \"x\" }\n[reporter]\nmodel = \"m\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\nmodel = \"sonnet\"\nenv = { E = 2 }\nargs = [\"--x\"]\nconfig = \"user\"\n[[cells]]\nid = \"d\"\nharness = \"mytool\"\nauth = \"gw\"\nrunner = \"local\"\n[[cells]]\nid = \"m\"\nharness = \"codex\"\nmodels = [\"GPT-4.1 Turbo!\", \"o3\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "8ea9774dcf408428318d81b275e1092bb92cf7c0e1f30421c59568b33d7d4c2d",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "repetitions": 3,
+    "parallel": 2,
+    "order_seed": 1,
+    "output_dir": "<TMP>/out/x",
+    "cache": "shared",
+    "shell_startup": "skip",
+    "max_budget_usd": 2.5,
+    "product_version_cmd": null,
+    "timeout_seconds": 1800,
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "identity_cmd": "aws sts get-caller-identity --profile 'my sb'",
+    "fixture_dir": "<TMP>/fix",
+    "human": "available",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": []
+   },
+   "setup": [
+    {
+     "run": "echo yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "type": "shell",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "echo yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "location": "environment"
+    },
+    {
+     "run": "true",
+     "name": "named",
+     "timeout": 30,
+     "allow_auth_errors": true,
+     "type": "shell",
+     "location": "environment"
+    }
+   ],
+   "verify": [
+    {
+     "run": "test -f x",
+     "type": "shell",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "test -f x",
+     "location": "host"
+    },
+    {
+     "type": "file_exists",
+     "path": "out/*.txt",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "file_exists",
+     "location": "host"
+    },
+    {
+     "type": "http",
+     "url": "http://localhost",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "http",
+     "location": "host"
+    },
+    {
+     "run": "true",
+     "location": "environment",
+     "type": "shell",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "true"
+    }
+   ],
+   "teardown": [
+    {
+     "run": "echo bye",
+     "location": "host",
+     "type": "shell",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "echo bye"
+    }
+   ],
+   "preflight": [
+    {
+     "run": "true",
+     "timeout": 5,
+     "type": "shell",
+     "allow_auth_errors": false,
+     "name": "true",
+     "location": "environment"
+    }
+   ],
+   "reporter": {
+    "model": "m",
+    "harness": "claude-code",
+    "effort": null,
+    "auth": null
+   },
+   "env": {
+    "A": "1",
+    "B": "True",
+    "C": "1.5",
+    "D": "x"
+   },
+   "adapters": {
+    "mytool": {
+     "execute": [
+      "mytool",
+      "run",
+      "{prompt}"
+     ]
+    }
+   },
+   "auth": {
+    "gw": {
+     "type": "env",
+     "env": {
+      "MY_KEY": "x"
+     }
+    }
+   },
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": "sonnet",
+     "env": {
+      "E": 2
+     },
+     "args": [
+      "--x"
+     ],
+     "config": "user",
+     "effort": null,
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "skip"
+    },
+    {
+     "id": "d",
+     "harness": "mytool",
+     "auth": "gw",
+     "runner": "local",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "skip"
+    },
+    {
+     "id": "m-gpt-4.1-turbo",
+     "harness": "codex",
+     "model": "GPT-4.1 Turbo!",
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "skip",
+     "group": "m"
+    },
+    {
+     "id": "m-o3",
+     "harness": "codex",
+     "model": "o3",
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "skip",
+     "group": "m"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "ok-int-id",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = 5\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "unsupported operand type(s) for /: 'PosixPath' and 'int'",
+  "kind": "TypeError"
+ },
+ {
+  "name": "ok-reporter-from-cell",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[auth.model]\ntype = \"openai-api\"\n[[cells]]\nid = \"g\"\nharness = \"gemini-cli\"\n[[cells]]\nid = \"a\"\nharness = \"codex\"\nauth = \"model\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "3ae383ad1c1e802ef2e62d5732219de4ff1a1d5aa02feb15a93f75ac64387f90",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "codex",
+    "model": null,
+    "effort": null,
+    "auth": "model"
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {
+    "model": {
+     "type": "openai-api"
+    }
+   },
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "g",
+     "harness": "gemini-cli",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    },
+    {
+     "id": "a",
+     "harness": "codex",
+     "auth": "model",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "ok-reporter-default",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"g\"\nharness = \"gemini-cli\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "bd92cf9acaf67a497845619a8b7ba1880787d92afeacf210f5a4d1a38327c42e",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "g",
+     "harness": "gemini-cli",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "missing-file",
+  "files": {
+   "task-prompt.md": "do the thing\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial file not found: <TMP>/trial.toml",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-id",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"T1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.id must be a short lowercase slug",
+  "kind": "SpecError"
+ },
+ {
+  "name": "no-id",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.id must be a short lowercase slug",
+  "kind": "SpecError"
+ },
+ {
+  "name": "no-product",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.product is required",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-cache",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\ncache = \"x\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "87da2571e2cce25901aac53af316b35665b16bfe79cfe23a6f629189ee5a6192",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "cache": "x",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "bad-cache2",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\ncache = \"x\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.cache must be isolated|shared",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-shell-startup",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nshell_startup = \"x\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.shell_startup must be inherit|skip",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-reps",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nrepetitions = \"x\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.repetitions must be an integer",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-reps-float-str",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nrepetitions = \"2.0\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.repetitions must be an integer",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-reps-list",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nrepetitions = [1]\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.repetitions must be an integer",
+  "kind": "SpecError"
+ },
+ {
+  "name": "zero-reps",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nrepetitions = 0\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.repetitions must be >= 1",
+  "kind": "SpecError"
+ },
+ {
+  "name": "zero-parallel",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nparallel = 0\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.parallel must be >= 1",
+  "kind": "SpecError"
+ },
+ {
+  "name": "zero-timeout",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\nnarrate_timeout_seconds = 0\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "timeouts must be >= 1 second",
+  "kind": "SpecError"
+ },
+ {
+  "name": "bad-seed",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\norder_seed = \"x\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "trial.order_seed must be an integer",
+  "kind": "SpecError"
+ },
+ {
+  "name": "no-prompt-file",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task.prompt_file is required",
+  "kind": "SpecError"
+ },
+ {
+  "name": "prompt-missing",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"nope.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task prompt not found: <TMP>/nope.md",
+  "kind": "SpecError"
+ },
+ {
+  "name": "prompt-empty",
+  "files": {
+   "task-prompt.md": " \n\t\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task prompt is empty",
+  "kind": "SpecError"
+ },
+ {
+  "name": "ident-int",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nidentity_cmd = 3\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task.identity_cmd must be a shell command string or an argv list",
+  "kind": "SpecError"
+ },
+ {
+  "name": "ident-blank",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nidentity_cmd = \"   \"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task.identity_cmd must be a shell command string or an argv list",
+  "kind": "SpecError"
+ },
+ {
+  "name": "ident-empty-list",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nidentity_cmd = []\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task.identity_cmd list must hold strings",
+  "kind": "SpecError"
+ },
+ {
+  "name": "ident-list-int",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nidentity_cmd = [\"aws\", 3]\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "task.identity_cmd list must hold strings",
+  "kind": "SpecError"
+ },
+ {
+  "name": "fixture-missing",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nfixture_dir = \"nofix\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "fixture_dir not found: <TMP>/nofix",
+  "kind": "SpecError"
+ },
+ {
+  "name": "fixture-missing-cleanup",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nfixture_dir = \"nofix\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {
+   "cleanup_only": true
+  },
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "7deed5db6e9773fdd053cecf3f48e4fa6492fba91e54497a445269c4af165f54",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "fixture_dir": "<TMP>/nofix",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": true
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "setup-not-table",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nsetup = [\"x\"]\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "55dbb0b008d0cc4fc2abdf8b24f395036fc3ca3269495e68d9b8057880f29e7a",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "setup": [
+     "x"
+    ],
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "setup-inline-table",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nsetup = { a = 1 }\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "2d74d3a8820f685d8bf1974704a9bdcc36edb7ad30f23da99f0d30c39e614984",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "setup": {
+     "a": 1
+    },
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "setup-no-run",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[setup]]\nname = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "setup[0].run is required for type=shell",
+  "kind": "SpecError"
+ },
+ {
+  "name": "setup-http",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[setup]]\ntype = \"http\"\nrun = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "setup[0].type must be shell (only [[verify]] has other check types)",
+  "kind": "SpecError"
+ },
+ {
+  "name": "preflight-http",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[preflight]]\ntype = \"http\"\nurl = \"http://x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "preflight[0].type must be shell (only [[verify]] has other check types)",
+  "kind": "SpecError"
+ },
+ {
+  "name": "setup-timeout",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[setup]]\nrun = \"x\"\ntimeout = \"soon\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "setup[0].timeout must be an integer",
+  "kind": "SpecError"
+ },
+ {
+  "name": "teardown-location",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[teardown]]\nrun = \"x\"\nlocation = \"moon\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "teardown[0].location must be host|environment",
+  "kind": "SpecError"
+ },
+ {
+  "name": "verify-unknown",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"nope\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "verify[0].type 'nope' unknown; available ['file_exists', 'http', 'shell']",
+  "kind": "SpecError"
+ },
+ {
+  "name": "verify-http-env",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"x\"\nlocation = \"environment\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "verify[0]: only shell checks can use location='environment'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "verify-file-abs",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"file_exists\"\npath = \"/etc/passwd\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "verify[0].path must be a non-empty glob beneath the workspace, without '..'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "verify-file-dotdot",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"file_exists\"\npath = \"a/../../b\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "verify[0].path must be a non-empty glob beneath the workspace, without '..'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "verify-file-none",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"file_exists\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "verify[0].path must be a non-empty glob beneath the workspace, without '..'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "adapter-no-execute",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[adapters.x]\nversion = [\"x\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "adapters.x.execute must be a non-empty argv list",
+  "kind": "SpecError"
+ },
+ {
+  "name": "adapter-execute-str",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[adapters.x]\nexecute = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "adapters.x.execute must be a non-empty argv list",
+  "kind": "SpecError"
+ },
+ {
+  "name": "auth-bad-type",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[auth.x]\ntype = \"nope\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "auth.x.type must be one of ['anthropic-api', 'claude-bedrock', 'claude-foundry', 'claude-subscription', 'claude-vertex', 'codex-chatgpt', 'codex-provider', 'cursor-api', 'cursor-login', 'env', 'gemini-api', 'gemini-login', 'gemini-vertex', 'github-login', 'github-token', 'inherit', 'kiro-login', 'openai-api']",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-profiles-not-table",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\nenvironments = 3\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "ecfb3743460c7193346852b5783d0986ce92e54306813976ee8dfab18f83fe86",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "environments": 3,
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "env-profile-bad-name",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[environments.Bad]\nbackend = \"local\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "environments names must be short lowercase slugs",
+  "kind": "SpecError"
+ },
+ {
+  "name": "agent-profile-bad-name",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[agent_configurations.\"a b\"]\nharness = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "agent_configurations names must be short lowercase slugs",
+  "kind": "SpecError"
+ },
+ {
+  "name": "no-cells",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "at least one [[cells]] entry is required",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-bad-id",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"A\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].id must be a short lowercase slug",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-unknown-harness",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"nope\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].harness 'nope' unknown; available ['claude-code', 'codex', 'copilot-cli', 'cursor-agent', 'gemini-cli', 'kiro-cli']",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-no-harness",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].harness None unknown; available ['claude-code', 'codex', 'copilot-cli', 'cursor-agent', 'gemini-cli', 'kiro-cli']",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-bad-config",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nconfig = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].config must be clean|user",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-bad-shell",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nshell_startup = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].shell_startup must be inherit|skip",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-args-str",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nargs = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].args must be a list of strings",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-args-int",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nargs = [\"x\", 1]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].args must be a list of strings",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-env-unknown",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].environment must name a [environments.NAME] profile",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-agentconf-int",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nagent_configuration = 3\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].agent_configuration must name a [agent_configurations.NAME] profile",
+  "kind": "SpecError"
+ },
+ {
+  "name": "cell-dup",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "duplicate cell id a",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-and-model",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodel = \"opus\"\nmodels = [\"sonnet\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: set model or models, not both",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-empty",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = []\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].models must be a non-empty list of model names",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-blank",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = [\" \"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].models must be a non-empty list of model names",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-dup",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = [\"opus\", \"opus\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0].models lists a model twice",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-long",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = [\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: cell id 'cc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' derived from model 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' is not a short lowercase slug; shorten the id or write a separate [[cells]] entry for this model",
+  "kind": "SpecError"
+ },
+ {
+  "name": "models-symbols",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = [\"!!!\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "cb8b6576693d5e6be141fd7dff27060a7026718a8eb0737992239908390b2e73",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "cc-",
+     "harness": "claude-code",
+     "model": "!!!",
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit",
+     "group": "cc"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "models-collide",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"cc-opus\"\nharness = \"claude-code\"\n[[cells]]\nid = \"cc\"\nharness = \"claude-code\"\nmodels = [\"opus\"]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "duplicate cell id cc-opus",
+  "kind": "SpecError"
+ },
+ {
+  "name": "reporter-unknown",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[reporter]\nharness = \"nope\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "unknown reporter.harness 'nope'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "reporter-cannot",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[reporter]\nharness = \"gemini-cli\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "reporter.harness 'gemini-cli' has no restricted reporter adapter; choose claude-code, codex, kiro-cli, or a plugin implementing report()",
+  "kind": "SpecError"
+ },
+ {
+  "name": "reporter-bad-auth",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[reporter]\nharness = \"codex\"\nauth = \"claude-bedrock\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cell reporter: auth type 'claude-bedrock' is for ('claude-code',), not codex",
+  "kind": "SpecError"
+ },
+ {
+  "name": "auth-wrong-harness",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nauth = \"openai-api\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cell b: auth type 'openai-api' is for ('codex',), not claude-code",
+  "kind": "SpecError"
+ },
+ {
+  "name": "auth-unknown",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nauth = \"nope\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cell b: auth 'nope' is neither a [auth.*] profile nor an auth type ['anthropic-api', 'claude-bedrock', 'claude-foundry', 'claude-subscription', 'claude-vertex', 'codex-chatgpt', 'codex-provider', 'cursor-api', 'cursor-login', 'env', 'gemini-api', 'gemini-login', 'gemini-vertex', 'github-login', 'github-token', 'inherit', 'kiro-login', 'openai-api']",
+  "kind": "SpecError"
+ },
+ {
+  "name": "auth-profile-wrong-harness",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[auth.x]\ntype = \"anthropic-api\"\n[[cells]]\nid = \"b\"\nharness = \"codex\"\nauth = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cell b: auth type 'anthropic-api' is for ('claude-code',), not codex",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-with-runner",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[runner]\ntype = \"local\"\n[environments.loc]\nbackend = \"local\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"loc\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: environment/agent profiles and legacy runner settings cannot be combined",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-cell-runner",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[environments.loc]\nbackend = \"local\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"loc\"\nrunner = \"docker\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: environment/agent profiles and legacy runner settings cannot be combined",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-shared-cache",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\ncache = \"shared\"\n[task]\nprompt_file = \"task-prompt.md\"\n[environments.loc]\nbackend = \"local\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"loc\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: environments require trial.cache='isolated'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-user-config",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[environments.loc]\nbackend = \"local\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"loc\"\nconfig = \"user\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cells[0]: environments require config='clean'",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-auth-not-isolating",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[environments.loc]\nbackend = \"local\"\n[[cells]]\nid = \"b\"\nharness = \"claude-code\"\nenvironment = \"loc\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "cell b: auth 'inherit' cannot use fresh HOME/config directories; environments require an auth profile that supplies credentials to isolated configuration",
+  "kind": "SpecError"
+ },
+ {
+  "name": "setup-not-table-top",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "setup = [\"x\"]\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "setup[0] must be a table",
+  "kind": "SpecError"
+ },
+ {
+  "name": "setup-inline-table-top",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "setup = { a = 1 }\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "setup[0] must be a table",
+  "kind": "SpecError"
+ },
+ {
+  "name": "env-profiles-not-table-top",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "environments = 3\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "environments must contain named profile tables",
+  "kind": "SpecError"
+ },
+ {
+  "name": "runner-string-top",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "runner = \"docker\"\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "dictionary update sequence element #0 has length 1; 2 is required",
+  "kind": "ValueError"
+ },
+ {
+  "name": "runner-table",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[runner]\ntype = \"docker\"\nimage = \"x\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "8eb593704333e6f224fa28c7ca32e034b30c5f86e174fff75825e5be877554b0",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "docker",
+    "image": "x"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "env-table-values",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "env = { K = [1, \"a\"], L = { x = 1 } }\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "22278f95518e185b65c821eed999ac9d0894ae9bbcc366207af577659f59e4f8",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {
+    "K": "[1, 'a']",
+    "L": "{'x': 1}"
+   },
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "cells-not-list",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "cells = { id = \"a\" }\n[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "dictionary update sequence element #0 has length 1; 2 is required",
+  "kind": "ValueError"
+ },
+ {
+  "name": "verify-name-from-type",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]]\nid = \"a\"\nharness = \"claude-code\"\n[[verify]]\ntype = \"http\"\nurl = \"x\"\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": {
+   "path": "<TMP>/trial.toml",
+   "sha256": "67761d638cc46ef3baa8c46ae6e90095d89174655c5b37efd1e5725b0e03ea45",
+   "trial": {
+    "id": "t1",
+    "product": "p",
+    "workspace_root": "<TMP>/ws",
+    "product_version_cmd": null,
+    "repetitions": 1,
+    "parallel": 1,
+    "timeout_seconds": 1800,
+    "max_budget_usd": null,
+    "order_seed": 0,
+    "cache": "isolated",
+    "narrate_timeout_seconds": 900,
+    "environment": null,
+    "agent_configuration": null,
+    "shell_startup": "inherit",
+    "output_dir": "<TMP>/ajx-reports/p/t1"
+   },
+   "task": {
+    "prompt_file": "task-prompt.md",
+    "prompt_path": "<TMP>/task-prompt.md",
+    "prompt_sha256": "9bc86fb26f3c610905f6aca38e23c06444350e8d04b7a2f905777c8d3200b08e",
+    "prompt_text": "do the thing\n",
+    "materials": [],
+    "human": "unavailable",
+    "identity_cmd": null,
+    "fixture_dir": null
+   },
+   "setup": [],
+   "verify": [
+    {
+     "type": "http",
+     "url": "x",
+     "timeout": 600,
+     "allow_auth_errors": false,
+     "name": "http",
+     "location": "host"
+    }
+   ],
+   "teardown": [],
+   "preflight": [],
+   "reporter": {
+    "harness": "claude-code",
+    "model": null,
+    "effort": null,
+    "auth": null
+   },
+   "env": {},
+   "adapters": {},
+   "auth": {},
+   "runner": {
+    "type": "local"
+   },
+   "cells": [
+    {
+     "id": "a",
+     "harness": "claude-code",
+     "model": null,
+     "effort": null,
+     "config": "clean",
+     "args": [],
+     "env": {},
+     "auth": null,
+     "runner": null,
+     "environment": null,
+     "agent_configuration": null,
+     "shell_startup": "inherit"
+    }
+   ],
+   "_cleanup_only": false
+  },
+  "error": null,
+  "kind": null
+ },
+ {
+  "name": "toml-syntax",
+  "files": {
+   "task-prompt.md": "do the thing\n",
+   "trial.toml": "[trial]\nid = \"t1\"\nproduct = \"p\"\nworkspace_root = \"ws\"\n[task]\nprompt_file = \"task-prompt.md\"\n[[cells]\n"
+  },
+  "trial": "trial.toml",
+  "opts": {},
+  "spec": null,
+  "error": "Expected ']]' at the end of an array declaration (at line 7, column 8)",
+  "kind": "TOMLDecodeError"
+ }
+]

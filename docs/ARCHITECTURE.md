@@ -3,7 +3,7 @@
 ## Roles
 
 - **Coordinator**: the user's agent running `SKILL.md`. Interviews, writes the trial file, confirms the task identity (the account the worker acts in, not the model's credentials) and the plan, runs `ajx`, summarizes. Never researches the product before the run.
-- **ajx CLI** (`bin/ajx`, `lib/ajx`): deterministic orchestration and measured-cost calculations. Modeled savings are separate reporter claims with stated assumptions.
+- **ajx CLI** (`bin/ajx`, `lib/ajx`): deterministic orchestration and measured-cost calculations. Modeled savings are separate reporter claims with stated assumptions. The same CLI is also a native Go binary (`cmd/ajx`, `internal/`; see [the Go CLI](GO-CLI.md)) that follows this architecture and reads and writes the same files.
 - **Workers**: one fresh harness session per (cell, repetition). Receive only the task prompt bytes. Run in an unnamed random workspace with isolated harness config (where the harness supports it) and isolated package caches. Session-coupling env vars from the parent agent are stripped per harness.
 - **Narrator**: the same worker session, resumed after the task with the adapter's tool restrictions, asked for the first-person journey. Falls back to a labeled reconstruction by the reporter when the harness cannot resume.
 - **Reporter**: a fresh restricted session in a report-capable harness, with its harness and model fixed for the whole trial. Built-in reporter adapters support Claude Code, Codex, and Kiro CLI. Produces schema-validated JSON (asks, errata, strengths, gates; optional cross-run clusters). Never computes costs.
@@ -113,6 +113,6 @@ including partial-result labels and connection recovery. It can be developed
 independently of environment management.
 
 [CI/CD evaluation and improvement loops](design/ci-and-improvement-loops.md)
-describes proposed headless evaluation, acceptance policies, pipeline results,
-and bounded product changes followed by fresh matrix tests. The current CLI's
-process exit status is not the proposed usability acceptance gate.
+describes headless evaluation, acceptance policies, pipeline results,
+and bounded product changes followed by fresh matrix tests. The Go CLI's `ajx ci`
+implements the evaluate-once part; `ajx run`'s exit status is still not a usability acceptance gate.

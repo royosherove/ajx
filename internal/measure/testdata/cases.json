@@ -1,0 +1,1202 @@
+[
+ {
+  "name": "ok",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   },
+   {
+    "id": "u2",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:40+00:00",
+    "kind": "usage",
+    "output_tokens": 10
+   },
+   {
+    "id": "t1",
+    "session_id": "s",
+    "at": "2026-01-01T01:00:20+01:00",
+    "kind": "tool_call"
+   }
+  ],
+  "result": {
+   "schema_version": 1,
+   "method": "normalized incremental usage; half-open phase windows",
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "elapsed_seconds": 60.0,
+     "phases": [
+      {
+       "id": "p1",
+       "scope": "task",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": 5,
+       "observed_tool_calls": 1,
+       "usage_records": 1,
+       "output_tokens": 5,
+       "tool_calls": null
+      },
+      {
+       "id": "p2",
+       "scope": "report",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": 10,
+       "observed_tool_calls": 0,
+       "usage_records": 1,
+       "output_tokens": 10,
+       "tool_calls": null
+      }
+     ],
+     "usage_status": "complete",
+     "observed_output_tokens": 15,
+     "output_tokens": 15,
+     "output_tokens_reconciled": true,
+     "tool_status": "partial",
+     "observed_tool_calls": 1,
+     "tool_calls": null,
+     "tool_calls_reconciled": false
+    }
+   ],
+   "note": "No combined wall-clock total: sessions may overlap or use different scopes."
+  },
+  "error": null
+ },
+ {
+  "name": "ok-two-sessions",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    },
+    {
+     "id": "v",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "unavailable",
+     "tool_status": "unavailable"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   },
+   {
+    "id": "u2",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:40+00:00",
+    "kind": "usage",
+    "output_tokens": 10
+   },
+   {
+    "id": "t1",
+    "session_id": "s",
+    "at": "2026-01-01T01:00:20+01:00",
+    "kind": "tool_call"
+   }
+  ],
+  "result": {
+   "schema_version": 1,
+   "method": "normalized incremental usage; half-open phase windows",
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "elapsed_seconds": 60.0,
+     "phases": [
+      {
+       "id": "p1",
+       "scope": "task",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": 5,
+       "observed_tool_calls": 1,
+       "usage_records": 1,
+       "output_tokens": 5,
+       "tool_calls": null
+      },
+      {
+       "id": "p2",
+       "scope": "report",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": 10,
+       "observed_tool_calls": 0,
+       "usage_records": 1,
+       "output_tokens": 10,
+       "tool_calls": null
+      }
+     ],
+     "usage_status": "complete",
+     "observed_output_tokens": 15,
+     "output_tokens": 15,
+     "output_tokens_reconciled": true,
+     "tool_status": "partial",
+     "observed_tool_calls": 1,
+     "tool_calls": null,
+     "tool_calls_reconciled": false
+    },
+    {
+     "id": "v",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "elapsed_seconds": 60.0,
+     "phases": [
+      {
+       "id": "p1",
+       "scope": "task",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": null,
+       "observed_tool_calls": null,
+       "usage_records": 0,
+       "output_tokens": null,
+       "tool_calls": null
+      },
+      {
+       "id": "p2",
+       "scope": "report",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "elapsed_seconds": 30.0,
+       "observed_output_tokens": null,
+       "observed_tool_calls": null,
+       "usage_records": 0,
+       "output_tokens": null,
+       "tool_calls": null
+      }
+     ],
+     "usage_status": "unavailable",
+     "observed_output_tokens": null,
+     "output_tokens": null,
+     "output_tokens_reconciled": false,
+     "tool_status": "unavailable",
+     "observed_tool_calls": null,
+     "tool_calls": null,
+     "tool_calls_reconciled": false
+    }
+   ],
+   "note": "No combined wall-clock total: sessions may overlap or use different scopes."
+  },
+  "error": null
+ },
+ {
+  "name": "not-object",
+  "manifest": [
+   1
+  ],
+  "events": [],
+  "result": null,
+  "error": "Manifest must be an object"
+ },
+ {
+  "name": "no-sessions",
+  "manifest": {
+   "sessions": []
+  },
+  "events": [],
+  "result": null,
+  "error": "Manifest needs sessions"
+ },
+ {
+  "name": "session-not-object",
+  "manifest": {
+   "sessions": [
+    3
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Each session must be an object"
+ },
+ {
+  "name": "missing-id",
+  "manifest": {
+   "sessions": [
+    {
+     "start": "x"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "'id'"
+ },
+ {
+  "name": "empty-id",
+  "manifest": {
+   "sessions": [
+    {
+     "id": " ",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Session ID must be nonempty"
+ },
+ {
+  "name": "dup-session",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    },
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Duplicate session: s"
+ },
+ {
+  "name": "naive",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Timestamp needs timezone: 2026-01-01T00:00:00"
+ },
+ {
+  "name": "bad-ts",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-13-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-13-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "month must be in 1..12, not 13"
+ },
+ {
+  "name": "ts-not-string",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": 5,
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": 5,
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Timestamp must be a string"
+ },
+ {
+  "name": "bad-window",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:02:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:02:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "Invalid session window: s"
+ },
+ {
+  "name": "bad-status",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "maybe",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s: invalid usage_status"
+ },
+ {
+  "name": "expected-not-int",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 1.5,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s.expected_output_tokens must be a nonnegative integer"
+ },
+ {
+  "name": "expected-bool",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": true,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s.expected_output_tokens must be a nonnegative integer"
+ },
+ {
+  "name": "expected-needs-complete",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "partial",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s: expected_output_tokens requires complete status"
+ },
+ {
+  "name": "no-phases",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s: phases required"
+ },
+ {
+  "name": "phase-gap",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:20Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "task"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s/p2: phase gap or overlap"
+ },
+ {
+  "name": "phase-dup",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "task"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s: duplicate phase p1"
+ },
+ {
+  "name": "phase-scope",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "nope"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s/p1: invalid scope"
+ },
+ {
+  "name": "phase-short",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s: phases do not cover the session"
+ },
+ {
+  "name": "phase-past-end",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:02:00Z",
+       "scope": "task"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [],
+  "result": null,
+  "error": "s/p1: invalid phase window"
+ },
+ {
+  "name": "unknown-session",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "x",
+    "session_id": "zz",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 1
+   }
+  ],
+  "result": null,
+  "error": "Unknown event session: zz"
+ },
+ {
+  "name": "dup-event",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   },
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   }
+  ],
+  "result": null,
+  "error": "s: duplicate event u1"
+ },
+ {
+  "name": "outside",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "x",
+    "session_id": "s",
+    "at": "2026-01-01T00:01:00Z",
+    "kind": "usage",
+    "output_tokens": 1
+   }
+  ],
+  "result": null,
+  "error": "s/x: event outside session window"
+ },
+ {
+  "name": "bad-kind",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "x",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "other"
+   }
+  ],
+  "result": null,
+  "error": "s/x: unsupported event kind other"
+ },
+ {
+  "name": "usage-unavailable",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "unavailable",
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   }
+  ],
+  "result": null,
+  "error": "s: usage records contradict unavailable status"
+ },
+ {
+  "name": "tool-unavailable",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "unavailable"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "t1",
+    "session_id": "s",
+    "at": "2026-01-01T01:00:20+01:00",
+    "kind": "tool_call"
+   }
+  ],
+  "result": null,
+  "error": "s: tool calls contradict unavailable status"
+ },
+ {
+  "name": "neg-tokens",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": -1
+   }
+  ],
+  "result": null,
+  "error": "s/u1 must be a nonnegative integer"
+ },
+ {
+  "name": "reconcile",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "u1",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z",
+    "kind": "usage",
+    "output_tokens": 5
+   }
+  ],
+  "result": null,
+  "error": "s: output_tokens reconciliation failed: observed 5, expected 15"
+ },
+ {
+  "name": "missing-kind",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   {
+    "id": "x",
+    "session_id": "s",
+    "at": "2026-01-01T00:00:10Z"
+   }
+  ],
+  "result": null,
+  "error": "'kind'"
+ },
+ {
+  "name": "event-not-object",
+  "manifest": {
+   "sessions": [
+    {
+     "id": "s",
+     "start": "2026-01-01T00:00:00Z",
+     "end": "2026-01-01T00:01:00Z",
+     "phases": [
+      {
+       "id": "p1",
+       "start": "2026-01-01T00:00:00Z",
+       "end": "2026-01-01T00:00:30Z",
+       "scope": "task"
+      },
+      {
+       "id": "p2",
+       "start": "2026-01-01T00:00:30Z",
+       "end": "2026-01-01T00:01:00Z",
+       "scope": "report"
+      }
+     ],
+     "usage_status": "complete",
+     "expected_output_tokens": 15,
+     "tool_status": "partial"
+    }
+   ]
+  },
+  "events": [
+   "x"
+  ],
+  "result": null,
+  "error": "Each event must be an object"
+ }
+]

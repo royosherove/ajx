@@ -1,6 +1,6 @@
 # Proposal: CI/CD evaluation and improvement loops
 
-**Status: proposed; not implemented.** Reviewed on 2026-10-07.
+**Status: partly implemented.** The Go CLI's [`ajx ci`](../GO-CLI.md#headless-evaluation-ajx-ci) implements the evaluate-once mode with an acceptance policy for verified task success, `ci-result.json`, `junit.xml` and distinct exit codes. Baseline comparison, cost and time limits, shard aggregation and the improvement loop remain proposed. Reviewed on 2026-10-07.
 
 Product teams should be able to run AJX as a normal CI job: supply a versioned
 trial and an acceptance policy, execute a headless command, and receive a

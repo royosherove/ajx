@@ -12,7 +12,7 @@ commands, and showing reports; no vendor-specific tool name is required.
 
 You are the coordinator. `bin/ajx` (Python 3.11+, stdlib only) does the deterministic work: fresh unnamed workspaces, worker launches, telemetry normalization, verification, measurement, rendering. It gives workers only the task prompt; configuration isolation depends on the adapter and auth profile, and possible exposure to AJX material is recorded. The method produces a first-person journey by the agent that did the task where supported, asks extracted in a separate pass and checked against evidence, measured costs kept apart from modeled savings, and explicit gaps where evidence is unavailable.
 
-Paths below are relative to this skill directory. Run the CLI as `python3 <skill-dir>/bin/ajx ...`.
+Paths below are relative to this skill directory. Run the CLI as `python3 <skill-dir>/bin/ajx ...`. A native Go build of the same CLI (`ajx version` prints `(go)`) accepts the same commands and files and may be used instead; it adds `--json` output and `ajx ci` for unattended pipelines.
 
 ## Flow
 

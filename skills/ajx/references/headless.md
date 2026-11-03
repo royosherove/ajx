@@ -55,7 +55,24 @@ Evaluate the planned cells, `verify.json`, `run.json`, measurement coverage and
 cleanup evidence before deciding whether a product is acceptable. Do not use
 the CLI exit code or an empty asks list as the sole product quality gate.
 
-Dedicated `ajx ci` and `ajx improve` commands, versioned acceptance policies,
-baseline regression gates, JUnit export, and bounded automatic improvement loops
-are proposed features. They are not available in the current CLI. The existing
-headless execution path supplies their runner and evidence foundation.
+## Decide acceptance with `ajx ci` (Go CLI)
+
+The [Go CLI](../../../docs/GO-CLI.md) adds `ajx ci`. It runs the same validate,
+doctor and run steps without prompting, in a fresh output folder, then decides
+from the recorded task checks of every planned attempt:
+
+```sh
+ajx ci usability/trial.toml --output "$AJX_RESULTS_DIR" \
+  --policy usability/acceptance.toml --timeout-grace 60 </dev/null
+```
+
+It exits 0 only when every cell meets the policy's verified-success target
+(default: every attempt). A failed target exits 1; missing, interrupted or
+untrustworthy evidence, a doctor problem or a trial without checks exits 4
+(inconclusive); configuration errors exit 2, a locked output folder 3, and
+cancellation 130 after cleanup. It writes `ci-result.json` and `junit.xml` in the
+output folder, including when it fails.
+
+`ajx improve`, baseline regression gates, cost and time limits in the policy, and
+bounded automatic improvement loops remain proposals. The Python CLI has no
+`ajx ci`; use the checks above with it.

@@ -54,3 +54,7 @@ ajx-reports/
 
 # AJX Console state (journal, logs, local server key)
 .ajx-console/
+
+# Go CLI build output
+/ajx
+/bin/
