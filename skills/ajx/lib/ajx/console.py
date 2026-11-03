@@ -20,6 +20,7 @@ import shlex
 import shutil
 import signal
 import socket
+import socketserver
 import stat
 import subprocess
 import sys
@@ -2158,11 +2159,19 @@ def server_info(trial):
     return info if _ping(info) else None
 
 
+class _LoopbackServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer otherwise calls getfqdn, which can block on a machine's
+        # resolver even for loopback. This console needs only its bound address.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def make_server(trial, port=0, idle=IDLE_SECONDS):
     """(httpd, app, info) bound to 127.0.0.1; `serve` runs it until shutdown or idle."""
     trial = trial_file(trial)
     app = App(trial, secrets.token_urlsafe(24), idle)
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), _handler(app))
+    httpd = _LoopbackServer(("127.0.0.1", int(port)), _handler(app))
     httpd.daemon_threads = True
     app.port = httpd.server_address[1]
     app.shutdown = lambda: threading.Thread(target=httpd.shutdown, daemon=True).start()

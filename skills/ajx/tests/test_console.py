@@ -511,6 +511,16 @@ class ProcessIdentityTest(DemoCase):
 
 
 class CliTest(DemoCase):
+    def test_loopback_startup_does_not_need_name_resolution(self):
+        with mock.patch.object(console.socket, "getfqdn", side_effect=AssertionError("DNS must not be used")):
+            httpd, _, info = console.make_server(self.trial)
+        try:
+            self.assertEqual(httpd.server_name, "127.0.0.1")
+            self.assertEqual(httpd.server_address, ("127.0.0.1", info["port"]))
+            self.assertEqual(httpd.server_port, info["port"])
+        finally:
+            httpd.server_close()
+
     def test_note_and_since_commands(self):
         cli = _cli()
         out = io.StringIO()
