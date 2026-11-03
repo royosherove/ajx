@@ -100,6 +100,62 @@ jobs:
             "$(command -v python)" -I -m unittest discover \
             -s skills/ajx/tests -p 'test_environment_ownership.py'
 
+  binaries:
+    name: Download / ${{ matrix.target }}
+    needs: [test, go, containers, security]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-amd64
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=vendor
+      GOPROXY: 'off'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Test on the package's native platform
+        run: go test ./...
+      - name: Build and smoke-test the installable package
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+        run: python3 -I .github/scripts/package_go.py --output "$RUNNER_TEMP/package" --target "$PACKAGE_TARGET"
+      - name: Upload the tested package
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ajx-${{ matrix.target }}
+          path: ${{ runner.temp }}/package/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Show the download
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          printf '### AJX %s\n\n[Download the tested package](%s)\n\nCommit: `%s`\n' \
+            "$TARGET" "$ARTIFACT_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
   security:
     name: Secrets and privacy
     runs-on: ubuntu-latest

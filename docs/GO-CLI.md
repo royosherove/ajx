@@ -18,7 +18,53 @@ The Go CLI adds:
   `ajx run trials/my-cli` and `ajx status trials/my-cli` read its `trial.toml`,
   as `ajx console` already does.
 
-## Build and install
+## Download and install
+
+Every push to `main` runs the Python, Go, container, and privacy checks. After
+they all pass, CI builds installable packages on four native runners, runs the
+Go tests and smoke-tests each executable, and uploads the successful packages.
+
+Open **Actions → CI → a successful main run → Artifacts** and download the
+package for your machine. GitHub requires you to sign in to download Actions
+artifacts. Packages are retained for 30 days; these are builds of `main`, not
+tagged releases.
+
+| Machine | Artifact |
+|---|---|
+| macOS, Apple silicon | `ajx-darwin-arm64` |
+| macOS, Intel | `ajx-darwin-amd64` |
+| Linux, x86-64 | `ajx-linux-amd64` |
+| Linux, ARM64 | `ajx-linux-arm64` |
+
+You can also download with the GitHub CLI. Choose the run ID from the first
+command, then substitute it for `RUN_ID` in the second:
+
+```sh
+gh run list --repo royosherove/ajx --workflow CI --branch main --event push --status success --limit 5
+gh run download RUN_ID --repo royosherove/ajx --name ajx-darwin-arm64 --dir ajx-download
+cd ajx-download
+shasum -a 256 -c SHA256SUMS
+tar -xzf ajx-darwin-arm64.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 755 ajx-darwin-arm64/ajx "$HOME/.local/bin/ajx"
+export PATH="$HOME/.local/bin:$PATH"
+ajx version
+ajx console demo trials/console-demo
+```
+
+The example is for Apple silicon. Use your artifact name in the download,
+archive, and install paths; on Linux, use `sha256sum -c SHA256SUMS` to verify the
+archive. If downloading in the browser, unzip the Actions download first.
+Add the `PATH` export to your shell profile to keep it in new terminals.
+
+Each download contains the archive, its SHA-256 checksum, and `build.json`
+with the source commit and platform. `ajx version` prints that commit too.
+The archive preserves the executable's permissions and includes installation
+instructions and dependency licenses. Builds are not signed or notarized.
+The demo needs no agent or cloud credentials; real trials need the selected
+agent CLI and authentication. Python plugins still need Python 3.11 or newer.
+
+## Build from source
 
 You need Go 1.25 or newer. Dependencies are vendored, so no network access is
 needed to build.

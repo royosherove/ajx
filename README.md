@@ -209,7 +209,13 @@ existing reports without model synthesis: `ajx report trial.toml --no-synthesis`
 
 The same CLI is also available as a single Go binary that reads and writes the
 same trials and output folders. It adds a setup wizard for `ajx init`, `--json`
-output, and `ajx ci` for pipelines. With Go 1.25 or newer:
+output, and `ajx ci` for pipelines.
+
+**[Download and install a tested build](docs/GO-CLI.md#download-and-install)** for
+Linux or macOS, on x86-64 or ARM64. Successful `main` builds publish packages in
+the CI run's **Artifacts** section, with checksums and the source commit.
+
+To build it yourself with Go 1.25 or newer:
 
 ```sh
 go build -o bin/ajx ./cmd/ajx
