@@ -55,7 +55,8 @@ print("same environment available for narration")
     def normalize(self, ctx, stage, exclude_message_ids=()):
         return empty_telemetry(
             session_id="synthetic-environment-session",
-            final_text=("This is a synthetic narration used only by an offline lifecycle test. "
+            final_text=("# Journey: synthetic environment lifecycle\n\n"
+                        "This is a synthetic narration used only by an offline lifecycle test. "
                         "The worker used a tool prepared in its isolated home, wrote its result "
                         "in the workspace, and reused the same environment for narration after "
                         "verification and teardown. No model provider was called.")

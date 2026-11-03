@@ -110,6 +110,30 @@ MULTI_TRANSCRIPT = [
 ]
 
 
+class SafeguardStopTest(unittest.TestCase):
+    """A safeguard can stop a response; Claude Code then continues once, and the continuation may be a
+    refusal. The count is recorded as a harness report with a limitation, so the runner can reject it."""
+
+    def test_safety_stops_are_recorded_with_a_limitation(self):
+        stopped = {**_result(2, 900, 0.2, 40, text="Understood. I won't write that account again."),
+                   "safety_stops": 1}
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = _execute_ctx(tmp)
+            _write_raw(ctx["run_dir"] / "execute.raw.jsonl", [_init(), stopped])
+            tel = plugins.get("harness", "claude-code")().normalize(ctx, "execute")
+        self.assertEqual(tel["harness_reported"]["safety_stops"], 1)
+        self.assertIn("execute: the model's safeguards stopped 1 response(s); text after a stop can be a refusal "
+                      "rather than the requested output", tel["limitations"])
+
+    def test_no_safety_stop_key_without_a_stop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = _execute_ctx(tmp)
+            _write_raw(ctx["run_dir"] / "execute.raw.jsonl", [_init(), {**_result(1, 10, 0.1, 5), "safety_stops": 0}])
+            tel = plugins.get("harness", "claude-code")().normalize(ctx, "execute")
+        self.assertNotIn("safety_stops", tel["harness_reported"])
+        self.assertFalse([note for note in tel["limitations"] if "safeguards" in note])
+
+
 class MultiResultNormalizeTest(unittest.TestCase):
     def _normalize(self, tmp, stream, transcript=None):
         ctx = _execute_ctx(tmp)

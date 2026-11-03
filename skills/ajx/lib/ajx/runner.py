@@ -19,6 +19,7 @@ import errno
 import json
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
@@ -167,6 +168,28 @@ SENSITIVE_NAME_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AWS_", "GOOGLE_",
                         "OPENAI_", "AZURE_", "GEMINI_", "CURSOR_", "COPILOT_", "GH_", "CLAUDE_CODE_USE")
 
 JOURNEY_UNAVAILABLE = "unavailable"
+JOURNEY_HEADING = re.compile(r"^# Journey\b", re.M)
+NARRATION_REJECTED = {
+    "safety_stop": "self-narration was stopped by the model's safeguards",
+    "no_journey_heading": "self-narration did not include the # Journey account",
+    "empty_or_short": "self-narration empty or short",
+}
+
+
+def narration_rejection(text, ntel):
+    """Why a self-narration cannot stand as the journey, or None. A safeguard stop can leave a refusal in
+    place of the account, and an answer without the requested `# Journey` document is not one."""
+    if (ntel.get("harness_reported") or {}).get("safety_stops"):
+        return "safety_stop"
+    if not JOURNEY_HEADING.search(text):
+        return "no_journey_heading" if len(text) >= 200 else "empty_or_short"
+    return "empty_or_short" if len(journey_text(text)) < 200 else None
+
+
+def journey_text(text):
+    """The account from its `# Journey` heading on, without any preamble before it."""
+    match = JOURNEY_HEADING.search(text)
+    return text[match.start():] if match else text
 
 
 def _probe(argv):
@@ -584,7 +607,7 @@ class Run:
         digest = (narrator_digest if narrator_digest.exists() else self.run_dir / "digest.md").read_text(encoding="utf-8")
         prompt = reporter.narrate_prompt(self.spec, self.cell, self.run_id, digest)
         (self.run_dir / "narrate.prompt.md").write_text(prompt, encoding="utf-8")
-        proc, text = None, ""
+        proc, text, ntel = None, "", {}
         if self.harness.can_resume and (self.state.get("execute") or {}).get("session_id"):
             try:
                 proc = self.harness.narrate(ctx, prompt)
@@ -597,13 +620,15 @@ class Run:
                 ntel = self.harness.normalize(ctx, "narrate", exclude_message_ids=tel.get("message_ids") or [])
                 write_json(self.run_dir / "telemetry.narrate.json", ntel)
                 text = (ntel.get("final_text") or "").strip()
-        if len(text) >= 200:
-            restriction = proc.get("tools_disabled") if proc else None
+        rejected = narration_rejection(text, ntel) if proc else None
+        if proc and not rejected:
+            restriction = proc.get("tools_disabled")
             restriction = "tools disabled" if restriction is True else restriction or "tool restrictions unrecorded"
-            self._write_journey(text, f"self-narrated: the original task agent, resumed after the task; {restriction}")
+            self._write_journey(journey_text(text),
+                                f"self-narrated: the original task agent, resumed after the task; {restriction}")
             return
         if proc:
-            self.log(f"[{self.run_id}] self-narration empty or short; falling back to a labeled reconstruction")
+            self.log(f"[{self.run_id}] {NARRATION_REJECTED[rejected]}; falling back to a labeled reconstruction")
         try:
             result = reporter.reconstruct(self.spec, self.run_dir)
         except Exception as exc:  # noqa: BLE001
@@ -611,7 +636,8 @@ class Run:
                                 f"reconstruction failed: {type(exc).__name__}: {exc}. The evidence digest is in digest.md.",
                                 JOURNEY_UNAVAILABLE)
             raise
-        self.state["narrate"] = {**result["proc"], "reconstruction": True}
+        self.state["narrate"] = {**result["proc"], "reconstruction": True,
+                                 **({"self_narration_rejected": rejected} if rejected else {})}
         if result["text"].strip():
             self._write_journey(result["text"],
                                 "EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "

@@ -99,6 +99,7 @@ def _aggregate_results(results):
             "duration_ms": _sum_or_none([r.get("duration_ms") for r in results]),
             "cost_estimate_usd": cost, "cost_summed": cost_summed, "model_cost_summed": model_cost_summed,
             "subagents_spawned": _sum_or_none([(r.get("subagent_stats") or {}).get("spawned") for r in results]),
+            "safety_stops": _sum_or_none([r.get("safety_stops") for r in results]),
             "output_tokens": _sum_or_none([(r.get("usage") or {}).get("output_tokens") for r in results])}
 
 
@@ -279,6 +280,13 @@ class ClaudeCode(Harness):
                 "is_error": last.get("is_error"), "result_events": agg["count"]})
             if agg["count"] > 1:
                 out["limitations"].append(_multi_result_limitation(stage, agg))
+            if agg["safety_stops"]:
+                # Observed with Opus 5.5: a safeguard stops the response, Claude Code continues once, and
+                # the continuation can be a refusal that replaces the requested output.
+                out["harness_reported"]["safety_stops"] = agg["safety_stops"]
+                out["limitations"].append(f"{stage}: the model's safeguards stopped {agg['safety_stops']} "
+                                          "response(s); text after a stop can be a refusal rather than the "
+                                          "requested output")
         else:
             out["limitations"].append(f"{stage}: no result event in stream (killed, crashed, or timed out)")
 
