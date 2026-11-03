@@ -20,49 +20,54 @@ The Go CLI adds:
 
 ## Download and install
 
-Every push to `main` runs the Python, Go, container, and privacy checks. After
-they all pass, CI builds installable packages on four native runners, runs the
-Go tests and smoke-tests each executable, and uploads the successful packages.
-
-Open **Actions → CI → a successful main run → Artifacts** and download the
-package for your machine. GitHub requires you to sign in to download Actions
-artifacts. Packages are retained for 30 days; these are builds of `main`, not
-tagged releases.
-
-| Machine | Artifact |
-|---|---|
-| macOS, Apple silicon | `ajx-darwin-arm64` |
-| macOS, Intel | `ajx-darwin-amd64` |
-| Linux, x86-64 | `ajx-linux-amd64` |
-| Linux, ARM64 | `ajx-linux-arm64` |
-
-You can also download with the GitHub CLI. Choose the run ID from the first
-command, then substitute it for `RUN_ID` in the second:
+Use the [one-line installer](INSTALL.md#one-command) to install the native CLI
+and matching skill from the latest stable GitHub Release. No GitHub login, Go
+compiler, Python, or source checkout is required:
 
 ```sh
-gh run list --repo royosherove/ajx --workflow CI --branch main --event push --status success --limit 5
-gh run download RUN_ID --repo royosherove/ajx --name ajx-darwin-arm64 --dir ajx-download
-cd ajx-download
-shasum -a 256 -c SHA256SUMS
+bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash' && export PATH="$HOME/.local/bin:$PATH"
+```
+
+To pin a version, download that release's `install.sh` and run
+`bash install.sh --version v1.0.0`. See [installation options](INSTALL.md) for
+updates, custom skill locations and existing installations.
+
+For a manual download, open [Releases](https://github.com/royosherove/ajx/releases)
+and select the archive for your machine plus `SHA256SUMS`:
+
+| Machine | Archive |
+|---|---|
+| macOS, Apple silicon | `ajx-darwin-arm64.tar.gz` |
+| macOS, Intel | `ajx-darwin-amd64.tar.gz` |
+| Linux, x86-64 | `ajx-linux-amd64.tar.gz` |
+| Linux, ARM64 | `ajx-linux-arm64.tar.gz` |
+
+For example, after downloading the Apple silicon archive and checksum file:
+
+```sh
+grep '  ajx-darwin-arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c -
 tar -xzf ajx-darwin-arm64.tar.gz
-mkdir -p "$HOME/.local/bin"
-install -m 755 ajx-darwin-arm64/ajx "$HOME/.local/bin/ajx"
+bash ajx-darwin-arm64/install.sh --package-dir .
 export PATH="$HOME/.local/bin:$PATH"
 ajx version
 ajx console demo trials/console-demo
 ```
 
-The example is for Apple silicon. Use your artifact name in the download,
-archive, and install paths; on Linux, use `sha256sum -c SHA256SUMS` to verify the
-archive. If downloading in the browser, unzip the Actions download first.
-Add the `PATH` export to your shell profile to keep it in new terminals.
+On Linux, use `sha256sum -c -` and the corresponding archive name. Each archive
+contains the binary, matching complete skill, installer, dependency licenses,
+and `build.json` with the version, source commit and platform. The installer
+keeps the CLI and skill together and sets up their paths.
 
-Each download contains the archive, its SHA-256 checksum, and `build.json`
-with the source commit and platform. `ajx version` prints that commit too.
-The archive preserves the executable's permissions and includes installation
-instructions and dependency licenses. Builds are not signed or notarized.
-The demo needs no agent or cloud credentials; real trials need the selected
-agent CLI and authentication. Python plugins still need Python 3.11 or newer.
+A release is published only after the Python, Go, container and privacy checks,
+and tests and installation smoke tests on all four native platforms, pass.
+Binaries are not signed or notarized. The demo needs no agent or cloud
+credentials; real trials need the selected agent CLI and authentication.
+Python plugins require Python 3.11+ and the skill's `bin/ajx-python` launcher;
+the native CLI does not execute them.
+
+Development builds of `main` remain available in **Actions → CI → Artifacts**
+for 30 days. Those downloads require GitHub sign-in; the public release installer
+does not use them.
 
 ## Build from source
 

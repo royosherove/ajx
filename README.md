@@ -15,11 +15,28 @@ workarounds that a passing test might miss. Each supported ask gives your team a
 change to consider, the events behind it, and a way to check the result of a fix.
 A trial describes the tested task and conditions, not a universal product score.
 
-### 1. Get the skill
+### 1. Install the CLI and skill
 
-For a real trial, you need:
+On **macOS or Linux** (Apple silicon/ARM64 or Intel/x86-64), run this one line
+in Bash or Zsh. It uses `curl` and needs **no GitHub login**:
 
-- **macOS or Linux, Git, and Python 3.11+.** No Python packages to install.
+```sh
+bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash' && export PATH="$HOME/.local/bin:$PATH"
+```
+
+This downloads the **latest stable release**, verifies its checksum,
+and installs `ajx` plus the **matching complete skill** for Codex, Claude Code,
+and Kiro CLI. It sets up your shell's `PATH` and needs **no Go, Python, Git,
+or administrator access**. Run the same command to update.
+Existing unmanaged files are preserved; the installer explains how to back
+them up and replace them if needed. See [installation options](docs/INSTALL.md)
+for a single host, another skills directory, pinned versions, and manual setup.
+
+**Start a fresh agent session** after installing. Kiro custom agents also need
+the [skill resource entry](docs/HARNESS-SUPPORT.md#install-and-invoke).
+
+For a real trial, you also need:
+
 - **An agent with file and shell access**, such as Codex, Claude Code, or Kiro CLI.
 - **An installed, authenticated agent CLI** for the worker and reporter. The
   coordinator helps check compatibility; a desktop chat login alone may not
@@ -27,34 +44,17 @@ For a real trial, you need:
 - **A small task and permission to run it.** Start with fictional data in a
   disposable workspace. No AWS account or Docker is required for a local trial.
 
-Clone AJX, or use your existing checkout if you are trying a particular branch:
+**Try the CLI before a real trial:**
 
 ```sh
-git clone https://github.com/royosherove/ajx.git
-cd ajx
-python3 --version
+ajx version
+ajx console demo trials/console-demo
 ```
 
-Install the **complete skill folder** for the agent you use to coordinate:
-
-| Your agent | Run from the AJX checkout |
-|---|---|
-| Codex | `mkdir -p ~/.agents/skills && ln -s "$PWD/skills/ajx" ~/.agents/skills/ajx` |
-| Claude Code | `mkdir -p ~/.claude/skills && ln -s "$PWD/skills/ajx" ~/.claude/skills/ajx` |
-| Kiro CLI | `mkdir -p ~/.kiro/skills && ln -s "$PWD/skills/ajx" ~/.kiro/skills/ajx` |
-| Another Agent Skills host | Copy `skills/ajx` into its documented skills directory. |
-
-Start a fresh agent session. If a skill already exists at the destination,
-inspect it before replacing it. Kiro custom agents need a skill resource entry;
-see [harness setup and adapter support](docs/HARNESS-SUPPORT.md).
-
-**Want to see the result first?** From the checkout, generate fictional reports
-without installing a skill, logging in, or calling a model:
-
-```sh
-python3 skills/ajx/bin/ajx example trials/example
-# Open trials/example/index.html in a browser.
-```
+The console opens a simulated trial. Press **Check and start** to see the run,
+asks, and journey; this uses no agent, model, cloud account, or provider login.
+For static fictional reports, run `ajx example trials/example` and open
+`trials/example/index.html`.
 
 ### 2. Give your agent this first brief
 
@@ -69,7 +69,7 @@ column names, and every value. Check the actual CSV after the worker stops.
 Materials: jq's built-in help only.
 
 Start with one attempt using my current agent CLI if supported.
-Check Python, the worker and reporter CLIs, authentication, and jq first.
+Check AJX, the worker and reporter CLIs, authentication, and jq first.
 Use a disposable local workspace; no cloud resources or system installations.
 Propose a short time limit and explain any model costs and access limits.
 Open the trial in the AJX Console so I can review the task, success check,
@@ -173,7 +173,7 @@ the old directory resumes its saved attempt.
 | What if the worker has different tools, skills, or access? | [Environment and agent profiles](skills/ajx/references/environments.md), with a [plain vs guided CSV example](skills/ajx/examples/environment-profiles/) |
 | Can a pipeline run this without an interview? | [Headless execution](skills/ajx/references/headless.md). `ajx run` can return exit code zero when task verification fails; the Go CLI's [`ajx ci`](docs/GO-CLI.md#headless-evaluation-ajx-ci) decides passed, failed or inconclusive from the task checks. |
 | How does the evidence become a report? | [Architecture](docs/ARCHITECTURE.md) and [reporting method](skills/ajx/references/reporting.md) |
-| Can I review, start and watch a trial in a browser? | [The AJX Console](skills/ajx/references/console.md). Try it free with `python3 skills/ajx/bin/ajx console demo trials/console-demo`. |
+| Can I review, start and watch a trial in a browser? | [The AJX Console](skills/ajx/references/console.md). Try it free with `ajx console demo trials/console-demo`. |
 
 The skill can coordinate from a compatible Agent Skills host; launching a
 worker requires a supported CLI adapter. Local and local Docker environments
@@ -186,7 +186,6 @@ automated acceptance/improvement loops remain [designs](docs/design/).
 The skill uses this same CLI. For a hand-written trial:
 
 ```sh
-export PATH="$PWD/skills/ajx/bin:$PATH"   # from the AJX checkout; current shell only
 ajx init trials/my-cli --product my-cli --harness codex
 $EDITOR trials/my-cli/trial.toml trials/my-cli/task-prompt.md
 # Replace the scaffold's task and add a check of the requested outcome.
@@ -211,9 +210,12 @@ The same CLI is also available as a single Go binary that reads and writes the
 same trials and output folders. It adds a setup wizard for `ajx init`, `--json`
 output, and `ajx ci` for pipelines.
 
-**[Download and install a tested build](docs/GO-CLI.md#download-and-install)** for
-Linux or macOS, on x86-64 or ARM64. Successful `main` builds publish packages in
-the CI run's **Artifacts** section, with checksums and the source commit.
+The one-line installer above installs this native binary from
+[GitHub Releases](https://github.com/royosherove/ajx/releases). Each version
+includes checksums, its source commit, and a matching skill, tested together on
+all four platforms. Successful `main` builds also keep development packages as
+CI artifacts. See [manual downloads](docs/GO-CLI.md#download-and-install)
+and [installation options](docs/INSTALL.md).
 
 To build it yourself with Go 1.25 or newer:
 
@@ -231,7 +233,9 @@ Keep real runs in the ignored `trials/` directory. Reports and archived
 workspaces can contain private task content; review them before sharing.
 See [SECURITY.md](SECURITY.md).
 
-The runtime uses the Python standard library. Tests use synthetic fixtures:
+The native runtime is Go; the source checkout also includes a Python CLI that
+uses only the standard library. Python plugins require that Python CLI and
+Python 3.11+. Tests use synthetic fixtures:
 
 ```sh
 python3 -I -m unittest discover -s skills/ajx/tests -p 'test_*.py'

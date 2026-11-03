@@ -3,7 +3,8 @@
 The `skills/ajx` directory is a standard Agent Skills package: `SKILL.md` has a
 name and description, and the remaining files supply instructions, scripts,
 schemas, and report assets. Install the complete directory. The coordinator
-needs file access and a shell that can run Python 3.11+.
+needs file access and a shell. The native installation needs no Python;
+the source checkout and Python plugins need Python 3.11+.
 
 ## Install and invoke
 
@@ -14,8 +15,11 @@ needs file access and a shell that can run Python 3.11+.
 | Kiro CLI | `~/.kiro/skills/ajx` | `/ajx` |
 | Another Agent Skills host | Its documented skill directory | Its skill picker or “Use the AJX skill…” |
 
-Start with the [README installation commands](../README.md#1-get-the-skill) and
+Start with the [one-line installer](../README.md#1-install-the-cli-and-skill) and
 [first-run guide](GETTING-STARTED.md). Start a new session after installing.
+The installer registers all three skill paths above. Use
+[`--skill-dir`](INSTALL.md#updates-options-and-existing-installations) for a
+single host or another compatible host.
 The host's skill mechanism loads the coordinator instructions; the worker's
 headless CLI is selected separately in the trial.
 

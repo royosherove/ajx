@@ -31,10 +31,12 @@ instead of the initial user experience.
 
 ## Let the coordinator check readiness
 
-The coordinator checks Python, installed worker/reporter CLIs, their adapter
+The coordinator checks AJX, installed worker/reporter CLIs, their adapter
 capabilities, the selected authentication route, and required starting tools.
 It writes a trial and uses `validate` and `doctor` to check it. It should
 explain a missing prerequisite in terms of the next action you can take.
+The native installation needs no Python; only the Python launcher and Python
+plugins need Python 3.11+.
 
 ![The coordinator prepares a neutral task; the worker attempts it; a fixed reporter analyzes evidence afterward](images/roles.svg)
 
@@ -169,7 +171,7 @@ full product acceptance gating is proposed.
 | What you see | Next step |
 |---|---|
 | The agent cannot find AJX | Check the complete skill folder and installation destination, then start a fresh session. Kiro custom agents need a resource entry. |
-| `ajx: command not found` | From the checkout, use `python3 skills/ajx/bin/ajx …`, or add that `bin` directory to this shell's `PATH`. |
+| `ajx: command not found` | Open a new terminal, run `export PATH="$HOME/.local/bin:$PATH"`, or invoke `~/.local/bin/ajx` directly. The skill can also invoke its own `bin/ajx`. See [installation](INSTALL.md). |
 | The coordinator runs, but the worker cannot start | Check the separate CLI installation, adapter status, and selected auth route. Run `doctor` on the prepared trial. |
 | `doctor` says `NOT READY` | Resolve the named prerequisite before launching. Do not bypass it with a prompt instruction. |
 | The local machine cannot enforce a requested restriction | Choose a qualified container profile, or explicitly revise the scope after discussing the access limit. |

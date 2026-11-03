@@ -26,23 +26,20 @@ header{border-bottom:1px solid var(--line)}.masthead{display:flex;gap:20px;align
 </div>
 <nav class="rail" aria-label="Walkthrough chapters"><div class="wrap"><a href="#setup" aria-current="step">1 · Set up</a><a href="#brief">2 · Give the brief</a><a href="#plan">3 · Check the plan</a><a href="#run">4 · Know what happens</a><a href="#reports">5 · Read the evidence</a><a href="#improve">6 · Improve and repeat</a></div></nav>
 <section class="chapter" id="setup"><div class="wrap">
-<p class="number">01 / SET UP ONCE</p><h2>Install the skill.<br>Let your agent check the rest.</h2>
+<p class="number">01 / SET UP ONCE</p><h2>One install. CLI and skill.<br>Let your agent check the rest.</h2>
 <div class="split"><div>
 <p>The AJX skill teaches your current agent how to prepare and coordinate a trial. The task itself runs in a separate agent CLI process.</p>
-<ul class="checklist"><li>macOS or Linux, Git, Python 3.11+<span>AJX uses the Python standard library. No packages to install.</span></li><li>An agent with file and shell access<span>Codex, Claude Code, Kiro CLI, or another Agent Skills host.</span></li><li>An installed, authenticated worker CLI<span>Your coordinator checks adapter and reporter support. A desktop login may not authenticate the CLI.</span></li><li>A task you are allowed to run<span>Use fictional data and disposable files for a first local trial.</span></li></ul>
-<div class="aside"><h3>Just looking?</h3><p>After cloning, run <code>python3 skills/ajx/bin/ajx example trials/example</code> and open <code>trials/example/index.html</code>. No skill installation, model login, or model calls needed.</p></div>
+<ul class="checklist"><li>macOS or Linux, Bash and curl<span>Downloads a public release. No GitHub login, Go, Python, or administrator access needed.</span></li><li>An agent with file and shell access<span>Codex, Claude Code, Kiro CLI, or another Agent Skills host.</span></li><li>An installed, authenticated worker CLI<span>Your coordinator checks adapter and reporter support. A desktop login may not authenticate the CLI.</span></li><li>A task you are allowed to run<span>Use fictional data and disposable files for a first local trial.</span></li></ul>
+<div class="aside"><h3>Just looking?</h3><p>After installing, run <code>ajx console demo trials/console-demo</code> for a simulated live run, or <code>ajx example trials/example</code> for fictional reports. No model login or model calls needed.</p></div>
 <p class="muted">No AWS account or Docker is required for a local task. Model and reporting calls use your configured provider and may cost money.</p>
 </div><div>
-<div class="codebox"><div class="codehead"><span>CLONE AND CHECK PYTHON</span><button class="copy" data-copy="clone-code">Copy</button></div><pre id="clone-code">git clone https://github.com/royosherove/ajx.git
-cd ajx
-python3 --version</pre></div>
-<p><small>Already reviewing a branch? Use that checkout. The skill runs from the revision you link below.</small></p>
+<div class="codebox"><div class="codehead"><span>INSTALL IN BASH OR ZSH</span><button class="copy" data-copy="clone-code">Copy</button></div><pre id="clone-code">bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash' &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</pre></div>
+<p><small>Installs the latest stable CLI release and matching skill for all three hosts. Run the same command to update. <a href="INSTALL.md">Installation options and source checkouts</a>.</small></p>
 <div class="chooser"><label for="host">Your coordinator</label><select id="host"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="kiro">Kiro CLI</option><option value="other">Another skills host</option></select></div>
-<div class="codebox"><div class="codehead"><span>FROM THE AJX CHECKOUT</span><button class="copy" data-copy="install-code">Copy</button></div><pre id="install-code">mkdir -p ~/.agents/skills
-ln -s "$PWD/skills/ajx" ~/.agents/skills/ajx</pre></div>
+<div class="codebox"><div class="codehead"><span>IN A FRESH AGENT SESSION</span><button class="copy" data-copy="install-code">Copy</button></div><pre id="install-code">$ajx</pre></div>
 <p id="host-note">Start a fresh session. Invoke <code>$ajx</code>, or ask the agent to use the AJX skill.</p>
 <noscript><p>For Claude Code use <code>~/.claude/skills/ajx</code>; for Kiro CLI use <code>~/.kiro/skills/ajx</code>. Copy the complete skill directory for other hosts. See the setup reference for full commands.</p></noscript>
-<p><small>If a skill already exists, inspect it before replacing it. The complete folder is required. Kiro custom agents need a skill resource entry.</small></p><a href="HARNESS-SUPPORT.md">Installation details and adapter support</a>
+<p><small>The installer preserves existing manual skills unless you choose replacement with a backup. Kiro custom agents need a skill resource entry.</small></p><a href="HARNESS-SUPPORT.md">Installation details and adapter support</a>
 </div></div></div></section>
 <section class="chapter" id="brief"><div class="wrap">
 <p class="number">02 / GIVE THE BRIEF</p><h2>You bring the outcome.<br>Your agent handles the trial.</h2>
@@ -117,7 +114,7 @@ task and comparable conditions. Show what will stay fixed and what changes.</pre
 document.documentElement.classList.add('js');
 const hostSelect=document.getElementById('host');
 const hosts={codex:{dir:'.agents',note:'Start a fresh session. Invoke $ajx, or ask the agent to use the AJX skill.'},claude:{dir:'.claude',note:'Start a fresh session. Invoke /ajx, or ask the agent to use the AJX skill.'},kiro:{dir:'.kiro',note:'Start a fresh session. Invoke /ajx. A custom agent also needs skill://~/.kiro/skills/ajx/SKILL.md in its existing resources list.'}};
-hostSelect.addEventListener('change',()=>{const h=hosts[hostSelect.value];document.getElementById('install-code').textContent=h?`mkdir -p ~/${h.dir}/skills\nln -s "$PWD/skills/ajx" ~/${h.dir}/skills/ajx`:'Copy the complete skills/ajx folder into your host’s documented skills directory.';document.getElementById('host-note').textContent=h?h.note:'Use the host’s skill picker, or ask it to use the AJX skill. It needs file access and a shell running Python 3.11+.';});
+hostSelect.addEventListener('change',()=>{const h=hosts[hostSelect.value];document.getElementById('install-code').textContent=h?(hostSelect.value==='codex'?'$ajx':'/ajx'):'Use the AJX skill to review my project.';document.getElementById('host-note').textContent=h?h.note:'Install into your host’s documented skill directory with --skill-dir. The host needs file access and a shell.';});
 for(const button of document.querySelectorAll('[data-copy]'))button.addEventListener('click',async()=>{const target=document.getElementById(button.dataset.copy),status=document.getElementById('copy-status'),label=button.textContent;try{if(!navigator.clipboard)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(target.textContent);button.textContent='Copied';status.textContent='Copied. Paste into your terminal or agent as indicated.';}catch{const selection=window.getSelection(),range=document.createRange();range.selectNodeContents(target);selection.removeAllRanges();selection.addRange(range);button.textContent='Text selected';status.textContent='Clipboard unavailable here. Text selected; use your normal copy shortcut.';}setTimeout(()=>{button.textContent=label;},2000);});
 function showReport(name){for(const button of document.querySelectorAll('[data-report]'))button.setAttribute('aria-pressed',String(button.dataset.report===name));for(const panel of document.querySelectorAll('.report-panel'))panel.hidden=panel.id!==`report-${name}`;}
 for(const button of document.querySelectorAll('[data-report]'))button.addEventListener('click',()=>showReport(button.dataset.report));showReport('asks');

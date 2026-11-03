@@ -10,9 +10,20 @@ Kiro CLI, or another compatible harness with file access and shell execution.
 Use the host's available tools for reading files, asking questions, running
 commands, and showing reports; no vendor-specific tool name is required.
 
-You are the coordinator. `bin/ajx` (Python 3.11+, stdlib only) does the deterministic work: fresh unnamed workspaces, worker launches, telemetry normalization, verification, measurement, rendering. It gives workers only the task prompt; configuration isolation depends on the adapter and auth profile, and possible exposure to AJX material is recorded. The method produces a first-person journey by the agent that did the task where supported, asks extracted in a separate pass and checked against evidence, measured costs kept apart from modeled savings, and explicit gaps where evidence is unavailable.
+You are the coordinator. `bin/ajx` does the deterministic work: fresh unnamed workspaces, worker launches, telemetry normalization, verification, measurement, rendering. It gives workers only the task prompt; configuration isolation depends on the adapter and auth profile, and possible exposure to AJX material is recorded. The method produces a first-person journey by the agent that did the task where supported, asks extracted in a separate pass and checked against evidence, measured costs kept apart from modeled savings, and explicit gaps where evidence is unavailable.
 
-Paths below are relative to this skill directory. Run the CLI as `python3 <skill-dir>/bin/ajx ...`. A native Go build of the same CLI (`ajx version` prints `(go)`) accepts the same commands and files and may be used instead; it adds `--json` output and `ajx ci` for unattended pipelines.
+Paths below are relative to this skill directory. First run
+`<skill-dir>/bin/ajx --version` directly, using the actual installed skill path.
+Use that executable for the `ajx` commands below; it works even when this agent
+session's `PATH` does not include `~/.local/bin`.
+
+The one-line installer bundles the matching native Go executable here. Do not
+pass it to Python or require Python for a native trial. It adds `--json` output
+and `ajx ci` for unattended pipelines. In a source checkout, `bin/ajx` is the
+Python launcher and needs Python 3.11+. Downloaded packages retain that launcher
+as `bin/ajx-python`: use `python3 <skill-dir>/bin/ajx-python ...` only when the
+trial requires Python plugins. Native AJX does not execute Python plugins.
+Never replace an installed native CLI with a source launcher as a setup fix.
 
 ## Flow
 
@@ -43,11 +54,12 @@ For a first trial, ask only for missing information in these three areas:
   when requested or needed by the task.
 
 Check prerequisites yourself before asking the user to choose technical details:
-Python 3.11+, installed worker and reporter CLIs, `ajx plugins` capabilities and
+the installed AJX executable, installed worker and reporter CLIs, `ajx plugins` capabilities and
 validation status, available starting tools, and the selected auth route. Do not
 inspect or print secret values, initiate login flows, or run a paid model probe
 as a setup check. Explain a missing prerequisite and its next action plainly.
 A coordinator desktop login is not proof that the worker CLI can authenticate.
+Check Python 3.11+ only when using the Python launcher or Python plugins.
 
 Propose one cell and one attempt using the current host's CLI when its adapter
 and authentication are available; otherwise explain the installed alternatives.

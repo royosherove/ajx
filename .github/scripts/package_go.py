@@ -46,6 +46,23 @@ def package(output, expected_target):
         if version["build"] != commit or version["implementation"] != "go":
             raise SystemExit("The packaged executable does not identify this build.")
         shutil.copyfile(ROOT / "LICENSE", folder / "LICENSE")
+        shutil.copyfile(ROOT / "install.sh", folder / "install.sh")
+        (folder / "PACKAGE_FORMAT").write_text("1\n")
+        (folder / "BUILD_COMMIT").write_text(commit + "\n")
+        # Copy tracked resources only: local trials, caches and credentials must
+        # never enter an installation package. Keep the skill and CLI in lockstep.
+        tracked = subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "skills/ajx"], cwd=ROOT
+        ).decode().split("\0")
+        for relative in filter(None, tracked):
+            source = ROOT / relative
+            if source.is_symlink():
+                raise SystemExit("Skill packages must not contain symbolic links.")
+            dest = folder / "skill" / source.relative_to(ROOT / "skills" / "ajx")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest)
+        (folder / "skill/bin/ajx").rename(folder / "skill/bin/ajx-python")
+        shutil.copy2(binary, folder / "skill/bin/ajx")
         # Distribute the notices required by the vendored dependencies too.
         for source in (ROOT / "vendor").rglob("*"):
             if source.is_file() and source.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE")):
@@ -53,6 +70,7 @@ def package(output, expected_target):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, dest)
         manifest = {
+            "package_format": 1,
             "commit": commit, "version": version["version"], "os": goos, "arch": arch,
             "go_version": command("go", "version", env=env),
             "skill_fingerprint": version["skill_fingerprint"],
@@ -61,6 +79,10 @@ def package(output, expected_target):
         (folder / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
         (folder / "INSTALL.txt").write_text(
             f"AJX {version['version']} for {goos}/{arch}\nSource commit: {commit}\n\n"
+            "Install the CLI and skill together (from this extracted directory,\n"
+            "with the original archive and SHA256SUMS in its parent):\n"
+            "  bash install.sh --package-dir ..\n\n"
+            "Or install only the executable manually:\n"
             "From this extracted directory:\n"
             '  mkdir -p "$HOME/.local/bin"\n'
             '  install -m 755 ajx "$HOME/.local/bin/ajx"\n'
@@ -69,14 +91,16 @@ def package(output, expected_target):
             "  ajx console demo trials/console-demo\n\n"
             "Add the PATH export to your shell profile to keep it in new terminals.\n"
             "The demo uses no model or cloud credentials. Actual trials need the chosen\n"
-            "agent CLI and its authentication. Python plugins still need Python 3.11+.\n"
-            "This is a build of main, not a tagged release. It is not signed or notarized.\n"
+            "agent CLI and its authentication. Python plugins need Python 3.11+\n"
+            "and the separate skill/bin/ajx-python launcher.\n"
+            "See VERSION in a release download for its tag. Main CI artifacts are\n"
+            "development builds. Binaries are not signed or notarized.\n"
             "Documentation: https://github.com/royosherove/ajx/blob/main/docs/GO-CLI.md\n"
         )
         def archive_metadata(entry):
             entry.uid = entry.gid = 0
             entry.uname = entry.gname = ""
-            entry.mode = 0o755 if entry.isdir() or entry.name == f"{name}/ajx" else 0o644
+            entry.mode = 0o755 if entry.isdir() or entry.mode & 0o111 else 0o644
             return entry
 
         with tarfile.open(archive, "w:gz") as tar:

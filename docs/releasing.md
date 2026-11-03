@@ -23,3 +23,26 @@ documentation, and any release tag consistent. Review public claims against the
 shipped behavior and evidence available to readers. Report projections as modeled
 and keep unsupported performance, adoption, and compatibility claims out of the
 release material.
+
+## Publish a CLI version
+
+Set the Go version in `embed.go` and the Python version in
+`skills/ajx/lib/ajx/__init__.py` to the same version. After the intended commit
+is on `main` and its checks pass, create and push an annotated `vX.Y.Z` tag at
+that commit. Use your GitHub no-reply identity for the tag and commits.
+
+The tag starts the full CI workflow, including Python, Go, container and privacy
+checks. It then tests, builds and installs packages on all four native platforms.
+The publishing job checks that the tag belongs to `main` and that every package
+matches its version and commit. It uploads the complete asset set to a draft
+release before making the release public. Published assets are not overwritten;
+a fix needs a new version.
+
+Stable tags update the latest release used by the anonymous one-line installer.
+A tag with a prerelease suffix creates a prerelease and does not replace the
+latest stable version. `main` pushes still produce development CI artifacts,
+but the installer uses versioned releases only.
+
+Before calling the release complete, test the public one-liner without GitHub
+credentials in a disposable home directory, then verify `ajx version`, skill
+discovery, and the simulated console/headless trial.

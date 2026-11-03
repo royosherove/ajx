@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: ['**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +20,12 @@ jobs:
       matrix:
         python: ['3.11', '3.13', '3.14']
         os: [ubuntu-latest, macos-latest]
+        exclude:
+          - python: '3.11'
+            os: macos-latest
+        include:
+          - python: '3.11'
+            os: macos-15-intel
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -70,6 +77,10 @@ jobs:
           "$RUNNER_TEMP/ajx" --help
           "$RUNNER_TEMP/ajx" --version
           "$RUNNER_TEMP/ajx" version
+      - name: Installer regression tests
+        run: |
+          python3 -I .github/scripts/test_install.py
+          python3 -I .github/scripts/test_release.py
 
   containers:
     name: Container environment integration
@@ -103,7 +114,7 @@ jobs:
   binaries:
     name: Download / ${{ matrix.target }}
     needs: [test, go, containers, security]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -139,6 +150,10 @@ jobs:
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
         run: python3 -I .github/scripts/package_go.py --output "$RUNNER_TEMP/package" --target "$PACKAGE_TARGET"
+      - name: Install and exercise the packaged CLI and skill
+        env:
+          AJX_INSTALL_TEST_PACKAGE: ${{ runner.temp }}/package
+        run: python3 -I .github/scripts/test_install.py
       - name: Upload the tested package
         id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -155,6 +170,31 @@ jobs:
         run: |
           printf '### AJX %s\n\n[Download the tested package](%s)\n\nCommit: `%s`\n' \
             "$TARGET" "$ARTIFACT_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish versioned release
+    needs: [binaries]
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a release of main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Download the four tested packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'ajx-*' --dir "$RUNNER_TEMP/packages"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/publish_release.py --packages "$RUNNER_TEMP/packages" --output "$RUNNER_TEMP/release" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
 
   security:
     name: Secrets and privacy

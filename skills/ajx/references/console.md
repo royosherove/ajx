@@ -7,7 +7,7 @@ sees the same trial from chat. The console runs as the user who started it, on `
 ## Try it without an agent or a model
 
 ```sh
-python3 skills/ajx/bin/ajx console demo trials/console-demo
+ajx console demo trials/console-demo
 ```
 
 This copies a demo trial into `trials/console-demo` and opens it. The demo's worker is
