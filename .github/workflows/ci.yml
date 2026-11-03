@@ -19,10 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         python: ['3.11', '3.13', '3.14']
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-15]
         exclude:
           - python: '3.11'
-            os: macos-latest
+            os: macos-15
         include:
           - python: '3.11'
             os: macos-15-intel
@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-15]
     env:
       GOFLAGS: -mod=vendor
       GOPROXY: 'off'
@@ -125,7 +125,7 @@ jobs:
             target: linux-amd64
           - os: ubuntu-24.04-arm
             target: linux-arm64
-          - os: macos-latest
+          - os: macos-15
             target: darwin-arm64
           - os: macos-15-intel
             target: darwin-amd64
