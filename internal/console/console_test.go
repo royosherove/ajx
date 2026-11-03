@@ -974,14 +974,10 @@ func TestAReusedPidIsNeverTreatedAsTheRun(t *testing.T) {
 func TestStopIsRefusedForParallelRuns(t *testing.T) {
 	d := newDemo(t, "0")
 	d.set("trial", "parallel", 2, 0)
-	// A process whose command line reads like `ajx run`.
-	bin := filepath.Join(d.tmp, "ajx")
-	os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755)
-	sleeper := exec.Command("/bin/sh", "-c", "exec -a 'ajx run x' sleep 60")
-	if exec.Command("/bin/sh", "-c", "exec -a x true").Run() != nil {
-		// No `exec -a` in this shell: run a script named ajx with a run argument.
-		sleeper = exec.Command("/bin/sh", bin, "run", "x")
-	}
+	// Set argv[0] directly: /bin/sh need not support `exec -a`, and a
+	// wrapper that execs sleep loses the command line this test needs.
+	sleeper := exec.Command("sleep", "60")
+	sleeper.Args[0] = "ajx run x"
 	if err := sleeper.Start(); err != nil {
 		t.Fatal(err)
 	}
