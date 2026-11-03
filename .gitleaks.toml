@@ -8,10 +8,11 @@ id = "personal-email"
 description = "Personal email address; use synthetic examples or no-reply attribution"
 regex = '''(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'''
 [[rules.allowlists]]
-description = "Reserved examples, GitHub no-reply attribution, and public GitHub bot addresses"
+description = "Reserved examples, public no-reply attribution, and public dependency contacts"
 regexes = [
   '''(?i)^[^@]+@(?:example\.(?:com|net|org)|users\.noreply\.github\.com)$''',
   '''(?i)^(?:noreply|support)@github\.com$''',
+  '''(?i)^noreply@anthropic\.com$''',  # Claude's standard public co-author attribution
   '''(?i)^vt100@charm\.land$''',  # the Charm libraries' public contact address in their vendored guides
 ]
 

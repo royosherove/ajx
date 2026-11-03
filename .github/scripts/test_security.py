@@ -23,6 +23,9 @@ class PublicationChecks(unittest.TestCase):
             ("personal-email", "fictional-person" + "@" + "invalid.test"),
             ("personal-email", "fictional-person" + "@" + "github.com"),
             ("personal-email", "support" + "@" + "github.com.invalid.test"),
+            ("personal-email", "fictional-person" + "@" + "anthropic.com"),
+            ("personal-email", "noreply" + "@" + "anthropic.com.invalid.test"),
+            ("personal-email", "not-noreply" + "@" + "anthropic.com"),
             ("personal-home-path", "/" + "Users" + "/fictional-person/project"),
             ("internal-hostname", "git" + "." + "amazon.com"),
             ("cloud-account-id", "account=" + "987654" + "321098"),
@@ -48,6 +51,7 @@ class PublicationChecks(unittest.TestCase):
             "example@users.noreply.github.com",
             "noreply@github.com",
             "support@github.com",
+            "Co-Authored-By: Claude <noreply@anthropic.com>",
             "/tmp/example-workspace",
             "",
         ])
