@@ -12,6 +12,7 @@ description = "Reserved examples, GitHub no-reply attribution, and public GitHub
 regexes = [
   '''(?i)^[^@]+@(?:example\.(?:com|net|org)|users\.noreply\.github\.com)$''',
   '''(?i)^(?:noreply|support)@github\.com$''',
+  '''(?i)^vt100@charm\.land$''',  # the Charm libraries' public contact address in their vendored guides
 ]
 
 [[rules]]

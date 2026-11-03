@@ -49,7 +49,8 @@ reachable history with the repository's `.gitleaks.toml` rules.
 The additional rules detect personal email addresses, home paths, internal
 hostnames, cloud account identifiers, and captured agent environment metadata.
 Reserved example email domains, GitHub's no-reply attribution domain, and the
-public `noreply@github.com` and `support@github.com` bot addresses are allowed.
+public `noreply@github.com` and `support@github.com` bot addresses are allowed, as is
+the Charm libraries' public contact address in their vendored upgrade guides.
 Automated checks are a safeguard; review new fixtures and attachments manually
 too. Do not add broad exclusions to silence a finding.
 
