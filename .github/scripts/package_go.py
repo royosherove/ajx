@@ -15,6 +15,22 @@ ROOT = Path(__file__).resolve().parents[2]
 TARGETS = {("linux", "amd64"), ("linux", "arm64"), ("darwin", "amd64"), ("darwin", "arm64")}
 
 
+def skill_hash(skill):
+    """Match internal/update.SkillHash; CLI version/binaries are independent."""
+    files = []
+    for part in ("SKILL.md", "prompts", "schemas", "references", "assets", "examples"):
+        path = skill / part
+        files.extend([path] if path.is_file() else path.rglob("*"))
+    digest = hashlib.sha256()
+    for path in sorted((p for p in files if p.is_file()), key=lambda p: p.relative_to(skill).as_posix()):
+        relative = path.relative_to(skill).as_posix()
+        if "__pycache__" in relative:
+            continue
+        digest.update(relative.encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def command(*args, env=None):
     return subprocess.check_output(args, cwd=ROOT, env=env, text=True).strip()
 
@@ -74,6 +90,7 @@ def package(output, expected_target):
             "commit": commit, "version": version["version"], "os": goos, "arch": arch,
             "go_version": command("go", "version", env=env),
             "skill_fingerprint": version["skill_fingerprint"],
+            "skill_sha256": skill_hash(folder / "skill"),
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         }
         (folder / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")

@@ -20,6 +20,7 @@ def prepare(packages, output, tag, commit):
         raise ValueError("Release commit must be a full Git SHA")
     # Validate the entire set before staging anything for publication.
     archives = []
+    skill_sha256 = None
     for target in TARGETS:
         package = packages / f"ajx-{target}"
         manifest = json.loads((package / "build.json").read_text())
@@ -27,6 +28,10 @@ def prepare(packages, output, tag, commit):
                 or manifest.get("package_format") != 1
                 or f"{manifest['os']}-{manifest['arch']}" != target):
             raise ValueError(f"{target} does not match the release version, commit or format")
+        digest = manifest.get("skill_sha256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or (skill_sha256 and digest != skill_sha256):
+            raise ValueError(f"{target} does not match the release skill content")
+        skill_sha256 = digest
         name = f"ajx-{target}.tar.gz"
         archive = package / name
         checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -41,6 +46,9 @@ def prepare(packages, output, tag, commit):
     shutil.copyfile(ROOT / "install.sh", output / "install.sh")
     (output / "VERSION").write_text(tag + "\n")
     (output / "BUILD_COMMIT").write_text(commit + "\n")
+    (output / "RELEASE.json").write_text(json.dumps({
+        "schema": 1, "version": tag[1:], "commit": commit, "skill_sha256": skill_sha256,
+    }, indent=2) + "\n")
     assets = sorted(output.iterdir())
     (output / "SHA256SUMS").write_text("".join(
         f"{hashlib.sha256(asset.read_bytes()).hexdigest()}  {asset.name}\n" for asset in assets
@@ -78,6 +86,8 @@ def publish(packages, output, tag, commit):
             "```\n\n"
             "Then run `ajx console demo trials/console-demo` for a simulated investigation, "
             "or start a fresh agent session and ask it to use the AJX skill.\n\n"
+            "For later updates, run `ajx update` and choose CLI + skill or CLI only. "
+            "`ajx update --check` checks without changing files.\n\n"
             "Packages for macOS and Linux on ARM64 and x86-64 were tested on native "
             "runners, including installation, console startup and a headless demo. "
             "Checksums and the source commit are included. Binaries are not signed "

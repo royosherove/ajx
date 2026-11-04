@@ -50,8 +50,9 @@ Commands:
   ci <trial.toml> [--output DIR]   validate, doctor, run and decide passed|failed|inconclusive;
                                    writes ci-result.json and junit.xml (never waits for input)
   version | completion bash|zsh|fish
+  update [--check] [--with-skills | --cli-only]   update from public releases; no GitHub login
 
---json on init, validate, doctor, run, status, report, export and plugins prints one JSON
+--json on init, validate, doctor, run, status, report, export, update and plugins prints one JSON
 document for agents and pipelines (see docs/GO-CLI.md).
 `
 
@@ -213,6 +214,14 @@ func BuildParser() *Parser {
 	s.Flag("--skip-doctor", "do not stop when doctor reports problems (still recorded)")
 
 	on(sub.Add("version", "print the AJX version, build and skill fingerprint"), cmdVersion).Flag("--json", "")
+	s = on(sub.Add("update", "update the CLI and optionally the skill from public GitHub releases"), cmdUpdate)
+	s.Flag("--check", "check available CLI and skill updates without changing files")
+	s.Flag("--cli-only", "update only the CLI; keep the installed skill unchanged")
+	s.Flag("--with-skills", "update CLI + skill without prompting")
+	s.Flag("--yes", "accept CLI + skill (or the explicit --cli-only choice) without prompting")
+	s.Flag("--no-input", "never prompt; requires an explicit scope when an update is available")
+	s.Flag("--replace", "back up conflicting unmanaged files before replacing them")
+	jsonFlag(s, "the update result; use --check or choose an explicit update scope")
 	s = on(sub.Add("completion", "print a shell completion script"), cmdCompletion)
 	s.Pos("shell", "bash, zsh or fish")
 	return p

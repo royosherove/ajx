@@ -33,6 +33,7 @@ class ReleaseTest(unittest.TestCase):
             (folder / "build.json").write_text(json.dumps({
                 "commit": self.commit, "version": "1.0.0", "package_format": 1,
                 "os": os_name, "arch": arch,
+                "skill_sha256": "b" * 64,
             }))
 
     def prepare(self, tag="v1.0.0"):
@@ -40,9 +41,11 @@ class ReleaseTest(unittest.TestCase):
 
     def test_complete_release_stages_anonymous_installer_assets(self):
         assets = self.prepare()
-        self.assertEqual(len(assets), 8)
+        self.assertEqual(len(assets), 9)
         self.assertEqual((self.output / "VERSION").read_text(), "v1.0.0\n")
         self.assertEqual((self.output / "BUILD_COMMIT").read_text(), self.commit + "\n")
+        self.assertEqual(json.loads((self.output / "RELEASE.json").read_text()),
+                         {"schema": 1, "version": "1.0.0", "commit": self.commit, "skill_sha256": "b" * 64})
         for line in (self.output / "SHA256SUMS").read_text().splitlines():
             checksum, name = line.split()
             self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), checksum)
@@ -64,6 +67,15 @@ class ReleaseTest(unittest.TestCase):
     def test_damaged_package_blocks_all_publication(self):
         (self.packages / "ajx-linux-arm64/ajx-linux-arm64.tar.gz").write_bytes(b"corrupt")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            self.prepare()
+        self.assertFalse(self.output.exists())
+
+    def test_different_skill_contents_block_publication(self):
+        path = self.packages / "ajx-linux-arm64/build.json"
+        manifest = json.loads(path.read_text())
+        manifest["skill_sha256"] = "c" * 64
+        path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "skill content"):
             self.prepare()
         self.assertFalse(self.output.exists())
 

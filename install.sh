@@ -18,6 +18,7 @@ Requires curl and standard shell tools. No Go, Python, Git or sudo needed.
   --skill-dir DIR    Install the skill here (repeatable); replaces default targets
   --no-skills        Install only the CLI
   --no-path          Do not update shell startup files
+  --update           Refresh existing managed skill locations without adding new ones
   --replace          Back up conflicting files/folders before replacing them
   --help            Show this help
 
@@ -73,9 +74,10 @@ replacement_command() {
 }
 
 check_destination() {
-    local path=$1 target=$2
+    local path=$1 target=$2 previous=${3:-}
     if [[ -e "$path" || -L "$path" ]]; then
         if [[ -L "$path" && "$(readlink "$path")" == "$target" ]]; then return; fi
+        if [[ -n "$previous" && -L "$path" && "$(readlink "$path")" == "$previous" ]]; then return; fi
         if [[ "$replace" != true ]]; then
             printf 'AJX install: Already exists: %s\n' "$path" >&2
             printf 'To preserve existing files as backups and install AJX, run:\n\n' >&2
@@ -86,9 +88,13 @@ check_destination() {
 }
 
 link_destination() {
-    local path=$1 target=$2
+    local path=$1 target=$2 previous=${3:-}
     mkdir -p "$(dirname "$path")"
     if [[ -L "$path" && "$(readlink "$path")" == "$target" ]]; then return; fi
+    if [[ -n "$previous" && -L "$path" && "$(readlink "$path")" == "$previous" ]]; then
+        ln -sfn "$target" "$path"
+        return
+    fi
     if [[ -e "$path" || -L "$path" ]]; then
         mv "$path" "$path.ajx-backup-$stamp"
         say "Preserved previous installation: $path.ajx-backup-$stamp"
@@ -116,6 +122,7 @@ configure_path() {
 main() {
     local release_version="" package_dir="" no_skills=false no_path=false replace=false
     local offline_install=false
+    local update_existing=false refresh_skills=false pointer
     local root bin target os arch tmp expected="" base home_physical index matches
     local checksum filename extra archive listing pkg commit release stamp dest native_version
     local -a skills profiles original_args
@@ -133,6 +140,7 @@ main() {
                 shift 2 ;;
             --no-skills) no_skills=true; shift ;;
             --no-path) no_path=true; shift ;;
+            --update) update_existing=true; shift ;;
             --replace) replace=true; shift ;;
             --help|-h) usage; return ;;
             *) die "Unknown option: $1 (see --help)" ;;
@@ -228,6 +236,8 @@ main() {
     fi
     if [[ "$no_skills" == true ]]; then
         skills=()
+    elif [[ "$update_existing" == true && ${#skills[@]} -eq 0 && -d "$root/current/skill" ]]; then
+        refresh_skills=true
     elif [[ ${#skills[@]} -eq 0 ]]; then
         skills=("$HOME/.agents/skills/ajx" "$HOME/.claude/skills/ajx" "$HOME/.kiro/skills/ajx")
     fi
@@ -243,11 +253,13 @@ main() {
             die '--skill-dir must not overlap the home or CLI installation directories'
         check_destination "$dest" "$root/current/skill"
     done
-    check_destination "$bin" "$root/current/ajx"
-    if [[ -e "$root/current" || -L "$root/current" ]]; then
-        [[ -L "$root/current" && "$(readlink "$root/current")" == "$root/versions/"* ]] ||
-            die "Unmanaged install directory: $root/current"
-    fi
+    check_destination "$bin" "$root/cli-current/ajx" "$root/current/ajx"
+    for pointer in current cli-current; do
+        if [[ -e "$root/$pointer" || -L "$root/$pointer" ]]; then
+            [[ -L "$root/$pointer" && "$(readlink "$root/$pointer")" == "$root/versions/"* ]] ||
+                die "Unmanaged install directory: $root/$pointer"
+        fi
+    done
     stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     release="$root/versions/$commit-$target"
     mkdir -p "$root/versions"
@@ -256,8 +268,11 @@ main() {
         release="$release-$stamp"
     fi
     mv "$pkg" "$release"
-    ln -sfn "$release" "$root/current"
-    link_destination "$bin" "$root/current/ajx"
+    # Keep the old current pointer for skills, including arbitrary custom hosts
+    # installed by older releases. CLI-only updates never move that pointer.
+    if [[ "$no_skills" == false ]]; then ln -sfn "$release" "$root/current"; fi
+    ln -sfn "$release" "$root/cli-current"
+    link_destination "$bin" "$root/cli-current/ajx" "$root/current/ajx"
     for dest in ${skills[@]+"${skills[@]}"}; do
         link_destination "$dest" "$root/current/skill"
         say "Skill ready: $dest"
@@ -265,14 +280,16 @@ main() {
     if [[ "$no_path" == false ]]; then configure_path; fi
     "$bin" version
     say "CLI ready: $bin"
-    if [[ ${#skills[@]} -gt 0 ]]; then
+    if [[ "$refresh_skills" == true ]]; then
+        say 'Installation complete: CLI + existing agent skills. Existing skill locations were retained.'
+    elif [[ ${#skills[@]} -gt 0 ]]; then
         say "Installation complete: CLI + agent skills (${#skills[@]} locations). No separate skill installation is needed."
     else
         say 'Installation complete: CLI only. Agent skills were skipped (--no-skills).'
     fi
     say 'Open a new terminal for PATH changes, and start a fresh agent session.'
     say 'Try: ajx console demo trials/console-demo'
-    if [[ ${#skills[@]} -gt 0 ]]; then
+    if [[ "$no_skills" == false ]]; then
         say 'Then ask your agent: Use the AJX skill to review my project.'
         say 'Custom Kiro agents also need skill://~/.kiro/skills/ajx/SKILL.md in their resources list.'
     fi

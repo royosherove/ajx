@@ -13,6 +13,7 @@ The Go CLI adds:
 - `ajx ci`, a headless evaluation that decides `passed`, `failed` or
   `inconclusive` and writes `ci-result.json` and `junit.xml`;
 - `ajx version` and `ajx completion bash|zsh|fish`;
+- `ajx update`, with separate CLI and skill choices and a read-only update check;
 - a trial folder wherever a trial file is expected: `ajx validate trials/my-cli`,
   `ajx run trials/my-cli` and `ajx status trials/my-cli` read its `trial.toml`,
   as `ajx console` already does.
@@ -138,6 +139,11 @@ Set `ACCESSIBLE=1` for a line-by-line version of the form that works with screen
 readers. In that mode, enter multiple material URLs on one line separated by
 spaces or commas, then press Enter.
 
+For a managed installation, `ajx update` checks public release assets and asks
+whether to update **CLI + skill** or **CLI only**. `ajx update --check --json`
+reports availability without changing files; `--with-skills` and `--cli-only`
+choose the scope without prompting. See [updating AJX](INSTALL.md#update-an-existing-installation).
+
 The wizard never starts when stdin or stdout is not a terminal, when `CI` is set,
 or with `--no-input`, `--yes` or `--json`. Then `--product` and the folder are
 required, as in the Python CLI, and a missing one is a usage error (exit 2).
@@ -188,6 +194,7 @@ may appear within a schema version; existing fields keep their meaning.
 | `init --json` | `dir`, `trial_file`, `prompt_file`, `written[]`, `kept[]`, `trial_id`, `harness`, `reporter`, `valid`, `problem`, `next[]` |
 | `plugins --json` | `harness[]`, `auth[]`, `runner[]`, `check[]` (`name`, `source`, and the same attributes as the text listing), `notes[]` |
 | `version --json` | `version`, `implementation`, `build`, `skill_fingerprint`, `skill_resources` |
+| `update --check --json` | `status` (`current_version`, `release`, `cli_update_available`, `skill_update_available`, `skill_installed`, `newer_than_release`), `updated`, `message`; updating adds `scope` (`all` or `cli`) |
 
 When a `--json` command fails, it prints the usual error line on stderr and a
 document with `ok: false`, `exit_code` and `error` (`type`: `trial_file_error`,

@@ -205,6 +205,42 @@ class InstallTest(unittest.TestCase):
         self.assertTrue((self.home / ".local/bin/ajx").exists())
         self.assertFalse((self.home / ".agents").exists())
         self.assertFalse((self.home / ".zshrc").exists())
+        self.assertFalse((self.home / ".local/share/ajx/current").exists())
+
+    def test_cli_only_upgrade_preserves_old_skills_including_legacy_custom_hosts(self):
+        custom = self.home / "custom agent/ajx"
+        self.install("--skill-dir", str(custom), "--no-path")
+        root = self.home / ".local/share/ajx"
+        binary = self.home / ".local/bin/ajx"
+        old_skill_target = (root / "current").resolve()
+        old_skill = (custom / "SKILL.md").read_bytes()
+        # Recreate the pre-1.0.2 shared CLI/skill pointer.
+        binary.unlink()
+        binary.symlink_to(root.resolve() / "current/ajx")
+        (root / "cli-current").unlink()
+        result = self.install("--update", "--no-skills", "--no-path")
+        self.assertIn("CLI only", result.stdout)
+        self.assertEqual((root / "current").resolve(), old_skill_target)
+        self.assertEqual((custom / "SKILL.md").read_bytes(), old_skill)
+        self.assertNotEqual(binary.resolve().parent, old_skill_target)
+        self.assertFalse((self.home / ".agents").exists())
+        self.assertFalse(list(self.home.rglob("*.ajx-backup-*")))
+        # A later full update advances the original custom skill location only.
+        result = self.install("--update", "--no-path")
+        self.assertIn("CLI + existing agent skills", result.stdout)
+        self.assertNotEqual((root / "current").resolve(), old_skill_target)
+        self.assertEqual((custom / "bin/ajx").resolve(), (root / "current/skill/bin/ajx").resolve())
+        self.assertFalse((self.home / ".agents").exists())
+
+    def test_cli_only_upgrade_preserves_all_default_skill_pointers(self):
+        self.install("--no-path")
+        skills = [self.home / host / "skills/ajx" for host in (".agents", ".claude", ".kiro")]
+        original = [p.resolve() for p in skills]
+        for _ in range(2):
+            self.install("--update", "--no-skills", "--no-path")
+            self.assertEqual([p.resolve() for p in skills], original)
+        self.install("--update", "--no-path")
+        self.assertTrue(all(p.resolve() != before for p, before in zip(skills, original)))
 
     def test_custom_skill_directory(self):
         custom = self.home / "another host/skills/ajx"

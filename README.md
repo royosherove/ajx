@@ -27,12 +27,17 @@ bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/late
 This downloads the **latest stable release**, verifies its checksum,
 and installs `ajx` plus the **matching complete skill** for Codex, Claude Code,
 and Kiro CLI. It sets up your shell's `PATH` and needs **no Go, Python, Git,
-or administrator access**. Run the same command to update.
+or administrator access**.
 **The one-liner installs both the CLI and the skill; there is no separate
 `ajx install` step.** Its output lists every installed skill location.
 Existing unmanaged files are preserved; the installer explains how to back
 them up and replace them if needed. See [installation options](docs/INSTALL.md)
 for a single host, another skills directory, pinned versions, and manual setup.
+
+After installing, run **`ajx update`** for future releases. It checks the CLI
+and skill separately, then lets you choose **CLI + skill** or **CLI only**.
+Use `ajx update --check` to check without changing anything. The one-liner
+also works for updating older installations that do not have this command.
 
 **Start a fresh agent session** after installing. Kiro custom agents also need
 the [skill resource entry](docs/HARNESS-SUPPORT.md#install-and-invoke).

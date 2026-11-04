@@ -35,12 +35,14 @@ The installer does not install those CLIs or change their credentials.
 |---|---|
 | `~/.local/bin/ajx` | Native CLI |
 | `~/.local/share/ajx/versions/` | Versioned CLI, complete skill, licenses, and build metadata |
-| `~/.local/share/ajx/current` | Selected installed version |
+| `~/.local/share/ajx/cli-current` | Selected CLI version |
+| `~/.local/share/ajx/current` | Selected skill bundle version |
 | `~/.agents/skills/ajx` | Codex skill |
 | `~/.claude/skills/ajx` | Claude Code skill |
 | `~/.kiro/skills/ajx` | Kiro skill |
 
-The CLI and skill paths point to the same installed version. Each skill also
+A full installation points the CLI and skill to the same release. A CLI-only
+update advances the CLI while keeping the skill at its previous release. Each skill also
 contains its own native `bin/ajx`, so an agent can invoke it without relying on
 the terminal's `PATH`. Kiro custom agents need the
 [resource entry](HARNESS-SUPPORT.md#install-and-invoke) in their configuration.
@@ -50,6 +52,37 @@ The installer adds an idempotent `PATH` line to `.zshrc` for Zsh, `.bashrc` and
 their own PATH setup. The one-liner also updates the current Bash/Zsh session.
 An already open desktop agent may need a new session, but its installed skill
 can invoke the bundled binary directly.
+
+## Update an existing installation
+
+Run `ajx update`. AJX checks the latest stable public release without a GitHub
+login and compares both the CLI build and the installed skill's instructions,
+assets, schemas, and examples. When an update is available, choose:
+
+- **CLI + skill:** update both, retaining your existing managed skill locations.
+- **CLI only:** update the executable and keep the skill, including its bundled
+  executable, at the version you already have.
+- **Cancel:** change nothing.
+
+If you update only the CLI, `ajx update` will continue to offer the newer skill.
+Run it again whenever you are ready. Previous managed versions remain on disk;
+start a fresh agent session after updating the skill.
+
+```sh
+ajx update --check                 # show available updates; change nothing
+ajx update --check --json          # the same check, for an agent or script
+ajx update --with-skills           # update CLI + skill without prompting
+ajx update --cli-only              # update just the executable
+```
+
+`--yes` is shorthand for accepting CLI + skill. Non-interactive use requires
+an explicit choice or `--check`; it never waits for input. AJX does not
+downgrade a CLI that is newer than the stable release. `--replace` preserves
+conflicting unmanaged files as backups before replacing them.
+
+The command updates installations made by the one-liner. If `ajx update` is
+unknown (releases before 1.0.2), or you copied a binary manually, use the
+one-liner above once to get the managed installation.
 
 ## Updates, options, and existing installations
 
@@ -72,6 +105,7 @@ bash ajx-install.sh --help
 |---|---|
 | `--skill-dir "$HOME/.agents/skills/ajx"` | Install only the Codex skill; repeat for more hosts or use another host's documented directory |
 | `--no-skills` | Install only the CLI |
+| `--update` | Refresh existing managed skill locations without adding new ones |
 | `--no-path` | Leave shell startup files untouched; invoke `~/.local/bin/ajx` directly |
 | `--version v1.0.0` | Pin to a specific released version instead of selecting the newest |
 | `--replace` | Move conflicting existing files/folders to adjacent `.ajx-backup-*` paths before installing |
@@ -91,7 +125,8 @@ bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/late
 
 Options go after `bash -s --`, inside the quotes. The suggested command preserves
 any options you supplied, including pinned versions and custom skill directories.
-Managed installations update together, and previous version directories remain
+Full updates refresh the managed CLI and skill together; `--no-skills` keeps
+the skill unchanged. Previous version directories remain
 under `versions/`. No old installations or backups are deleted automatically.
 
 Downloads are **versioned GitHub Releases** and do not expire with CI artifact

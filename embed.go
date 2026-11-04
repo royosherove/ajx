@@ -13,3 +13,8 @@ const Version = "1.0.2"
 //
 //go:embed skills/ajx/SKILL.md skills/ajx/prompts skills/ajx/schemas skills/ajx/references skills/ajx/assets skills/ajx/examples
 var Skill embed.FS
+
+// Installer is the reviewed installer shipped with this executable.
+//
+//go:embed install.sh
+var Installer string
