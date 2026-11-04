@@ -77,6 +77,21 @@ class RoundTripTest(PlanEditCase):
 
 
 class EditTest(PlanEditCase):
+    def test_model_aliases_resolve_for_workers_comparisons_and_reporter(self):
+        trial = self.copy("console-demo")
+        model = plan_edit.read_model(trial)
+        model["workers"][0].update(cli="kiro-cli", model="opus")
+        model["reporter"].update(cli="codex", model="astra")
+        raw = tomllib.loads(plan_edit.render(trial, model)[0])
+        self.assertEqual(raw["cells"][0]["model"], "claude-opus-5.5")
+        self.assertEqual(raw["reporter"]["model"], "gpt-6-astra")
+        model["workers"][0]["models"] = ["sonnet", "opus", "gateway/MyModel"]
+        raw = tomllib.loads(plan_edit.render(trial, model)[0])
+        self.assertEqual(raw["cells"][0]["models"], ["claude-sonnet-5.5", "claude-opus-5.5", "gateway/MyModel"])
+        model["workers"][0]["cli"] = "codex"
+        with self.assertRaisesRegex(plan_edit.PlanError, "not a model alias for codex"):
+            plan_edit.render(trial, model)
+
     def test_a_model_change_rewrites_only_its_sections_and_keeps_other_comments(self):
         trial = self.copy("console-demo")
         model = plan_edit.read_model(trial)

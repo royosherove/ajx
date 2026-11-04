@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/royosherove/ajx/internal/modelcatalog"
 	"github.com/royosherove/ajx/internal/planedit"
 	"github.com/royosherove/ajx/internal/runner"
 	"github.com/royosherove/ajx/internal/util"
@@ -168,7 +169,7 @@ func number(value any, label string, low, high float64) (float64, error) {
 
 // modelName is a model name as an agent CLI takes it: an alias such as sonnet,
 // or the provider's model id. "" means the agent's default.
-func modelName(value any) (any, error) {
+func modelName(value any, harness ...string) (any, error) {
 	name := ""
 	if util.Truthy(value) {
 		name = strings.TrimSpace(pstr(value))
@@ -179,6 +180,13 @@ func modelName(value any) (any, error) {
 	if strings.ContainsFunc(name, isSpace) || strings.HasPrefix(name, "-") || util.RuneLen(name) > 200 {
 		return nil, Errorf("%s is not a model name an agent CLI accepts: use an alias such as sonnet, opus or "+
 			"haiku, or the provider's model id (no spaces), or leave it empty for the agent's default", runner.PyRepr(name))
+	}
+	if len(harness) > 0 {
+		resolved, err := modelcatalog.Resolve(harness[0], name)
+		if err != nil {
+			return nil, Errorf("%s", err)
+		}
+		return resolved, nil
 	}
 	return name, nil
 }
@@ -221,7 +229,8 @@ func saveSettings(trial string, changes M, baseSha any, actor string) (M, error)
 	}
 	old := util.MapOr(util.Get(sp, "trial"))
 	cellsBefore := map[int]any{}
-	for i, c := range util.Maps(rawTOML(trial)["cells"]) {
+	rawCells := util.Maps(rawTOML(trial)["cells"])
+	for i, c := range rawCells {
 		cellsBefore[i] = c["model"]
 	}
 	data, err := os.ReadFile(trial)
@@ -281,7 +290,7 @@ func saveSettings(trial string, changes M, baseSha any, actor string) (M, error)
 		notes = append(notes, note)
 	}
 	if v, ok := changes["reporter_model"]; ok {
-		model, err := modelName(v)
+		model, err := modelName(v, util.S(util.Get(sp, "reporter", "harness")))
 		if err != nil {
 			return nil, err
 		}
@@ -306,7 +315,11 @@ func saveSettings(trial string, changes M, baseSha any, actor string) (M, error)
 		if err != nil {
 			return nil, Errorf("cell index %s is not a number", runner.PyRepr(key))
 		}
-		model, err := modelName(cellModels[key])
+		harness := ""
+		if index >= 0 && index < len(rawCells) {
+			harness = util.S(rawCells[index]["harness"])
+		}
+		model, err := modelName(cellModels[key], harness)
 		if err != nil {
 			return nil, err
 		}

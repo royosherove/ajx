@@ -200,6 +200,11 @@ print(json.dumps(out))
 // to Go as JSON). Each names the trial it starts from.
 var renderCases = []struct{ trial, edit string }{
 	{"console-demo", ""},
+	{"console-demo", `m["workers"][0].update(cli="kiro-cli", model="opus")
+m["reporter"].update(cli="codex", model="astra")`},
+	{"console-demo", `m["workers"][0].update(cli="kiro-cli", models=["sonnet", "opus", "gateway/MyModel"])
+m["reporter"].update(cli="codex", model="sol")`},
+	{"console-demo", `m["workers"][0].update(cli="codex", model="opus")`},
 	{"console-demo", `m["workers"][0]["model"] = "opus"
 m["checks"].append({"name": "out.csv exists", "type": "file", "path": "out.csv", "where": "host"})
 m["run"]["attempts"] = 3`},

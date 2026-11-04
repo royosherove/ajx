@@ -85,6 +85,53 @@ Codex's reporter sandbox permits read-only commands. Kiro retains user
 configuration and reports that limit. A fresh session or restricted tool policy
 is not a guarantee of complete filesystem or context isolation.
 
+## Choose a model
+
+`ajx init` and the web console show model suggestions for the selected harness,
+for both the worker and reporter. Use the model picker rather than guessing a
+provider's spelling. Leave the model empty for the agent's default. You can
+always enter a custom model ID, including a gateway or cloud-provider ID.
+
+Changing a worker's Agent CLI also updates its generated name, such as
+`kiro-cli-default` to `claude-code-default`. Custom names such as `baseline`
+stay unchanged. The model picker refreshes for the new agent; choose its model
+and sign-in method before saving.
+
+| Harness | Examples offered | How to check your account's models |
+|---|---|---|
+| Claude Code | `sonnet`, `opus`, `haiku`, `fable`, pinned Claude IDs | `/model` in Claude Code |
+| Codex | `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, `gpt-6-luna` | `/model` in Codex |
+| Kiro CLI | Claude Opus, Sonnet and Haiku versions; GPT-5.6 Sol, Terra and Luna; `auto` | `kiro-cli chat --list-models` |
+| Gemini CLI | Gemini Pro, Flash and Flash Lite versions; automatic routing | `/model` in Gemini CLI |
+| Cursor Agent | GPT-5.6 variants, Composer, `auto`; custom IDs for other providers | `agent models` or `cursor-agent --list-models` |
+| Copilot CLI | Claude, OpenAI and Gemini choices; `auto` | `/model` in Copilot CLI |
+
+For Kiro and Copilot, AJX expands `opus`, `sonnet`, and `haiku` into the matching
+dotted IDs before saving a new choice. For example, `--harness kiro-cli --model
+opus` writes `claude-opus-5.5`. In Claude Code, `opus` stays an alias so that
+Claude can resolve it for your provider. Codex does not accept the `opus` alias;
+AJX asks you to choose a Codex model before creating or saving that plan.
+Existing trials and recorded runs are not silently migrated to newer models.
+
+Short OpenAI names work too: with Codex, `sol` becomes `gpt-6.1-sol`, `terra`
+becomes `gpt-6.1-terra`, `astra` becomes `gpt-6-astra`, and `luna` becomes
+`gpt-6-luna`. With Kiro or Cursor, `sol`, `terra`, and `luna` select their
+GPT-5.6 versions. The full saved ID makes the choice explicit for comparisons.
+
+The bundled catalog was checked on **November 4, 2026** against the providers'
+documentation. Suggestions do not confirm access: CLI version, sign-in method,
+subscription, region, and organization policy can affect availability.
+If a suggested model is unavailable, update the harness or choose a model its
+own picker offers. AJX does not make a paid model call to populate its picker.
+
+The shared [catalog](../skills/ajx/assets/model-catalog.json) records its sources:
+[Claude Code](https://code.claude.com/docs/en/model-config),
+[Codex](https://developers.openai.com/codex/models/),
+[Kiro](https://kiro.dev/docs/models/),
+[Gemini CLI](https://geminicli.com/docs/cli/model/),
+[Cursor](https://cursor.com/docs/cli/reference/parameters), and
+[Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+
 ## Explicit worker skill profiles
 
 [Environment and agent profiles](../skills/ajx/references/environments.md) add

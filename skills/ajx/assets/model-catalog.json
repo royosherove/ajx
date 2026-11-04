@@ -1,0 +1,41 @@
+{
+  "checked": "2026-11-04",
+  "harnesses": {
+    "claude-code": {
+      "models": ["sonnet", "opus", "haiku", "fable", "best", "opusplan", "claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-6"],
+      "aliases": {"sonnet": "sonnet", "opus": "opus", "haiku": "haiku", "fable": "fable", "best": "best", "opusplan": "opusplan"},
+      "hint": "Claude aliases follow your provider's defaults. Pinned IDs depend on your Claude Code version and provider; Bedrock or gateways may need their own model ID.",
+      "sources": ["https://code.claude.com/docs/en/model-config"]
+    },
+    "codex": {
+      "models": ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"],
+      "aliases": {"sol": "gpt-6.1-sol", "terra": "gpt-6.1-terra", "astra": "gpt-6-astra", "luna": "gpt-6-luna"},
+      "hint": "OpenAI models for Codex. AJX expands sol, terra, astra and luna to the full IDs shown here. Use /model in Codex to check account access. Older CLI versions may need an update.",
+      "sources": ["https://developers.openai.com/codex/models/"]
+    },
+    "kiro-cli": {
+      "models": ["auto", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "claude-opus-5", "claude-opus-4.8", "claude-opus-4.7", "claude-opus-4.6", "claude-opus-4.5", "claude-sonnet-5", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-haiku-4.5"],
+      "aliases": {"opus": "claude-opus-5.5", "sonnet": "claude-sonnet-5.5", "haiku": "claude-haiku-5.5", "sol": "gpt-5.6-sol", "terra": "gpt-5.6-terra", "luna": "gpt-5.6-luna"},
+      "hint": "Kiro uses dotted Claude IDs, such as claude-opus-5.5. AJX expands opus, sonnet and haiku before saving. Run kiro-cli chat --list-models to check access, including other providers and regional models.",
+      "sources": ["https://kiro.dev/docs/models/", "https://kiro.dev/docs/models/available-models/", "https://kiro.dev/docs/reference/slash-commands/"]
+    },
+    "gemini-cli": {
+      "models": ["auto-gemini-3", "auto-gemini-2.5", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
+      "aliases": {},
+      "hint": "Google models for Gemini CLI. Use /model in Gemini CLI to check availability. Preview models and newer releases may require an updated CLI or different account access.",
+      "sources": ["https://geminicli.com/docs/cli/model/", "https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/config/models.ts"]
+    },
+    "cursor-agent": {
+      "models": ["auto", "gpt-5.6-sol", "gpt-5.6-sol-fast", "gpt-5.6-terra", "gpt-5.6-luna", "composer-2.5"],
+      "aliases": {"sol": "gpt-5.6-sol", "terra": "gpt-5.6-terra", "luna": "gpt-5.6-luna"},
+      "hint": "Cursor IDs differ from provider IDs. Run agent models (or cursor-agent --list-models) for your account's exact choices, including Claude, Gemini and Grok; paste any additional ID as a custom model.",
+      "sources": ["https://cursor.com/docs/cli/reference/parameters", "https://cursor.com/docs/models/gpt-5-6-sol", "https://cursor.com/docs/models/"]
+    },
+    "copilot-cli": {
+      "models": ["auto", "claude-sonnet-5.5", "claude-opus-5.5", "claude-haiku-5.5", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-5.3-codex", "claude-haiku-4.5", "gemini-3.8-flash"],
+      "aliases": {"opus": "claude-opus-5.5", "sonnet": "claude-sonnet-5.5", "haiku": "claude-haiku-5.5", "sol": "gpt-6.1-sol", "terra": "gpt-6.1-terra", "astra": "gpt-6-astra", "luna": "gpt-6-luna"},
+      "hint": "GitHub Copilot offers models from multiple providers. Use /model in Copilot to check your plan and organization policy. AJX expands Claude family aliases to the dotted IDs shown here.",
+      "sources": ["https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference", "https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/choose-a-model"]
+    }
+  }
+}

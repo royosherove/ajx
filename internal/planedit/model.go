@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/royosherove/ajx/internal/envcheck"
+	"github.com/royosherove/ajx/internal/modelcatalog"
 	"github.com/royosherove/ajx/internal/plugin"
 	"github.com/royosherove/ajx/internal/render/pyfmt"
 	"github.com/royosherove/ajx/internal/util"
@@ -36,10 +37,8 @@ const FolderEnv = "@local"
 var (
 	checkTypes = map[string]string{"file_exists": "file", "shell": "cmd", "http": "http"}
 	checkTOML  = map[string]string{"file": "file_exists", "cmd": "shell", "http": "http"}
-	// KnownModels are offered in the model fields; any other name the agent accepts still works.
-	KnownModels = map[string][]string{"claude-code": {"sonnet", "opus", "haiku"}, "kiro-cli": {"claude-sonnet-4.5"}, "codex": {"gpt-5"}}
-	effort      = map[string]bool{"claude-code": true, "codex": true, "kiro-cli": true} // agents that accept an effort setting
-	labels      = map[string]string{"claude-code": "Claude Code", "codex": "Codex", "kiro-cli": "Kiro CLI",
+	effort     = map[string]bool{"claude-code": true, "codex": true, "kiro-cli": true} // agents that accept an effort setting
+	labels     = map[string]string{"claude-code": "Claude Code", "codex": "Codex", "kiro-cli": "Kiro CLI",
 		"gemini-cli": "Gemini CLI", "cursor-agent": "Cursor Agent", "copilot-cli": "Copilot CLI"}
 	cellKeys    = setOf("id", "harness", "model", "models", "effort", "config", "auth", "environment", "agent_configuration")
 	checkFields = map[string][]string{"file": {"path", "contains"}, "cmd": {"run", "expect_exit", "expect_stdout"},
@@ -492,7 +491,7 @@ func options(raw *Dict, model *Dict) *Dict {
 		}
 		b := h.Base()
 		models := []any{}
-		for _, m := range KnownModels[name] {
+		for _, m := range modelcatalog.Models(name) {
 			models = append(models, m)
 		}
 		label := labels[name]
@@ -501,11 +500,13 @@ func options(raw *Dict, model *Dict) *Dict {
 		}
 		harnesses = append(harnesses, NewDict("name", name, "label", label, "installed", safeAvailable(h),
 			"verified", b.VerifiedLive, "reporter", b.CanReport, "clean", b.CleanSupported,
-			"default_auth", b.DefaultAuthName(), "effort", effort[name], "models", models))
+			"default_auth", b.DefaultAuthName(), "effort", effort[name], "models", models,
+			"model_hint", modelcatalog.Hint(name)))
 	}
 	for _, adapter := range orList(raw.Get("adapters")) {
 		harnesses = append(harnesses, NewDict("name", adapter, "label", adapter, "installed", true, "verified", false,
-			"reporter", false, "clean", false, "default_auth", "inherit", "effort", true, "models", []any{}))
+			"reporter", false, "clean", false, "default_auth", "inherit", "effort", true, "models", []any{},
+			"model_hint", modelcatalog.Hint(pyStr(adapter))))
 	}
 	auth := NewDict()
 	for _, h := range harnesses {

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/royosherove/ajx/internal/modelcatalog"
 	"github.com/royosherove/ajx/internal/render/pyfmt"
 )
 
@@ -143,7 +144,7 @@ func (r *renderer) whole(v any, label string, low *float64) any {
 	return int64(n)
 }
 
-func (r *renderer) modelName(v any) any {
+func (r *renderer) modelName(v any, harness string) any {
 	name := pyfmt.Strip(pyStr(or(v, "")))
 	if name == "" {
 		return nil
@@ -155,7 +156,11 @@ func (r *renderer) modelName(v any) any {
 		fail("%s is not a model name an agent CLI accepts: use an alias such as sonnet, or the "+
 			"provider's model id (no spaces)", pyfmt.StrRepr(name))
 	}
-	return name
+	resolved, err := modelcatalog.Resolve(harness, name)
+	if err != nil {
+		fail("%s", err)
+	}
+	return resolved
 }
 
 // clean drops None values (Python {k: v for k, v in entry.items() if v is not None}).
@@ -399,8 +404,14 @@ var scalars = []scalar{
 	}},
 	{"reporter", "harness", [][2]string{{"reporter", "cli"}},
 		func(r *renderer, m *Dict) any { return noneIfFalsy(get(item(m, "reporter"), "cli")) }},
-	{"reporter", "model", [][2]string{{"reporter", "model"}},
-		func(r *renderer, m *Dict) any { return r.modelName(get(item(m, "reporter"), "model")) }},
+	{"reporter", "model", [][2]string{{"reporter", "model"}, {"reporter", "cli"}},
+		func(r *renderer, m *Dict) any {
+			harness := get(item(m, "reporter"), "cli")
+			if !truthy(harness) {
+				harness = AutoReporter(iter(item(m, "workers")), NewDict())
+			}
+			return r.modelName(get(item(m, "reporter"), "model"), pyStr(harness))
+		}},
 	{"reporter", "auth", [][2]string{{"reporter", "auth"}},
 		func(r *renderer, m *Dict) any { return noneIfFalsy(get(item(m, "reporter"), "auth")) }},
 }
@@ -569,7 +580,7 @@ func (r *renderer) cell(w any, m *Dict, configs, profiles *Dict, cells []any, wa
 	models := []any{}
 	for _, x := range orList(get(w, "models")) {
 		if pyfmt.Strip(pyStr(x)) != "" {
-			models = append(models, r.modelName(x))
+			models = append(models, r.modelName(x, pyStr(item(w, "cli"))))
 		}
 	}
 	cell := NewDict("id", item(w, "id"), "harness", item(w, "cli"))
@@ -578,7 +589,7 @@ func (r *renderer) cell(w any, m *Dict, configs, profiles *Dict, cells []any, wa
 	} else if len(models) > 0 {
 		cell.Set("model", models[0])
 	} else {
-		cell.Set("model", r.modelName(get(w, "model")))
+		cell.Set("model", r.modelName(get(w, "model"), pyStr(item(w, "cli"))))
 	}
 	config := any("clean")
 	if !explicit {

@@ -7,6 +7,10 @@ access, or model key is needed to install or try the simulated demo.
 
 ## One command
 
+This installs **both the CLI and the complete agent skill**. There is no
+separate `ajx install` command to run afterward. The installer prints
+`CLI + agent skills` and lists the skill locations when it succeeds.
+
 Run in Bash or Zsh:
 
 ```sh

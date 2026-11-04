@@ -46,6 +46,7 @@ func TestAccessibleWizardWritesATrialThatLoads(t *testing.T) {
 		strconv.Itoa(codex),  // worker
 		"",                   // model: harness default
 		"",                   // reporter: default (the worker's)
+		"",                   // reporter model: harness default
 		"1",                  // check: shell
 		"test -s orders.csv", // command
 		"300",                // time limit
@@ -96,6 +97,38 @@ func TestAccessibleWizardWritesATrialThatLoads(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "codex") || !strings.Contains(Summary(o, false), "test -s orders.csv") {
 		t.Fatalf("summary/output:\n%s", out.String())
+	}
+}
+
+func TestScaffoldSavesModelsForEachSelectedHarness(t *testing.T) {
+	for _, tc := range []struct{ harness, model, want string }{
+		{"kiro-cli", "opus", "claude-opus-5.5"},
+		{"codex", "sol", "gpt-6.1-sol"},
+		{"claude-code", "opus", "opus"},
+	} {
+		o := Options{Dir: filepath.Join(t.TempDir(), "trial"), Product: "orders-cli",
+			Harness: tc.harness, Model: tc.model, Reporter: "codex", ReporterModel: "astra"}
+		if err := Resolve(&o); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Write(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sp, err := spec.Load(result.TrialFile, spec.LoadOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := util.Maps(sp["cells"])[0]["model"]; got != tc.want {
+			t.Fatalf("%s worker model: got %v, want %s", tc.harness, got, tc.want)
+		}
+		if got := util.Get(sp, "reporter", "model"); got != "gpt-6-astra" {
+			t.Fatalf("reporter model: %v", got)
+		}
+	}
+	o := Options{Product: "orders-cli", Harness: "codex", Model: "opus"}
+	if err := Resolve(&o); err == nil || !strings.Contains(err.Error(), "not a model alias for codex") {
+		t.Fatalf("cross-harness alias: %v", err)
 	}
 }
 

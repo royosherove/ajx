@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/royosherove/ajx/internal/modelcatalog"
 	"github.com/royosherove/ajx/internal/planedit"
 	"github.com/royosherove/ajx/internal/plugin"
 	"github.com/royosherove/ajx/internal/runner"
@@ -805,7 +806,7 @@ func names(items any) []any {
 
 func modelSuggestions(harness string, seen map[string][]any) []any {
 	out := []any{}
-	for _, m := range KnownModels[harness] {
+	for _, m := range modelcatalog.Models(harness) {
 		out = append(out, m)
 	}
 	return append(out, seen[harness]...)
@@ -878,6 +879,7 @@ func trialView(trial string, sp M, loadErr string, out string) M {
 	cellList := make([]any, len(cells))
 	for i, cell := range cells {
 		cell["model_suggestions"] = modelSuggestions(util.S(cell["harness"]), seen)
+		cell["model_hint"] = modelcatalog.Hint(util.S(cell["harness"]))
 		cellList[i] = cell
 	}
 	rep := util.MapOr(sp["reporter"])
@@ -898,7 +900,8 @@ func trialView(trial string, sp M, loadErr string, out string) M {
 		"checks": checks, "setup": names(sp["setup"]), "teardown": names(sp["teardown"]), "preflight": names(sp["preflight"]),
 		"cells": cellList,
 		"reporter": M{"harness": rep["harness"], "model": rep["model"], "auth": rep["auth"],
-			"model_suggestions": modelSuggestions(util.S(rep["harness"]), seen)},
+			"model_suggestions": modelSuggestions(util.S(rep["harness"]), seen),
+			"model_hint":        modelcatalog.Hint(util.S(rep["harness"]))},
 		"shell_startup": t["shell_startup"],
 		"account_task":  util.Truthy(task["identity_cmd"]) || util.Truthy(sp["preflight"]),
 	}

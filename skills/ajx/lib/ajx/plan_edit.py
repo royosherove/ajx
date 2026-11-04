@@ -21,12 +21,13 @@ import tomllib
 from pathlib import Path
 
 from . import plugins
+from . import model_catalog
 from .spec import _ID as SLUG  # the same short-lowercase-slug rule spec.load applies to every name
 
 FOLDER_ENV = "@local"  # the implicit "fresh folder on your machine"; '@' can never be a profile name
 CHECK_TYPES = {"file_exists": "file", "shell": "cmd", "http": "http"}
 CHECK_TOML = {v: k for k, v in CHECK_TYPES.items()}
-KNOWN_MODELS = {"claude-code": ["sonnet", "opus", "haiku"], "kiro-cli": ["claude-sonnet-4.5"], "codex": ["gpt-5"]}
+KNOWN_MODELS = model_catalog.KNOWN_MODELS
 EFFORT = {"claude-code", "codex", "kiro-cli"}  # agents that accept an effort setting
 LABELS = {"claude-code": "Claude Code", "codex": "Codex", "kiro-cli": "Kiro CLI", "gemini-cli": "Gemini CLI",
           "cursor-agent": "Cursor Agent", "copilot-cli": "Copilot CLI"}
@@ -422,10 +423,11 @@ def options(trial, model):
                           "reporter": bool(getattr(cls, "can_report", False)),
                           "clean": bool(getattr(cls, "clean_supported", False)),
                           "default_auth": getattr(cls, "default_auth", "inherit"), "effort": name in EFFORT,
-                          "models": KNOWN_MODELS.get(name, [])})
+                          "models": KNOWN_MODELS.get(name, []), "model_hint": model_catalog.hint(name)})
     for adapter in raw.get("adapters") or {}:
         harnesses.append({"name": adapter, "label": adapter, "installed": True, "verified": False, "reporter": False,
-                          "clean": False, "default_auth": "inherit", "effort": True, "models": []})
+                          "clean": False, "default_auth": "inherit", "effort": True, "models": [],
+                          "model_hint": model_catalog.hint(adapter)})
     auth = {}
     for h in harnesses:
         default = h["default_auth"]
@@ -513,7 +515,7 @@ def _whole(v, label, low=None):
     return int(n)
 
 
-def _model_name(v):
+def _model_name(v, harness=""):
     name = str(v or "").strip()
     if not name:
         return None
@@ -522,7 +524,10 @@ def _model_name(v):
     if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
         raise PlanError(f"{name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, or the "
                         "provider's model id (no spaces)")
-    return name
+    try:
+        return model_catalog.resolve(harness, name)
+    except ValueError as exc:
+        raise PlanError(str(exc)) from exc
 
 
 def _command_tables(items):
@@ -626,7 +631,9 @@ SCALARS = (
     (("task", "identity_cmd"), (("account", "identity"), ("account", "on")),
      lambda m: (str(m["account"].get("identity") or "").strip() if m["account"].get("on") else "") or None),
     (("reporter", "harness"), (("reporter", "cli"),), lambda m: m["reporter"].get("cli") or None),
-    (("reporter", "model"), (("reporter", "model"),), lambda m: _model_name(m["reporter"].get("model"))),
+    (("reporter", "model"), (("reporter", "model"), ("reporter", "cli")),
+     lambda m: _model_name(m["reporter"].get("model"),
+                          m["reporter"].get("cli") or auto_reporter(m["workers"]))),
     (("reporter", "auth"), (("reporter", "auth"),), lambda m: m["reporter"].get("auth") or None),
 )
 
@@ -712,12 +719,12 @@ def _cell(w, m, configs, profiles, cells, wanted, added):
             raise PlanError(f"worker {w['id']} runs in an unknown environment {w['env']!r}")
         env = {"kind": "folder" if w["env"] == FOLDER_ENV else "container"}
     explicit = env["kind"] != "folder"
-    models = [_model_name(x) for x in w.get("models") or [] if str(x).strip()]
+    models = [_model_name(x, w["cli"]) for x in w.get("models") or [] if str(x).strip()]
     cell = {"id": w["id"], "harness": w["cli"]}
     if len(models) > 1 or (models and w.get("models_form")):
         cell["models"] = models  # the cell ids stay <id>-<model>, as recorded attempts know them
     else:
-        cell["model"] = models[0] if models else _model_name(w.get("model"))
+        cell["model"] = models[0] if models else _model_name(w.get("model"), w["cli"])
     cell.update(effort=w.get("effort") or None, config="clean" if explicit else (w.get("config") or "clean"),
                 auth=w.get("auth") or None)
     if explicit:

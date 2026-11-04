@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import base, plan_edit, plugins, runner, spec as specmod
+from . import model_catalog
 from .report_ui import LABELS, STATUSES
 from .util import SKILL_ROOT, now, parse_ts, read_json, sha256_bytes
 
@@ -45,7 +46,7 @@ SCHEMA = 1
 IDLE_SECONDS = 30 * 60
 MAX_TEXT = 4000
 # Offered in the model field; any other name the agent accepts still works (no spaces, no leading '-').
-KNOWN_MODELS = {"claude-code": ["sonnet", "opus", "haiku"]}
+KNOWN_MODELS = model_catalog.KNOWN_MODELS
 AGAIN_MODES = ("same-folder", "fresh-folder")
 
 # Recovery commands the page offers for one run. Anything else stays a CLI decision.
@@ -1017,6 +1018,7 @@ def _trial_view(trial, spec, error, out):
                 seen[harness_name].append(mid)
     for cell in cells:
         cell["model_suggestions"] = KNOWN_MODELS.get(cell["harness"], []) + seen.get(cell["harness"], [])
+        cell["model_hint"] = model_catalog.hint(cell["harness"])
     rep = spec["reporter"]
     view.update({
         "id": t["id"], "product": t["product"], "output_dir": t["output_dir"], "workspace_root": t["workspace_root"],
@@ -1029,7 +1031,8 @@ def _trial_view(trial, spec, error, out):
         "setup": [c.get("name") for c in spec["setup"]], "teardown": [c.get("name") for c in spec["teardown"]],
         "preflight": [c.get("name") for c in spec["preflight"]],
         "cells": cells, "reporter": {"harness": rep.get("harness"), "model": rep.get("model"), "auth": rep.get("auth"),
-                                     "model_suggestions": KNOWN_MODELS.get(rep.get("harness"), []) + seen.get(rep.get("harness"), [])},
+                                     "model_suggestions": KNOWN_MODELS.get(rep.get("harness"), []) + seen.get(rep.get("harness"), []),
+                                     "model_hint": model_catalog.hint(rep.get("harness"))},
         "shell_startup": t.get("shell_startup"), "account_task": bool(task.get("identity_cmd") or spec["preflight"]),
     })
     return view
@@ -1606,7 +1609,8 @@ def save_settings(trial, changes, base_sha, actor="user"):
         raise ConsoleError("these settings are locked for this output folder because its attempts used them; run "
                            "again in a fresh output folder to change " + ", ".join(k.replace("_", " ") for k in locked))
     old = (spec or {}).get("trial") or {}
-    cells_before = {i: c.get("model") for i, c in enumerate(_raw(trial).get("cells") or [])}
+    raw_cells = _raw(trial).get("cells") or []
+    cells_before = {i: c.get("model") for i, c in enumerate(raw_cells)}
     text, notes = Path(trial).read_text(encoding="utf-8"), []
     if "timeout_minutes" in changes:
         minutes = _number(changes["timeout_minutes"], "time limit", 1, 24 * 60)
@@ -1627,12 +1631,14 @@ def save_settings(trial, changes, base_sha, actor="user"):
         notes.append("budget " + (f"${before:g}" if before else "none") + " -> "
                      + (f"${budget:g}" if budget is not None else "none"))
     if "reporter_model" in changes:
-        model = _model_name(changes["reporter_model"])
+        model = _model_name(changes["reporter_model"], spec["reporter"]["harness"])
         text = set_value(text, "reporter", "model", model)
         before = ((spec or {}).get("reporter") or {}).get("model")
         notes.append(f"reporter model {before or 'default'} -> {model or 'default'}")
     for index, model in (changes.get("cell_models") or {}).items():
-        model = _model_name(model)
+        i = int(index)
+        harness = raw_cells[i].get("harness", "") if 0 <= i < len(raw_cells) else ""
+        model = _model_name(model, harness)
         text = set_value(text, "cells", "model", model, index=int(index))
         notes.append(f"cell {int(index) + 1} model {cells_before.get(int(index)) or 'default'} -> {model or 'default'}")
     if not notes:
@@ -1640,7 +1646,7 @@ def save_settings(trial, changes, base_sha, actor="user"):
     return {"sha256": _write_trial(trial, text, base_sha, actor, "settings_changed", changes=notes)}
 
 
-def _model_name(value):
+def _model_name(value, harness=""):
     """A model name as an agent CLI takes it: an alias such as sonnet, or the provider's model id."""
     name = str(value or "").strip()
     if not name:
@@ -1648,7 +1654,10 @@ def _model_name(value):
     if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
         raise ConsoleError(f"{name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, opus or "
                            "haiku, or the provider's model id (no spaces), or leave it empty for the agent's default")
-    return name
+    try:
+        return model_catalog.resolve(harness, name)
+    except ValueError as exc:
+        raise ConsoleError(str(exc)) from exc
 
 
 def _number(value, label, low, high):

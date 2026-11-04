@@ -124,8 +124,19 @@ and where the worker runs (local, or a prepared local container image). It shows
 a summary, writes `trial.toml` and `task-prompt.md`, checks that the trial loads,
 and offers to open the AJX Console, run `ajx doctor`, or exit.
 
+In the task and materials fields, **Enter adds a new line** and **Tab continues**.
+Paste several URLs or put one URL on each line. **Shift+Tab goes back** without
+discarding your text. Single-line questions still use Enter to continue.
+
+Worker and reporter models each have a picker for the selected harness. Use
+the arrow keys to browse, `/` to filter, and Enter to choose. Choose **Agent
+default** to use that CLI's configured model, or **Custom model ID or alias**
+to enter a model not listed. The web console offers the same suggestions, plus
+models seen in the trial. See [model choices and aliases](HARNESS-SUPPORT.md#choose-a-model).
+
 Set `ACCESSIBLE=1` for a line-by-line version of the form that works with screen
-readers.
+readers. In that mode, enter multiple material URLs on one line separated by
+spaces or commas, then press Enter.
 
 The wizard never starts when stdin or stdout is not a terminal, when `CI` is set,
 or with `--no-input`, `--yes` or `--json`. Then `--product` and the folder are

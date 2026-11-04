@@ -28,6 +28,8 @@ This downloads the **latest stable release**, verifies its checksum,
 and installs `ajx` plus the **matching complete skill** for Codex, Claude Code,
 and Kiro CLI. It sets up your shell's `PATH` and needs **no Go, Python, Git,
 or administrator access**. Run the same command to update.
+**The one-liner installs both the CLI and the skill; there is no separate
+`ajx install` step.** Its output lists every installed skill location.
 Existing unmanaged files are preserved; the installer explains how to back
 them up and replace them if needed. See [installation options](docs/INSTALL.md)
 for a single host, another skills directory, pinned versions, and manual setup.

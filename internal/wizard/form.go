@@ -11,6 +11,7 @@ import (
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/royosherove/ajx/internal/modelcatalog"
 )
 
 // ErrAborted is returned when the user leaves the form (Esc / Ctrl-C).
@@ -35,7 +36,14 @@ type IO struct {
 // v1 libraries queried it in a package init on every start of the binary,
 // which stalled each command 5 s in terminals that never reply.
 func (x IO) apply(f *huh.Form) *huh.Form {
-	f = f.WithTheme(huh.ThemeFunc(huh.ThemeCharm))
+	keys := huh.NewDefaultKeyMap()
+	keys.Text.NewLine.SetKeys("enter", "alt+enter", "ctrl+j")
+	keys.Text.NewLine.SetHelp("enter", "new line")
+	keys.Text.Next.SetKeys("tab")
+	keys.Text.Next.SetHelp("tab", "next")
+	keys.Text.Submit.SetKeys("tab")
+	keys.Text.Submit.SetHelp("tab", "continue")
+	f = f.WithTheme(huh.ThemeFunc(huh.ThemeCharm)).WithKeyMap(keys)
 	if x.Accessible || os.Getenv("ACCESSIBLE") != "" {
 		f = f.WithAccessible(true)
 	}
@@ -194,19 +202,20 @@ func Ask(o *Options, x IO) error {
 	}
 	if err := run(
 		huh.NewText().Title("What should the user accomplish?").
-			Description("Write it as the customer would ask. Do not mention evaluation, AJX or expected problems.").
+			Description("Write it as the customer would ask. Do not mention evaluation, AJX or expected problems.\nEnter: new line · Tab: continue").
 			Lines(4).Value(&o.Task).Validate(required("the task")),
 		huh.NewText().Title("Materials the worker may use").
-			Description("One per line: URLs or documents (optional)").Lines(3).Value(&materials),
+			Description("One URL or document per line (optional). Paste a list or type it here.\nEnter: new line · Tab: continue").Lines(3).Value(&materials),
 	); err != nil {
 		return err
 	}
 	if err := run(
 		huh.NewSelect[string]().Title("Worker agent").Description("The CLI that attempts the task").
 			Options(harnessOpts...).Value(&o.Harness),
-		huh.NewInput().Title("Model").Description("An alias such as sonnet or the provider's model id; leave empty for the agent's default").
-			Value(&o.Model).Validate(ModelName),
 	); err != nil {
+		return err
+	}
+	if err := askModel("Worker model", o.Harness, &o.Model, x); err != nil {
 		return err
 	}
 	if o.Reporter == "" {
@@ -222,6 +231,13 @@ func Ask(o *Options, x IO) error {
 	if err := run(
 		huh.NewSelect[string]().Title("Reporter").Description("Writes the report after the attempt; fixed across cells").
 			Options(reporterOpts...).Value(&o.Reporter),
+	); err != nil {
+		return err
+	}
+	if err := askModel("Reporter model", o.Reporter, &o.ReporterModel, x); err != nil {
+		return err
+	}
+	if err := run(
 		huh.NewSelect[string]().Title("How does AJX check success?").Options(
 			huh.NewOption("a shell command exits 0 (in the workspace)", "shell"),
 			huh.NewOption("a file exists (glob beneath the workspace)", "file"),
@@ -285,6 +301,65 @@ func Ask(o *Options, x IO) error {
 		o.Environment, o.Image = "", ""
 	}
 	return nil
+}
+
+func askModel(title, harness string, value *string, x IO) error {
+	const custom = "__ajx_custom_model__"
+	selected := strings.TrimSpace(*value)
+	if resolved, err := modelcatalog.Resolve(harness, selected); err == nil {
+		selected = resolved
+	}
+	options := []huh.Option[string]{huh.NewOption("Agent default (uses the agent's configured model)", "")}
+	found := selected == ""
+	for _, id := range modelcatalog.Models(harness) {
+		options = append(options, huh.NewOption(id, id))
+		found = found || id == selected
+	}
+	if !found {
+		options = append(options, huh.NewOption("Keep current: "+selected, selected))
+	}
+	options = append(options, huh.NewOption("Custom model ID or alias…", custom))
+	field := huh.NewSelect[string]().Title(title + " · " + harness).
+		Description("Choose with ↑/↓, / to filter, Enter to continue. Suggestions depend on account access.\n" + modelcatalog.Hint(harness)).
+		Height(12).Options(options...).Value(&selected).Validate(func(name string) error {
+		if name == custom {
+			return nil
+		}
+		if err := ModelName(name); err != nil {
+			return err
+		}
+		_, err := modelcatalog.Resolve(harness, name)
+		return err
+	})
+	if err := x.apply(huh.NewForm(huh.NewGroup(field))).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return ErrAborted
+		}
+		return err
+	}
+	if selected == custom {
+		field := huh.NewInput().Title(title + " · custom ID").
+			Description(modelcatalog.Hint(harness)).Value(value).
+			Validate(func(name string) error {
+				if err := ModelName(name); err != nil {
+					return err
+				}
+				_, err := modelcatalog.Resolve(harness, name)
+				return err
+			})
+		if err := x.apply(huh.NewForm(huh.NewGroup(field))).Run(); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				return ErrAborted
+			}
+			return err
+		}
+		selected = *value
+	}
+	resolved, err := modelcatalog.Resolve(harness, selected)
+	if err == nil {
+		*value = resolved
+	}
+	return err
 }
 
 func checkPrefix(kind string) string {

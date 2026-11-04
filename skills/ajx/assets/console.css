@@ -20,6 +20,8 @@ button:disabled { opacity: .5; cursor: not-allowed }
 input[type=number], input[type=text], textarea { border: 1px solid #aabbd1; border-radius: 8px; padding: 7px 10px; background: #fff; width: 100% }
 textarea { resize: vertical; line-height: 1.45 }
 textarea[readonly] { background: #f6f9fd; color: #34465f }
+.model-picker { display: grid; gap: 8px; min-width: 0 }
+.model-picker select { width: 100%; min-width: 0; border: 1px solid #aabbd1; border-radius: 8px; padding: 7px 10px; background: #fff }
 :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px }
 [hidden] { display: none !important }
 .mono, code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px }

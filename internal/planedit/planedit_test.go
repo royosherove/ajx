@@ -208,6 +208,31 @@ func TestTOMLDatesKeepThePageWorkingWithoutTheEditor(t *testing.T) {
 	}
 }
 
+func TestModelAliasesResolveForWorkerComparisonsAndReporter(t *testing.T) {
+	trial := copyExample(t, "console-demo")
+	m := model(t, trial)
+	worker(m, 0).Set("cli", "kiro-cli")
+	worker(m, 0).Set("model", "opus")
+	sub(m, "reporter").Set("cli", "codex")
+	sub(m, "reporter").Set("model", "astra")
+	raw := parsed(t, render(t, trial, m).Text)
+	if got := list(raw, "cells")[0].(*Dict).Get("model"); got != "claude-opus-5.5" {
+		t.Fatalf("worker model: %v", got)
+	}
+	if got := sub(raw, "reporter").Get("model"); got != "gpt-6-astra" {
+		t.Fatalf("reporter model: %v", got)
+	}
+	worker(m, 0).Set("models", []any{"sonnet", "opus", "gateway/MyModel"})
+	raw = parsed(t, render(t, trial, m).Text)
+	if got := list(raw, "cells")[0].(*Dict).Get("models"); !Equal(got, []any{"claude-sonnet-5.5", "claude-opus-5.5", "gateway/MyModel"}) {
+		t.Fatalf("comparison models: %v", got)
+	}
+	worker(m, 0).Set("cli", "codex")
+	if _, err := Render(trial, m, RenderOpts{}); err == nil || !strings.Contains(err.Error(), "not a model alias for codex") {
+		t.Fatalf("cross-harness model: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------- edits
 
 func TestAModelChangeRewritesOnlyItsSectionsAndKeepsOtherComments(t *testing.T) {

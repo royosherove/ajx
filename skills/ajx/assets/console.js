@@ -505,11 +505,11 @@
     const rows = (t.cells || []).map((c) => {
       const listId = `models-${c.raw_index}`;
       const model = c.model_editable
-        ? [h("input", { type: "text", list: listId, "data-key": `cell-${c.raw_index}`, placeholder: "agent default", disabled: lock ? true : null,
+        ? [withModelChoices(h("input", { type: "text", list: listId, "data-key": `cell-${c.raw_index}`, placeholder: "agent default", disabled: lock ? true : null,
                         spellcheck: "false", value: (ui.drafts.settings.cell_models || {})[c.raw_index] ?? (c.model || ""),
-                        oninput: (e) => { ui.drafts.settings.cell_models = { ...(ui.drafts.settings.cell_models || {}), [c.raw_index]: e.target.value }; updateDirty(); } }),
+                        oninput: (e) => { ui.drafts.settings.cell_models = { ...(ui.drafts.settings.cell_models || {}), [c.raw_index]: e.target.value }; updateDirty(); } }), c.model_suggestions),
            h("datalist", { id: listId }, (c.model_suggestions || []).map((m) => h("option", { value: m }))),
-           h("small", { text: modelHint(c.harness, c.model_suggestions) })]
+           h("small", { text: modelHint(c.harness, c.model_suggestions, c.model_hint) })]
         : h("span", { class: "mono", text: c.model || "agent default" });
       return h("li", {},
         h("div", { class: "row spread" }, h("div", { class: "row" }, h("b", { text: c.harness }), h("span", { class: "tiny muted", text: c.id }),
@@ -518,11 +518,11 @@
         h("label", { class: "field" }, h("span", { text: "Model" }), model));
     });
     const rep = t.reporter || {};
-    const repModel = [h("input", { type: "text", list: "models-reporter", "data-key": "reporter-model", placeholder: "agent default",
+    const repModel = [withModelChoices(h("input", { type: "text", list: "models-reporter", "data-key": "reporter-model", placeholder: "agent default",
                                    disabled: lock ? true : null, spellcheck: "false", value: draftValue(s, "reporter_model"),
-                                   oninput: (e) => { ui.drafts.settings.reporter_model = e.target.value; updateDirty(); } }),
+                                   oninput: (e) => { ui.drafts.settings.reporter_model = e.target.value; updateDirty(); } }), rep.model_suggestions),
                       h("datalist", { id: "models-reporter" }, (rep.model_suggestions || []).map((m) => h("option", { value: m }))),
-                      h("small", { text: modelHint(rep.harness, rep.model_suggestions) })];
+                      h("small", { text: modelHint(rep.harness, rep.model_suggestions, rep.model_hint) })];
     return h("div", { class: "card" },
       h("h2", { text: "Worker and reporter" }),
       h("ul", { class: "list" }, rows,
@@ -531,10 +531,47 @@
       h("p", { class: "note", text: "Save model changes with \u201cSave changes\u201d under Your decisions." }));
   }
 
-  function modelHint(harness, suggestions) {
-    const known = (suggestions || []).slice(0, 5).join(", ");
-    return "Leave empty for the agent's default." + (known ? ` Suggestions: ${known}.` : "")
-      + " Other names must be ones this agent accepts, without spaces; an unknown name makes the worker exit at once.";
+  function modelHint(harness, suggestions, hint) {
+    return "Choose a suggestion or type a model ID below. Leave empty for the agent's default. "
+      + (hint || `Use an exact model ID accepted by ${harness}, without spaces.`)
+      + " Suggestions do not confirm access for your account.";
+  }
+
+  function withModelChoices(input, models) {
+    const ids = [...new Set(models || [])], custom = "__ajx_custom_model__";
+    const selected = () => !input.value ? "" : ids.includes(input.value) ? input.value : custom;
+    const picker = h("select", {
+      class: input.className, "aria-label": "Choose a suggested model",
+      "data-key": (input.dataset.key || "model") + ":choices",
+      disabled: input.disabled || input.readOnly || null,
+      onchange: () => {
+        if (picker.value !== custom) {
+          input.value = picker.value;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        input.focus();
+      },
+    }, h("option", { value: "", text: "Agent default" }),
+    ids.map((id) => h("option", { value: id, text: id })),
+    h("option", { value: custom, text: "Custom model ID or alias…" }));
+    picker.value = selected();
+    input.addEventListener("input", () => { picker.value = selected(); });
+    return h("div", { class: "model-picker" }, picker, input);
+  }
+
+  function workerNameForHarness(id, previous, next, taken) {
+    const kind = ["worker", "default"].find((name) => id.startsWith(`${previous}-${name}`));
+    const stem = `${previous}-${kind}`;
+    const suffix = kind ? id.slice(stem.length) : null;
+    // Only names produced by the wizard (or numbered copies of them) follow
+    // the harness. User-given comparison names keep their meaning.
+    if (suffix === null || (suffix !== "" && !/^-\d+$/.test(suffix))) return id;
+    const base = `${next}-${kind}`;
+    const name = (ending) => base.slice(0, 48 - ending.length) + ending;
+    let candidate = name(suffix), n = Number(suffix.slice(1)) || 1;
+    if (!Number.isSafeInteger(n)) n = 1;
+    while (taken.includes(candidate)) candidate = name(`-${++n}`);
+    return candidate;
   }
 
   function advancedCard(s) {
@@ -1568,8 +1605,9 @@
         h("p", { class: "cp-lead", text: "Writes the journey and the asks after each attempt, on your machine after the worker stops. Keep it the same for every worker you compare." }),
         F("Agent", sel("reporter.cli", agents, { label: "Changed the reporter agent",
           set: (x, v) => { if (x.reporter.cli !== v) { x.reporter.cli = v; if (!harness(repCli(x)).models.includes(x.reporter.model)) x.reporter.model = ""; } } })),
-        F("Model", [inp("reporter.model", { mono: 1, ns: 1, ph: "agent default", list }), h("datalist", { id: list }, hh.models.map((x) => h("option", { value: x })))],
-          `${hh.models.length ? `Suggestions: ${hh.models.join(", ")}. ` : ""}A stronger model writes a better analysis. No spaces.`),
+        F("Model", [withModelChoices(inp("reporter.model", { mono: 1, ns: 1, ph: "agent default", list }), hh.models),
+          h("datalist", { id: list }, hh.models.map((x) => h("option", { value: x })))],
+          modelHint(rc, hh.models, hh.model_hint)),
         F("Sign-in", sel("reporter.auth", routes(rc).map((x) => [x.value, routeLabel(rc, x)]), { label: "Changed the reporter sign-in" }), routeDetail(rc, r)),
       ] };
     }
@@ -1704,12 +1742,19 @@
       return { layer: `3 · Test harness · inside ${envName(e)}`, title: `Worker “${w.id}”`, wide: true, body: [
         lockNote(),
         F("Name", renameInput(p("id"), w.id, (v) => m.workers.some((o) => o.id === v), (x, v) => { x.workers[i].id = v; return "worker-" + v; }, "Worker")),
-        F("Agent CLI", sel(p("cli"), agents, { label: "Changed the agent; its model and sign-in start from their defaults",
-          set: (x, v) => { const y = x.workers[i]; if (y.cli !== v) Object.assign(y, { cli: v, model: "", models: [], auth: "" }); } })),
+        F("Agent CLI", sel(p("cli"), agents, { label: "Changed the agent; its generated name, model and sign-in follow the new selection",
+          set: (x, v) => {
+            const y = x.workers[i];
+            if (y.cli === v) return;
+            const name = workerNameForHarness(y.id, y.cli, v, x.workers.filter((_, j) => j !== i).map((w) => w.id));
+            Object.assign(y, { id: name, cli: v, model: "", models: [], auth: "" });
+            return "worker-" + name;
+          } })),
         !hh.installed ? callout("bad", `${hh.label} is not installed here, so the readiness check would fail.`)
           : !hh.verified ? callout("info", "AJX's adapter for this agent follows its documented output format but has not been confirmed with a live run.") : null,
-        F("Model", [inp(p("model"), { mono: 1, ns: 1, ph: "agent default", list }), h("datalist", { id: list }, hh.models.map((x) => h("option", { value: x })))],
-          `Leave it empty for the agent's default.${hh.models.length ? ` Suggestions: ${hh.models.join(", ")}.` : ""} An unknown name makes the worker exit at once.`, { div: 1 }),
+        F("Model", [withModelChoices(inp(p("model"), { mono: 1, ns: 1, ph: "agent default", list }), hh.models),
+          h("datalist", { id: list }, hh.models.map((x) => h("option", { value: x })))],
+          modelHint(w.cli, hh.models, hh.model_hint), { div: 1 }),
         F("Compare models (one run per model)", chips(p("models"), "add a model to compare", { list, label: "Added a model to compare", check: (v) => (/\s/.test(v) ? "Model names cannot contain spaces." : null) }),
           mods.length ? `${plural(mods.length, "run")} per attempt, one per model; “Model” above is not used.` : "Each model becomes its own result, with everything else the same.", { div: 1 }),
         hh.effort ? F("Effort", sel(p("effort"), (O().efforts || ["", "low", "medium", "high"]).map((x) => [x, x || "Agent default"]), { label: "Changed the effort" })) : null,

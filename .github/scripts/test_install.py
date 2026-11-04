@@ -104,7 +104,10 @@ class InstallTest(unittest.TestCase):
     def test_clean_install_and_update_preserve_user_config(self):
         rc = self.home / ".zshrc"
         rc.write_text("# keep my settings\n")
-        self.install()
+        installed = self.install()
+        self.assertIn("Installing the AJX CLI + matching agent skills.", installed.stdout)
+        self.assertIn("CLI + agent skills (3 locations)", installed.stdout)
+        self.assertIn("No separate skill installation is needed.", installed.stdout)
         binary = self.home / ".local/bin/ajx"
         version = json.loads(subprocess.check_output(
             [str(binary), "version", "--json"], env=self.env, text=True))

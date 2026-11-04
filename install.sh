@@ -9,7 +9,8 @@ usage() {
     cat <<'EOF'
 Usage: bash install.sh [options]
 
-Installs the latest stable GitHub Release for this machine, without signing in.
+Installs the CLI + matching agent skills from the latest stable GitHub Release.
+No GitHub sign-in required. Skills are installed for Codex, Claude Code and Kiro.
 Requires curl and standard shell tools. No Go, Python, Git or sudo needed.
 
   --version TAG      Install a particular release, for example v1.0.0
@@ -140,6 +141,11 @@ main() {
     [[ -n "${HOME:-}" && "$HOME" == /* && "$HOME" != / ]] || die 'HOME must be an absolute user directory'
     [[ "$HOME" != *$'\n'* && "$HOME" != *:* ]] || die 'HOME cannot contain a newline or colon'
     [[ -z "$release_version" || -z "$package_dir" ]] || die 'Choose --version or --package-dir, not both'
+    if [[ "$no_skills" == true ]]; then
+        say 'Installing the AJX CLI only (--no-skills).'
+    else
+        say 'Installing the AJX CLI + matching agent skills.'
+    fi
     home_physical=$(cd "$HOME" && pwd -P)
     root=$(destination_path "$HOME/.local/share/ajx")
     bin=$(destination_path "$HOME/.local/bin/ajx")
@@ -259,6 +265,11 @@ main() {
     if [[ "$no_path" == false ]]; then configure_path; fi
     "$bin" version
     say "CLI ready: $bin"
+    if [[ ${#skills[@]} -gt 0 ]]; then
+        say "Installation complete: CLI + agent skills (${#skills[@]} locations). No separate skill installation is needed."
+    else
+        say 'Installation complete: CLI only. Agent skills were skipped (--no-skills).'
+    fi
     say 'Open a new terminal for PATH changes, and start a fresh agent session.'
     say 'Try: ajx console demo trials/console-demo'
     if [[ ${#skills[@]} -gt 0 ]]; then

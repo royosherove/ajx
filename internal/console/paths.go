@@ -33,9 +33,6 @@ const IdleTimeout = 30 * time.Minute
 
 const maxText = 4000
 
-// KnownModels are offered in the model field; any other name the agent accepts still works.
-var KnownModels = map[string][]string{"claude-code": {"sonnet", "opus", "haiku"}}
-
 // AgainModes are the two ways to run a trial again.
 var AgainModes = []string{"same-folder", "fresh-folder"}
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/royosherove/ajx/internal/environments"
+	"github.com/royosherove/ajx/internal/modelcatalog"
 	"github.com/royosherove/ajx/internal/plugin"
 	"github.com/royosherove/ajx/internal/spec"
 	"github.com/royosherove/ajx/internal/util"
@@ -171,6 +172,16 @@ func Resolve(o *Options) error {
 		}
 	}
 	o.Model, o.ReporterModel = strings.TrimSpace(o.Model), strings.TrimSpace(o.ReporterModel)
+	for _, choice := range []struct {
+		harness string
+		model   *string
+	}{{o.Harness, &o.Model}, {o.Reporter, &o.ReporterModel}} {
+		resolved, err := modelcatalog.Resolve(choice.harness, *choice.model)
+		if err != nil {
+			return spec.Errorf("%s", err)
+		}
+		*choice.model = resolved
+	}
 	if o.Timeout < 0 || o.Repetitions < 0 || (o.TimeoutSet && o.Timeout == 0) || (o.RepetitionsSet && o.Repetitions == 0) {
 		return spec.Errorf("--timeout and --repetitions must be positive")
 	}
