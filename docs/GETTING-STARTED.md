@@ -4,8 +4,10 @@ Start with one user outcome, one supported worker, and one attempt. Your first
 report should help you decide what to investigate or improve. A broader matrix
 can come afterward.
 
-For installation and a copyable first prompt, start with the
-[README](../README.md#get-started-see-your-product-through-an-agents-first-attempt).
+For a prompt that takes you from no AJX installation to a first trial, start
+with [Paste this into your agent](../README.md#paste-this-into-your-agent).
+Your agent installs the CLI and matching skill, checks prerequisites, and
+prepares the plan. Supply missing task details and complete sign-in if needed.
 For a visual version, open [start-here.html](start-here.html) in a browser from
 your checkout. It links to the fictional example reports.
 

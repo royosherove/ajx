@@ -8,12 +8,51 @@ worker attempts the task, and AJX returns **product asks with evidence** and a
 
 AJX means **Agent Journey Experience**. This is its first public version, AJX v1.
 
+### Paste this into your agent
+
+Open your project in **Codex, Claude Code, Kiro CLI, or another agent with file
+and shell access** on macOS or Linux. Paste the whole prompt below.
+**You do not need to install AJX first.** Your machine needs Bash, `curl`, and
+internet access; your agent handles the AJX installation and setup checks.
+
+```text
+Set up AJX and help me test how a fresh agent experiences this project.
+Follow https://raw.githubusercontent.com/royosherove/ajx/main/docs/AGENT-QUICKSTART.md
+to install the latest stable CLI and skill, then continue with the installed skill.
+
+Use the project in this folder. Help me choose one small user task if needed.
+Handle installation and setup checks; ask only for missing details or sign-in.
+Show me the task, success check, access, and costs before running one attempt.
+Then open the report and visual journey, and explain the top product
+improvements with supporting evidence.
+```
+
+**What happens next:** your agent installs the CLI and skill, checks the worker
+and reporter, and opens a small trial plan in the **AJX Console**. Review it and
+press **Check and start**, or approve in chat. After the attempt, you get
+prioritized product asks and the journey behind them.
+
+You may need to sign in to the chosen agent CLI; the agent guides you when that
+is necessary. No GitHub account is needed. The
+[agent setup guide](docs/AGENT-QUICKSTART.md) lets it read the installed skill
+directly in the current session. A host that requires a restart gets a short
+resume prompt.
+
+**Just exploring?** Replace “Use the project in this folder” with “Start with
+the simulated AJX demo; do not make model calls.” The agent can install AJX and
+show the demo without worker credentials.
+
 ![Four steps: bring a task, check the plan, run a fresh agent, and inspect asks and evidence](docs/images/first-run.svg)
 
 **Why run it?** Find confusing setup, unclear errors, missing instructions, and
 workarounds that a passing test might miss. Each supported ask gives your team a
 change to consider, the events behind it, and a way to check the result of a fix.
 A trial describes the tested task and conditions, not a universal product score.
+
+## Manual setup and a ready-to-run example
+
+Prefer to install AJX yourself? Follow these steps. If you used the prompt
+above, your agent handles setup; you can skip to [what you get back](#what-you-get-back).
 
 ### 1. Install the CLI and skill
 

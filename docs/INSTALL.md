@@ -5,6 +5,11 @@ or Linux on ARM64 or x86-64, Bash, `curl`, and standard shell tools.
 No GitHub account, sign-in, Go compiler, Python, Git checkout, administrator
 access, or model key is needed to install or try the simulated demo.
 
+Prefer your agent to handle setup? Copy the
+[README's starter prompt](../README.md#paste-this-into-your-agent).
+It takes the agent through installation, loading the skill, and preparing a
+first trial. You do not need to run the commands below first.
+
 ## One command
 
 This installs **both the CLI and the complete agent skill**. There is no
@@ -24,8 +29,10 @@ ajx version
 ajx console demo trials/console-demo
 ```
 
-Start a fresh agent session to use the skill. Ask: “Use the AJX skill to review
-my project,” or follow the [first brief](../README.md#2-give-your-agent-this-first-brief).
+Start a fresh agent session for automatic skill discovery, or have your current
+agent [read the installed skill directly](AGENT-QUICKSTART.md#3-read-the-installed-skill-and-continue-here).
+Ask: “Use the AJX skill to review my project,” or follow the
+[first brief](../README.md#2-give-your-agent-this-first-brief).
 Actual trials also need an installed and authenticated worker and reporter CLI.
 The installer does not install those CLIs or change their credentials.
 

@@ -11,6 +11,7 @@ header{border-bottom:1px solid var(--line)}.masthead{display:flex;gap:20px;align
 @media(max-width:800px){.wrap{width:calc(100% - 36px)}.split{grid-template-columns:1fr;gap:28px}.hero{padding-top:40px}.hero .lead{font-size:18px}.trail{grid-template-columns:1fr 1fr;gap:22px}.rail a{font-size:13px;padding:8px}section.chapter{padding:44px 0}.diagram{max-width:540px}.filemap{grid-template-columns:1fr;gap:8px}.report-intro{display:block}.report-intro a{display:inline-block;margin-top:14px}.masthead{font-size:13px}.codebox{padding:16px}.plan div{grid-template-columns:88px 1fr;gap:12px}}
 @media(max-width:420px){.responsibility,.machine{grid-template-columns:1fr;gap:8px}.chooser{align-items:flex-start;flex-direction:column}.hero h1{font-size:2.8rem}.codehead{gap:8px}pre,.brief pre{font-size:13px}.trail strong{font-size:17px}.trail span{font-size:13px}.plan div{grid-template-columns:1fr;gap:5px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media(max-width:800px){#setup-prompt{order:-1}}
 </style>
 </head>
 <body>
@@ -21,18 +22,30 @@ header{border-bottom:1px solid var(--line)}.masthead{display:flex;gap:20px;align
 <p class="eyebrow">A practical guide to your first run</p>
 <h1>Give your agent a task.<br>See where your product <em>gets in the way.</em></h1>
 <p class="lead">AJX watches a fresh agent attempt a real user task. You get concrete product asks, the journey behind them, and evidence your team can inspect.</p>
-<div class="actions"><a class="action" href="#setup">Set up a first run</a><a class="action secondary" href="#reports">Explore the example reports</a></div>
+<div class="actions"><a class="action" href="#setup">Get the starter prompt</a><a class="action secondary" href="#reports">Explore the example reports</a></div>
 <div class="trail" aria-label="The first-run flow"><div><b>01 / YOU</b><strong>Bring an outcome</strong><span>A project, task, and boundaries</span></div><div><b>02 / COORDINATOR</b><strong>Prepare a small plan</strong><span>Setup, access, and a success check</span></div><div><b>03 / WORKER</b><strong>Try the task</strong><span>A fresh attempt, with recorded evidence</span></div><div><b>04 / YOUR TEAM</b><strong>Choose an improvement</strong><span>Asks, journey, and a follow-up check</span></div></div>
 </div>
 <nav class="rail" aria-label="Walkthrough chapters"><div class="wrap"><a href="#setup" aria-current="step">1 · Set up</a><a href="#brief">2 · Give the brief</a><a href="#plan">3 · Check the plan</a><a href="#run">4 · Know what happens</a><a href="#reports">5 · Read the evidence</a><a href="#improve">6 · Improve and repeat</a></div></nav>
 <section class="chapter" id="setup"><div class="wrap">
-<p class="number">01 / SET UP ONCE</p><h2>One install. CLI and skill.<br>Let your agent check the rest.</h2>
+<p class="number">01 / PASTE INTO YOUR AGENT</p><h2>One prompt to get started.<br>Your agent handles setup.</h2>
+<p>Open your project in an agent and paste this prompt. <strong>You do not need to install AJX first.</strong> Your agent installs the CLI and skill, checks prerequisites, and opens a small trial plan for your review.</p>
 <div class="split"><div>
-<p>The AJX skill teaches your current agent how to prepare and coordinate a trial. The task itself runs in a separate agent CLI process.</p>
-<ul class="checklist"><li>macOS or Linux, Bash and curl<span>Downloads a public release. No GitHub login, Go, Python, or administrator access needed.</span></li><li>An agent with file and shell access<span>Codex, Claude Code, Kiro CLI, or another Agent Skills host.</span></li><li>An installed, authenticated worker CLI<span>Your coordinator checks adapter and reporter support. A desktop login may not authenticate the CLI.</span></li><li>A task you are allowed to run<span>Use fictional data and disposable files for a first local trial.</span></li></ul>
-<div class="aside"><h3>Just looking?</h3><p>After installing, run <code>ajx console demo trials/console-demo</code> for a simulated live run, or <code>ajx example trials/example</code> for fictional reports. No model login or model calls needed.</p></div>
+<ul class="checklist"><li>macOS or Linux, Bash, curl, and internet access<span>No GitHub login, Go, Python, or administrator access needed to install AJX.</span></li><li>An agent with file and shell access<span>Codex, Claude Code, Kiro CLI, or another Agent Skills host.</span></li><li>A project or task you want to try<span>Your agent helps choose one small outcome and handles the trial files.</span></li></ul>
+<p>Your agent checks the separate worker and reporter CLIs, handles missing tools within your permissions, and guides you through sign-in if needed. It can read the installed skill in the current session; if your host requires a restart, it gives you a resume prompt.</p>
+<div class="aside"><h3>Just looking?</h3><p>Replace “Use the project in this folder” with “Start with the simulated AJX demo; do not make model calls.” Your agent can install AJX and show fictional reports without worker credentials.</p></div>
 <p class="muted">No AWS account or Docker is required for a local task. Model and reporting calls use your configured provider and may cost money.</p>
-</div><div>
+</div><div id="setup-prompt">
+<div class="codebox brief"><div class="codehead"><span>START FROM SCRATCH</span><button class="copy" data-copy="bootstrap-prompt">Copy prompt</button></div><pre id="bootstrap-prompt">Set up AJX and help me test how a fresh agent experiences this project.
+Follow https://raw.githubusercontent.com/royosherove/ajx/main/docs/AGENT-QUICKSTART.md
+to install the latest stable CLI and skill, then continue with the installed skill.
+
+Use the project in this folder. Help me choose one small user task if needed.
+Handle installation and setup checks; ask only for missing details or sign-in.
+Show me the task, success check, access, and costs before running one attempt.
+Then open the report and visual journey, and explain the top product
+improvements with supporting evidence.</pre></div>
+<p><small>The <a href="AGENT-QUICKSTART.md">agent setup guide</a> handles installation and hands the trial to the released skill.</small></p>
+<details><summary>Prefer manual installation?</summary>
 <div class="codebox"><div class="codehead"><span>INSTALL IN BASH OR ZSH</span><button class="copy" data-copy="clone-code">Copy</button></div><pre id="clone-code">bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash' &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</pre></div>
 <p><small>Installs the latest stable CLI release and matching skill for all three hosts. Run the same command to update. <a href="INSTALL.md">Installation options and source checkouts</a>.</small></p>
 <div class="chooser"><label for="host">Your coordinator</label><select id="host"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="kiro">Kiro CLI</option><option value="other">Another skills host</option></select></div>
@@ -40,10 +53,12 @@ header{border-bottom:1px solid var(--line)}.masthead{display:flex;gap:20px;align
 <p id="host-note">Start a fresh session. Invoke <code>$ajx</code>, or ask the agent to use the AJX skill.</p>
 <noscript><p>For Claude Code use <code>~/.claude/skills/ajx</code>; for Kiro CLI use <code>~/.kiro/skills/ajx</code>. Copy the complete skill directory for other hosts. See the setup reference for full commands.</p></noscript>
 <p><small>The installer preserves existing manual skills unless you choose replacement with a backup. Kiro custom agents need a skill resource entry.</small></p><a href="HARNESS-SUPPORT.md">Installation details and adapter support</a>
+</details>
 </div></div></div></section>
 <section class="chapter" id="brief"><div class="wrap">
 <p class="number">02 / GIVE THE BRIEF</p><h2>You bring the outcome.<br>Your agent handles the trial.</h2>
 <div class="split"><div>
+<p>If you used the starter prompt, your agent handles this next. The example below shows the kind of small task you can give it; you do not need to paste a second prompt.</p>
 <p>Start with a small task a real user would need to complete. Describe what success looks like and which materials that user would receive.</p>
 <div class="responsibility"><div><h3>You supply</h3><ul><li>The project or tool</li><li>A useful, observable result</li><li>User-facing materials</li><li>Access and cost boundaries</li></ul></div><div><h3>Your agent handles</h3><ul><li>Checking tools and auth</li><li>Proposing one worker</li><li>Writing the task and check</li><li>Running and opening reports</li></ul></div></div>
 <div class="aside"><h3>Try the prompt as written, or change three things</h3><p>Replace <strong>jq</strong>, the <strong>task</strong>, and the <strong>materials</strong> with your project. You do not need to write TOML or choose a matrix first.</p></div>
