@@ -47,12 +47,40 @@ destination_path() {
     printf '%s/%s\n' "$(cd "$parent" && pwd -P)" "$suffix"
 }
 
+replacement_command() {
+    local command arg script=${BASH_SOURCE[0]:-} from_file=false
+    command='curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash -s --'
+    if [[ "$offline_install" == true && -f "$script" ]]; then
+        printf -v command 'bash %q' "$script"
+        from_file=true
+    fi
+    for arg in ${original_args[@]+"${original_args[@]}"}; do
+        printf -v command '%s %q' "$command" "$arg"
+    done
+    command+=' --replace'
+    if [[ "$from_file" == false ]]; then
+        # Quote the complete pipeline, including any quotes in option values.
+        command=${command//\'/\'\\\'\'}
+        printf "bash -o pipefail -c '%s'" "$command"
+    else
+        printf '%s' "$command"
+    fi
+    if [[ "$no_path" == false ]]; then
+        printf ' && export PATH="$HOME/.local/bin:$PATH"'
+    fi
+    printf '\n'
+}
+
 check_destination() {
     local path=$1 target=$2
     if [[ -e "$path" || -L "$path" ]]; then
         if [[ -L "$path" && "$(readlink "$path")" == "$target" ]]; then return; fi
-        [[ "$replace" == true ]] ||
-            die "Already exists: $path. Use --replace to preserve it as a backup and install AJX."
+        if [[ "$replace" != true ]]; then
+            printf 'AJX install: Already exists: %s\n' "$path" >&2
+            printf 'To preserve existing files as backups and install AJX, run:\n\n' >&2
+            replacement_command >&2
+            exit 1
+        fi
     fi
 }
 
@@ -86,9 +114,11 @@ configure_path() {
 
 main() {
     local release_version="" package_dir="" no_skills=false no_path=false replace=false
+    local offline_install=false
     local root bin target os arch tmp expected="" base home_physical index matches
     local checksum filename extra archive listing pkg commit release stamp dest native_version
-    local -a skills profiles
+    local -a skills profiles original_args
+    original_args=("$@")
     skills=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -96,7 +126,7 @@ main() {
                 [[ $# -ge 2 && -n "$2" ]] || die "$1 needs a value"
                 case "$1" in
                     --version) release_version=$2 ;;
-                    --package-dir) package_dir=$2 ;;
+                    --package-dir) package_dir=$2; offline_install=true ;;
                     --skill-dir) skills+=("$2") ;;
                 esac
                 shift 2 ;;

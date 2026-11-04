@@ -78,6 +78,15 @@ the CLI's installation directory.
 
 Existing manual skills and binaries are not overwritten by default. Inspect
 them and use `--replace` when you want to switch; backups preserve those files.
+If the one-liner stops with `Already exists`, it prints a complete replacement
+command you can copy. For the default installation, that command is:
+
+```sh
+bash -o pipefail -c 'curl -fsSL https://github.com/royosherove/ajx/releases/latest/download/install.sh | bash -s -- --replace' && export PATH="$HOME/.local/bin:$PATH"
+```
+
+Options go after `bash -s --`, inside the quotes. The suggested command preserves
+any options you supplied, including pinned versions and custom skill directories.
 Managed installations update together, and previous version directories remain
 under `versions/`. No old installations or backups are deleted automatically.
 
