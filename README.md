@@ -1,5 +1,7 @@
 # AJX
 
+[![Visit ajx.dev — the AJX website](docs/images/website-button.svg)](https://ajx.dev/)
+
 ## Get started: see your product through an agent's first attempt
 
 Give AJX a **project and a real user task**. Your agent prepares a trial, a fresh
