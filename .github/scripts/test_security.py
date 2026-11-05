@@ -16,25 +16,33 @@ if not SCANNER:
 SCANNER = str(Path(SCANNER).resolve())
 
 
+def synthetic_repository(directory, *, hooks=False):
+    """Create an isolated public fixture; return its path and Git runner."""
+    root = Path(directory)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(root), *args], check=True,
+                              capture_output=True, text=True)
+
+    git("init", "-b", "main")
+    # History tests create rejected commits before installing a hook. The staged
+    # content test enables the real hook, so it exercises Git's hook invocation.
+    git("config", "core.hooksPath", str(ROOT / ".githooks" if hooks else root / "empty-hooks"))
+    git("config", "user.name", "Synthetic Test")
+    git("config", "user.email", "test@example.com")
+    git("config", "ajx.gitleaksPath", SCANNER)
+    shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
+    (root / "notes.txt").write_text("Safe fixture.\n")
+    git("add", ".")
+    git("commit", "-m", "Safe synthetic history")
+    return root, git
+
+
 class PublicationChecks(unittest.TestCase):
     def test_pre_push_blocks_private_history_and_author_metadata(self):
         for private_kind in ("content", "author", "unreferenced"):
             with self.subTest(private_kind=private_kind), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                def git(*args):
-                    return subprocess.run(["git", "-C", tmp, *args], check=True,
-                                          capture_output=True, text=True)
-                git("init", "-b", "main")
-                # The dummy history is built without hooks so the pre-push gate
-                # can reject a mistake that predates installation of the gate.
-                git("config", "core.hooksPath", str(root / "empty-hooks"))
-                git("config", "user.name", "Synthetic Test")
-                git("config", "user.email", "test@example.com")
-                git("config", "ajx.gitleaksPath", SCANNER)
-                shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
-                (root / "notes.txt").write_text("Safe fixture.\n")
-                git("add", ".")
-                git("commit", "-m", "Safe synthetic history")
+                root, git = synthetic_repository(tmp)
                 gate = [str(ROOT / ".githooks/pre-push")]
                 clean_head = git("rev-parse", "HEAD").stdout.strip()
                 deletion = "(delete) " + "0" * 40 + " refs/heads/old " + clean_head + "\n"
@@ -59,19 +67,7 @@ class PublicationChecks(unittest.TestCase):
     def test_pre_push_scans_annotated_tag_metadata(self):
         for kind in ("safe", "tagger", "message", "nested"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                def git(*args):
-                    return subprocess.run(["git", "-C", tmp, *args], check=True,
-                                          capture_output=True, text=True)
-                git("init", "-b", "main")
-                git("config", "core.hooksPath", str(root / "empty-hooks"))
-                git("config", "user.name", "Synthetic Test")
-                git("config", "user.email", "test@example.com")
-                git("config", "ajx.gitleaksPath", SCANNER)
-                shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
-                (root / "notes.txt").write_text("Safe fixture.\n")
-                git("add", ".")
-                git("commit", "-m", "Safe synthetic history")
+                root, git = synthetic_repository(tmp)
                 marker = "fictional-person" + "@" + "invalid.test"
                 if kind == "tagger":
                     git("config", "user.email", marker)
@@ -145,21 +141,7 @@ class PublicationChecks(unittest.TestCase):
 
     def test_hook_checks_staged_bytes_and_private_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-
-            def git(*args):
-                return subprocess.run(["git", "-C", tmp, *args], check=True,
-                                      capture_output=True, text=True)
-
-            git("init", "-b", "main")
-            git("config", "user.name", "Synthetic Test")
-            git("config", "user.email", "test@example.com")
-            git("config", "core.hooksPath", str(ROOT / ".githooks"))
-            git("config", "ajx.gitleaksPath", SCANNER)
-            shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
-            (root / "notes.txt").write_text("Synthetic public content.\n")
-            git("add", ".")
-            git("commit", "-m", "Synthetic clean fixture")
+            root, git = synthetic_repository(tmp, hooks=True)
             clean_head = git("rev-parse", "HEAD").stdout
 
             marker = "person" + "@" + "invalid.test"

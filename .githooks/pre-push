@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(git rev-parse --show-toplevel)
-cd "$root"
-scanner=$(git config --local --get ajx.gitleaksPath || command -v gitleaks || true)
-if [ -z "$scanner" ] || [ ! -x "$scanner" ]; then
-    echo "Install Gitleaks and follow CONTRIBUTING.md before pushing." >&2
-    exit 1
-fi
+. "$(dirname "$0")/security-common.sh"
+init_security_scan pushing
 
 # A push may name a commit that is no longer reachable from a local ref.
 # Include every outgoing object, not only the refs visible to --all.
@@ -40,15 +35,11 @@ while IFS= read -r object; do
     done
 done <<< "$tag_candidates"
 
-"$scanner" git --redact --no-banner --ignore-gitleaks-allow \
-    --max-decode-depth 2 --max-archive-depth 2 \
-    --config "$root/.gitleaks.toml" --log-opts="$log_options"
+security_scan git --log-opts="$log_options"
 {
     git log --format='%an <%ae>%n%cn <%ce>%n%B' "${revisions[@]}" --
     while IFS= read -r object; do
         [[ -n "$object" ]] || continue
         git cat-file tag "$object"
     done <<< "$tag_objects"
-} | "$scanner" stdin --redact --no-banner --ignore-gitleaks-allow \
-        --max-decode-depth 2 --max-archive-depth 2 \
-        --config "$root/.gitleaks.toml"
+} | security_scan stdin
