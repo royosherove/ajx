@@ -97,6 +97,7 @@ ajx docs guide            # coordinator workflow
 ajx docs trial            # complete trial.toml example
 ajx docs checks           # headless setup and success-check syntax
 ajx docs reporting        # report artifacts and evidence
+ajx docs artifacts        # JSON field paths and raw transcript decoding
 ajx docs measurement      # metric definitions and limits
 ajx docs trial --json     # source and content in one JSON document
 ```

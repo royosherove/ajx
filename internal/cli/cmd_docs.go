@@ -14,6 +14,7 @@ var documentationTopics = []struct{ name, path string }{
 	{"trial", "examples/trial.toml"},
 	{"checks", "references/headless.md"},
 	{"reporting", "references/reporting.md"},
+	{"artifacts", "references/artifacts.md"},
 	{"measurement", "references/measurement.md"},
 }
 

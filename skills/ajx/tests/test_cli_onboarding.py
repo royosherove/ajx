@@ -24,11 +24,13 @@ def load_cli():
 class OnboardingTest(unittest.TestCase):
     def test_docs_reads_local_reference_without_processes(self):
         cli = load_cli()
-        output = io.StringIO()
-        with mock.patch("subprocess.run", side_effect=AssertionError("no commands allowed")), \
-                contextlib.redirect_stdout(output):
-            self.assertEqual(cli.main(["docs", "trial"]), 0)
-        self.assertEqual(output.getvalue(), (SKILL / "examples" / "trial.toml").read_text())
+        for topic, relative in [("trial", "examples/trial.toml"), ("artifacts", "references/artifacts.md")]:
+            with self.subTest(topic=topic):
+                output = io.StringIO()
+                with mock.patch("subprocess.run", side_effect=AssertionError("no commands allowed")), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(cli.main(["docs", topic]), 0)
+                self.assertEqual(output.getvalue(), (SKILL / relative).read_text())
 
     def test_doctor_prints_final_ready_verdict(self):
         cli = load_cli()

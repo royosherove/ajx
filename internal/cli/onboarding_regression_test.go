@@ -143,6 +143,10 @@ func TestBundledDocsAreDiscoverableAndReadableOffline(t *testing.T) {
 	if code != 0 || !strings.Contains(text, "--check") {
 		t.Fatalf("check reference was not readable: %d %s", code, text)
 	}
+	code, text, _ = run(t, "docs", "artifacts")
+	if code != 0 || !strings.Contains(text, "task_outcome_verified") || !strings.Contains(text, "fromjson") {
+		t.Fatalf("artifact reference was not readable: %d %s", code, text)
+	}
 	if code, _, _ := run(t, "docs", "../private"); code != 2 {
 		t.Fatalf("unknown documentation topic accepted: %d", code)
 	}
