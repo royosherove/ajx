@@ -4,7 +4,7 @@
 Commands:
   init <dir> --product NAME [--harness NAME]   scaffold a trial for your chosen CLI
   example <dir>                   generate fictional reports offline; no agent calls
-  docs [TOPIC]                    read bundled guide, trial, checks, reporting or measurement docs
+  docs [TOPIC]                    read bundled setup, reporting, artifact and measurement docs
   doctor [trial.toml]              harness/auth/runner availability; model identity vs task identity;
                                    env overrides and collisions; preflight (no secrets printed)
   validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings

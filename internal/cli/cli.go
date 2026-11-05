@@ -34,7 +34,7 @@ Commands:
   init <dir> --product NAME [--harness NAME]   scaffold a trial for your chosen CLI
                                    (asks the rest in a terminal; --no-input never asks)
   example <dir>                   generate fictional reports offline; no agent calls
-  docs [TOPIC]                    read bundled guide, trial, checks, reporting or measurement docs
+  docs [TOPIC]                    read bundled setup, reporting, artifact and measurement docs
   doctor [trial.toml]              harness/auth/runner availability; model identity vs task identity;
                                    env overrides and collisions; preflight (no secrets printed)
   validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings
@@ -117,7 +117,7 @@ func BuildParser() *Parser {
 	s.Pos("dir", "")
 
 	s = on(sub.Add("docs", "read bundled documentation without network access"), cmdDocs)
-	s.OptPos("topic", "guide, trial, checks, reporting or measurement; omit to list topics")
+	s.OptPos("topic", "guide, trial, checks, reporting, artifacts or measurement; omit to list topics")
 	jsonFlag(s, "the topic list or document")
 
 	s = on(sub.Add("plugins", ""), cmdPlugins)
