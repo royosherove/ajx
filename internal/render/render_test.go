@@ -505,6 +505,43 @@ func TestCleanupFailureIsVisibleEvenWithVerifiedSuccess(t *testing.T) {
 	}
 }
 
+func TestMatrixComparabilityUsesReadableMarkdownValues(t *testing.T) {
+	p := newProfiles(t)
+	p.makeRun("sample", 1, runOpts{})
+	p.matrix()
+	text := read(t, filepath.Join(p.out, "matrix.md"))
+	if !strings.Contains(text, "- product_versions: 1.0\n") {
+		t.Fatalf("comparability should list versions without encoded list syntax:\n%s", text)
+	}
+}
+
+func TestInventoryDoesNotEstablishInstructionVisibility(t *testing.T) {
+	p := newProfiles(t)
+	rd, _, state := p.makeRun("sample", 1, runOpts{})
+	inventory := M{"skills_visible": int64(2), "slash_commands_visible": int64(5),
+		"ajx_skills_visible": []any{"ajx"}, "ajx_slash_commands_visible": []any{"ajx"}}
+	if err := pyfmt.WriteJSON(filepath.Join(rd, "telemetry.execute.json"),
+		M{"events": []any{}, "harness_reported": inventory}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := WriteRunJSON(p.sp, M{"id": "sample", "config": "clean"}, 1, rd, state,
+		fakeHarness("synthetic", true), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run["report_instructions_visible_during_task"] != nil {
+		t.Fatalf("inventory was mistaken for instruction visibility: %v", run)
+	}
+	if util.Compact(run["reported_extension_inventory"]) != util.Compact(inventory) {
+		t.Fatalf("inventory evidence lost: %v", run["reported_extension_inventory"])
+	}
+	limitations := util.Compact(run["limitations"])
+	if strings.Contains(limitations, "evaluation-aware") || strings.Contains(limitations, "(user config)") ||
+		!strings.Contains(limitations, "listing does not establish") {
+		t.Fatalf("inventory limitation overclaims: %s", limitations)
+	}
+}
+
 func TestLegacyRecordsAndMissingArtifactsRemainRenderable(t *testing.T) {
 	p := newProfiles(t)
 	rd, _, _ := p.makeRun("sample", 1, runOpts{noArtifacts: true})

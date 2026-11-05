@@ -139,9 +139,13 @@ def write_run_json(spec, cell, rep, run_dir, state, harness, auth, runner):
         limitations.append(f"{harness.name} cannot disable user config; 'clean' here means only no AJX material was supplied")
     if tel.get("isolation_flags"):
         limitations.append(f"isolation flags on {len(tel['isolation_flags'])} tool call(s); see telemetry.execute.json")
-    ajx_visible = bool((tel.get("harness_reported") or {}).get("ajx_skills_visible"))
+    hr = tel.get("harness_reported") or {}
+    ajx_visible = bool(hr.get("ajx_skills_visible") or hr.get("ajx_slash_commands_visible"))
     if ajx_visible:
-        limitations.append("evaluation-aware run: AJX skills were listed in the worker's session (user config)")
+        limitations.append("AJX extensions were listed in the harness session inventory; "
+                           "listing does not establish their origin, activation, or exposure to evaluation instructions")
+    inventory = {key: hr[key] for key in ("skills_visible", "slash_commands_visible",
+                                        "ajx_skills_visible", "ajx_slash_commands_visible") if key in hr}
     limitations += credential_limitations(env, verify, state.get("teardown"))
     profiles = profile_records(run_dir, state, cell)
     limitations += report_ui.profile_limitations(profiles)
@@ -166,7 +170,8 @@ def write_run_json(spec, cell, rep, run_dir, state, harness, auth, runner):
         "evaluation_wrapper_sha256": spec["sha256"],
         "ajx_skill_revision": skill_fingerprint(),
         "invocation_timing": "before_task",
-        "report_instructions_visible_during_task": ajx_visible,
+        "report_instructions_visible_during_task": None,
+        "reported_extension_inventory": inventory,
         "product": {"name": spec["trial"]["product"], "version": env.get("product_version_before"),
                     "version_after": env.get("product_version_after")},
         "agent": {
@@ -205,6 +210,7 @@ def write_run_json(spec, cell, rep, run_dir, state, harness, auth, runner):
         "verification_scope": f"{verify.get('passed', 0)}/{verify.get('total', 0)} ajx checks passed; "
                               + "; ".join(c["name"] for c in verify.get("checks", [])) if verify.get("checks") else "no checks defined",
         "journey_provenance": state.get("journey_provenance"),
+        "narration_failure": state.get("narration_failure"),
         "reporter": {k: spec["reporter"].get(k) for k in ("harness", "model", "effort")},
         "review_status": review_status(run_dir, state),
         "evidence": {
@@ -284,6 +290,14 @@ def _profile_md(value):
     """Literal profile evidence in Markdown, including inside pipe tables."""
     text = re.sub(r"\s+", " ", str(value if value is not None else "unknown")).strip()
     return "".join(f"&#{ord(char)};" if char in "\\`*[]_|" else html.escape(char, quote=True) for char in text)
+
+
+def _comparability_md(value):
+    """Readable list values, retaining Markdown and HTML safety."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_comparability_md(item) for item in value) or "none"
+    text = re.sub(r"\s+", " ", str(value if value is not None else "unknown")).strip()
+    return re.sub(r"([\\`*[\]_|])", r"\\\1", html.escape(text, quote=False))
 
 
 def configuration_markdown(run):
@@ -577,7 +591,7 @@ def matrix_report(spec, synthesize=True, log=print):
         md += ["", f"[Complete run evidence]({prefix}run.json)"]
         md += [f"[{filename}]({prefix}{filename})" for filename in r["artifacts"].values()]
         md.append("")
-    md += ["", "## Comparability", ""] + [f"- {k}: {_profile_md(v)}" for k, v in consistency.items()]
+    md += ["", "## Comparability", ""] + [f"- {k}: {_comparability_md(v)}" for k, v in consistency.items()]
     if clusters:
         md += ["", "## Asks across runs (clustered; clustering is inferred by the reporter model)", "",
                "| Cluster | Ask | Status | Observed in | Members |", "|---|---|---|---|---|"]

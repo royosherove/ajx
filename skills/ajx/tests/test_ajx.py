@@ -374,9 +374,10 @@ harness = "fake"
             env = read_json(rd / "environment.json")
             self.assertEqual(env["product_version_before"], "v1.2.3")
             runj = read_json(rd / "run.json")
+            self.assertEqual(runj["stages"], statuses)
             self.assertEqual(runj["task_outcome_verified"], "partial")
             self.assertEqual(runj["task_outcome_declared"], "I made the file.")
-            self.assertFalse(runj["report_instructions_visible_during_task"])
+            self.assertIsNone(runj["report_instructions_visible_during_task"])
             self.assertTrue(runj["journey_provenance"].startswith("self-narrated"))
             self.assertEqual(runj["review_status"], "ready")
             self.assertIn("ASK-001", (rd / "asks.md").read_text())
@@ -398,6 +399,7 @@ harness = "fake"
             mx = read_json(out / "matrix.json")
             self.assertEqual(mx["runs"][0]["verified"], "partial")
             self.assertEqual(mx["runs"][0]["asks"], 1)
+            self.assertIn("- product_versions: v1.2.3\n", (out / "matrix.md").read_text())
 
     def test_resume_skips_done_and_runs_pending_teardown(self):
         with tempfile.TemporaryDirectory() as tmp:

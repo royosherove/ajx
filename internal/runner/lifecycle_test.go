@@ -327,6 +327,9 @@ harness = "fake"
 		t.Fatalf("product_version_before %v", env["product_version_before"])
 	}
 	runj := readMapT(t, filepath.Join(rd, "run.json"))
+	if got := util.Compact(runj["stages"]); got != util.Compact(statuses(state)) {
+		t.Fatalf("final run.json stages %s differ from state.json %s", got, util.Compact(statuses(state)))
+	}
 	if runj["task_outcome_verified"] != "partial" || runj["task_outcome_declared"] != "I made the file." {
 		t.Fatalf("run.json %v / %v", runj["task_outcome_verified"], runj["task_outcome_declared"])
 	}

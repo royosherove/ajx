@@ -203,6 +203,29 @@ func (r *Run) mark(stage, status string, extra M) error {
 	return r.save()
 }
 
+// syncRunRecord updates derived metadata after all stage and cleanup work.
+// A failed metadata write must not prevent teardown or archival.
+func (r *Run) syncRunRecord() error {
+	path := filepath.Join(r.RunDir, "run.json")
+	if !exists(path) {
+		return nil
+	}
+	value, err := ReadJSON(path, nil)
+	if err != nil {
+		return err
+	}
+	record := util.Map(value)
+	if record == nil {
+		return runtimeErr("cannot update invalid run.json")
+	}
+	stages := M{}
+	for name, value := range r.stages() {
+		stages[name] = util.MapOr(value)["status"]
+	}
+	record["stages"] = stages
+	return util.WriteJSON(path, record)
+}
+
 func (r *Run) execState() M { return util.Map(r.State["execute"]) }
 
 func (r *Run) paths() M    { return util.MapOr(r.State["paths"]) }
@@ -1035,13 +1058,20 @@ func (r *Run) stageNarrate() error {
 	var proc M
 	text := ""
 	narrateTel := M{}
+	delete(r.State, "narration_failure")
+	failure := M{"category": "resume_unsupported", "message": "the harness does not support session resumption"}
+	if r.Harness.Base().CanResume {
+		failure = M{"category": "session_unavailable", "message": "the execution has no resumable session identifier"}
+	}
 	if r.Harness.Base().CanResume && util.Truthy(util.Get(r.State, "execute", "session_id")) {
+		failure = M{"category": "resume_no_result", "message": "the resumed harness returned no narration result"}
 		p, err := r.Harness.Narrate(ctx, prompt)
 		if util.Interrupted(err) || r.interrupted() {
 			return util.ErrInterrupted
 		}
 		if err != nil {
 			r.Log(fmt.Sprintf("[%s] self-narration failed: %s", r.RunID, pyMessage(err)))
+			failure = M{"category": "resume_error", "message": pyErrString(err)}
 			p = nil
 		}
 		proc = p
@@ -1086,6 +1116,14 @@ func (r *Run) stageNarrate() error {
 	}
 	if len(proc) > 0 {
 		r.Log(fmt.Sprintf("[%s] %s; falling back to a labeled reconstruction", r.RunID, NarrationRejected[rejected]))
+		failure = M{"category": rejected, "message": NarrationRejected[rejected]}
+		if reason := narrateTel["stop_reason"]; reason != nil {
+			failure["stop_reason"] = reason
+		}
+	}
+	r.State["narration_failure"] = failure
+	if err := r.save(); err != nil {
+		return err
 	}
 	result, err := reporter.Reconstruct(ctx.Context(), r.Spec, r.RunDir)
 	if util.Interrupted(err) || r.interrupted() {
@@ -1105,11 +1143,25 @@ func (r *Run) stageNarrate() error {
 	}
 	r.State["narrate"] = narrate
 	if strings.TrimSpace(util.S(result["text"])) != "" {
+		// The full message remains structured in state/run.json. Keep the
+		// provenance comment on one line and prevent closing its HTML comment.
+		reason := narrationFailureSummary(util.S(failure["message"]))
 		return r.writeJourney(util.S(result["text"]),
 			"EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "+
-				"agent could not narrate (harness cannot resume or resume failed). No recollection is claimed.")
+				"agent could not narrate ("+util.S(failure["category"])+": "+reason+"). No recollection is claimed.")
 	}
 	return r.writeJourney("# Journey unavailable\n\nThe reporter returned no text.", JourneyUnavailable)
+}
+
+func narrationFailureSummary(message string) string {
+	const maxCharacters = 320
+	const truncated = "… [truncated; see narration_failure.message]"
+	reason := strings.ReplaceAll(strings.Join(strings.Fields(message), " "), "--", "—")
+	chars := []rune(reason)
+	if len(chars) > maxCharacters {
+		return string(chars[:maxCharacters-len([]rune(truncated))]) + truncated
+	}
+	return reason
 }
 
 func (r *Run) stageExtract() error {

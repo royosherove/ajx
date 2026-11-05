@@ -53,6 +53,14 @@ CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "crede
 TASK_INPUT_KEYS = ("materials", "fixture_dir", "human", "identity_cmd")
 
 
+def _narration_failure_summary(message):
+    """Bound the comment summary; the structured failure retains its full message."""
+    limit = 320
+    truncated = "… [truncated; see narration_failure.message]"
+    reason = " ".join(message.split()).replace("--", "—")
+    return reason[:limit - len(truncated)] + truncated if len(reason) > limit else reason
+
+
 def task_inputs(spec):
     """The checks, lifecycle commands and task conditions attempts were made with. Recorded in
     matrix-plan.json so the console can keep a folder's attempts comparable (`ajx run` does not
@@ -294,6 +302,17 @@ class Run:
     def mark(self, stage, status, **extra):
         self.state["stages"][stage] = {"status": status, "at": now(), **extra}
         self.save()
+
+    def _sync_run_record(self):
+        # Update derived metadata after stage/cleanup work so a failed write
+        # cannot prevent teardown or archival.
+        path = self.run_dir / "run.json"
+        if path.exists():
+            record = read_json(path)
+            if not isinstance(record, dict):
+                raise RuntimeError("cannot update invalid run.json")
+            record["stages"] = {name: item["status"] for name, item in self.state["stages"].items()}
+            write_json(path, record)
 
     def ctx(self):
         paths = self.state.get("paths", {})
@@ -608,11 +627,17 @@ class Run:
         prompt = reporter.narrate_prompt(self.spec, self.cell, self.run_id, digest)
         (self.run_dir / "narrate.prompt.md").write_text(prompt, encoding="utf-8")
         proc, text, ntel = None, "", {}
+        self.state.pop("narration_failure", None)
+        failure = {"category": "resume_unsupported", "message": "the harness does not support session resumption"}
+        if self.harness.can_resume:
+            failure = {"category": "session_unavailable", "message": "the execution has no resumable session identifier"}
         if self.harness.can_resume and (self.state.get("execute") or {}).get("session_id"):
+            failure = {"category": "resume_no_result", "message": "the resumed harness returned no narration result"}
             try:
                 proc = self.harness.narrate(ctx, prompt)
             except Exception as exc:  # noqa: BLE001
                 self.log(f"[{self.run_id}] self-narration failed: {exc}")
+                failure = {"category": "resume_error", "message": f"{type(exc).__name__}: {exc}"}
                 proc = None
             if proc:
                 self.state["narrate"] = proc
@@ -629,6 +654,11 @@ class Run:
             return
         if proc:
             self.log(f"[{self.run_id}] {NARRATION_REJECTED[rejected]}; falling back to a labeled reconstruction")
+            failure = {"category": rejected, "message": NARRATION_REJECTED[rejected]}
+            if ntel.get("stop_reason") is not None:
+                failure["stop_reason"] = ntel["stop_reason"]
+        self.state["narration_failure"] = failure
+        self.save()
         try:
             result = reporter.reconstruct(self.spec, self.run_dir)
         except Exception as exc:  # noqa: BLE001
@@ -639,9 +669,10 @@ class Run:
         self.state["narrate"] = {**result["proc"], "reconstruction": True,
                                  **({"self_narration_rejected": rejected} if rejected else {})}
         if result["text"].strip():
+            reason = _narration_failure_summary(failure["message"])
             self._write_journey(result["text"],
                                 "EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "
-                                "agent could not narrate (harness cannot resume or resume failed). No recollection is claimed.")
+                                f"agent could not narrate ({failure['category']}: {reason}). No recollection is claimed.")
         else:
             self._write_journey("# Journey unavailable\n\nThe reporter returned no text.", JOURNEY_UNAVAILABLE)
 
@@ -878,6 +909,18 @@ class Run:
         return st in ("done", "interrupted") or (stage == "execute" and st == "error")
 
     def go(self, stages=None, keep_workspace=False):
+        try:
+            state = self._go(stages, keep_workspace)
+        except BaseException:
+            try:
+                self._sync_run_record()
+            except Exception as exc:  # preserve the original interruption/failure
+                self.log(f"[{self.run_id}] final run.json update failed: {exc}")
+            raise
+        self._sync_run_record()
+        return state
+
+    def _go(self, stages=None, keep_workspace=False):
         if self.spec.get("_cleanup_only") and not cleanup_only(stages):
             raise specmod.SpecError("saved cleanup profiles allow only teardown, release, render and archive")
         # A release-only request explicitly disposes of the environment. A teardown retry
