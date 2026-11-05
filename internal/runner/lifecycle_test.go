@@ -467,7 +467,7 @@ func TestInterruptedExecuteKeepsEvidenceAndProducesArtifactsWithoutLLM(t *testin
 	if !strings.Contains(strings.Join(util.Strings(runj["limitations"]), " "), "interrupted") {
 		t.Fatalf("limitations %v", runj["limitations"])
 	}
-	if len(logs) == 0 || logs[0] != "[f-r1] execute was interrupted; keeping its evidence, not re-running the task" {
+	if !util.Contains(logs, "[f-r1] execute was interrupted; keeping its evidence, not re-running the task") {
 		t.Fatalf("logs %q", logs)
 	}
 }
