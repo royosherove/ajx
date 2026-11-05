@@ -36,14 +36,19 @@ Install Gitleaks 8.30.1, then enable the repository's staged-content hook:
 ```sh
 git config --local core.hooksPath .githooks
 python3 -I .github/scripts/test_security.py
-gitleaks git --redact --log-opts=--all
+.githooks/pre-push </dev/null
 ```
 
-If you already use Git hooks, integrate `.githooks/pre-commit` into them instead
-of replacing your hooks configuration. Gitleaks must be on `PATH`, or you can
+If you already use Git hooks, integrate `.githooks/pre-commit` and
+`.githooks/pre-push` into them instead of replacing your hooks configuration.
+Gitleaks must be on `PATH`, or you can
 set `git config --local ajx.gitleaksPath /absolute/path/to/gitleaks`.
-The hook scans staged blobs, including content that differs from the working
-tree. It fails if the scanner is missing. GitHub Actions also scans the complete
+The commit hook scans staged blobs, including content that differs from the working
+tree. The push hook scans reachable and outgoing history, commit author/message
+metadata, and annotated tags before they leave the machine, including mistakes
+committed before hook installation. When chaining pre-push hooks, replay Git's
+standard input to each hook so each one receives the outgoing object identifiers.
+Both fail if the scanner is missing. GitHub Actions also scans the complete
 reachable history with the repository's `.gitleaks.toml` rules.
 
 The additional rules detect personal email addresses, home paths, internal

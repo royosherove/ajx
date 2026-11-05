@@ -17,6 +17,88 @@ SCANNER = str(Path(SCANNER).resolve())
 
 
 class PublicationChecks(unittest.TestCase):
+    def test_pre_push_blocks_private_history_and_author_metadata(self):
+        for private_kind in ("content", "author", "unreferenced"):
+            with self.subTest(private_kind=private_kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                def git(*args):
+                    return subprocess.run(["git", "-C", tmp, *args], check=True,
+                                          capture_output=True, text=True)
+                git("init", "-b", "main")
+                # The dummy history is built without hooks so the pre-push gate
+                # can reject a mistake that predates installation of the gate.
+                git("config", "core.hooksPath", str(root / "empty-hooks"))
+                git("config", "user.name", "Synthetic Test")
+                git("config", "user.email", "test@example.com")
+                git("config", "ajx.gitleaksPath", SCANNER)
+                shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
+                (root / "notes.txt").write_text("Safe fixture.\n")
+                git("add", ".")
+                git("commit", "-m", "Safe synthetic history")
+                gate = [str(ROOT / ".githooks/pre-push")]
+                clean_head = git("rev-parse", "HEAD").stdout.strip()
+                deletion = "(delete) " + "0" * 40 + " refs/heads/old " + clean_head + "\n"
+                clean = subprocess.run(gate, cwd=root, input=deletion, capture_output=True, text=True)
+                self.assertEqual(clean.returncode, 0, clean.stderr)
+                marker = "fictional-person" + "@" + "invalid.test"
+                if private_kind in ("content", "unreferenced"):
+                    (root / "notes.txt").write_text(marker + "\n")
+                else:
+                    git("config", "user.email", marker)
+                    (root / "notes.txt").write_text("Another safe fixture.\n")
+                git("add", "notes.txt")
+                git("commit", "-m", "Synthetic rejected history")
+                outgoing = git("rev-parse", "HEAD").stdout.strip()
+                if private_kind == "unreferenced":
+                    git("reset", "--hard", clean_head)
+                refs = "HEAD " + outgoing + " refs/heads/result " + "0" * 40 + "\n"
+                rejected = subprocess.run(gate, cwd=root, input=refs, capture_output=True, text=True)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertNotIn(marker, rejected.stdout + rejected.stderr)
+
+    def test_pre_push_scans_annotated_tag_metadata(self):
+        for kind in ("safe", "tagger", "message", "nested"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                def git(*args):
+                    return subprocess.run(["git", "-C", tmp, *args], check=True,
+                                          capture_output=True, text=True)
+                git("init", "-b", "main")
+                git("config", "core.hooksPath", str(root / "empty-hooks"))
+                git("config", "user.name", "Synthetic Test")
+                git("config", "user.email", "test@example.com")
+                git("config", "ajx.gitleaksPath", SCANNER)
+                shutil.copy(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
+                (root / "notes.txt").write_text("Safe fixture.\n")
+                git("add", ".")
+                git("commit", "-m", "Safe synthetic history")
+                marker = "fictional-person" + "@" + "invalid.test"
+                if kind == "tagger":
+                    git("config", "user.email", marker)
+                message = marker if kind in ("message", "nested") else "Safe release"
+                git("tag", "-a", "synthetic", "-m", message)
+                if kind == "nested":
+                    git("tag", "-a", "outer", "synthetic", "-m", "Safe outer tag")
+                    outgoing = git("rev-parse", "outer").stdout.strip()
+                else:
+                    outgoing = git("rev-parse", "synthetic").stdout.strip()
+                gate = [str(ROOT / ".githooks/pre-push")]
+                # CI scans reachable tags with no pre-push input.
+                for unreferenced in (False, True):
+                    if unreferenced:
+                        git("tag", "-d", "synthetic")
+                        if kind == "nested":
+                            git("tag", "-d", "outer")
+                    refs = ("tag " + outgoing + " refs/tags/release " + "0" * 40 + "\n"
+                            if unreferenced else "")
+                    result = subprocess.run(gate, cwd=root, input=refs,
+                                            capture_output=True, text=True)
+                    if kind == "safe":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertNotIn(marker, result.stdout + result.stderr)
+
     def test_rules_and_safe_examples(self):
         # Deliberately generated dummy values; no credentials are used or verified.
         cases = [

@@ -31,6 +31,8 @@ unless a dependency is deliberately agreed.
 Never commit real transcripts, reports, customer data, credentials, personal
 paths, or local operations configuration. Scan the staged content and history.
 Do not bypass the security hook to force a commit through.
+Keep both the pre-commit staged-content gate and the pre-push history/metadata
+gate active; see CONTRIBUTING.md.
 
 Do not change repository visibility, publish packages, or create releases
 without the user's explicit request.
