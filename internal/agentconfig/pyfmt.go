@@ -2,7 +2,7 @@ package agentconfig
 
 // Python-compatible text helpers. Hashes, configuration files, launch
 // arguments and error messages must match the Python implementation byte for
-// byte, so these reproduce json.dumps, repr, shlex.quote, fnmatch,
+// byte, so these reproduce json.dumps, repr, fnmatch,
 // str.splitlines/strip/casefold/isprintable and urllib.parse behavior.
 
 import (
@@ -313,28 +313,6 @@ func casefold(s string) string {
 		b.WriteRune(unicode.ToLower(unicode.ToUpper(r)))
 	}
 	return b.String()
-}
-
-var shlexUnsafe = regexp.MustCompile(`[^\w@%+=:,./-]`)
-
-// shlexQuote is shlex.quote.
-func shlexQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if !shlexUnsafe.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-// shlexJoin is shlex.join.
-func shlexJoin(args []string) string {
-	parts := make([]string, len(args))
-	for i, a := range args {
-		parts[i] = shlexQuote(a)
-	}
-	return strings.Join(parts, " ")
 }
 
 // fnmatch is fnmatch.fnmatch on POSIX (case-sensitive; '*' also matches '/').

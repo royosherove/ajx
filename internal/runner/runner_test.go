@@ -131,10 +131,6 @@ func TestPythonFormatting(t *testing.T) {
 	if _, ok := m["f"].(float64); !ok {
 		t.Fatalf("float literal decoded as %T", m["f"])
 	}
-	if shellQuote("python3") != "python3" || shellQuote("my sb") != "'my sb'" || shellQuote("") != "''" ||
-		shellQuote("a'b") != `'a'"'"'b'` {
-		t.Fatal("shellQuote")
-	}
 }
 
 func TestProfileContractComparesNumbersByValue(t *testing.T) {

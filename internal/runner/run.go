@@ -746,14 +746,14 @@ func (r *Run) harnessFacts(ctx *plugin.Ctx, refresh bool) (M, error) {
 	if binary == "" {
 		return M{"available": false, "version_before": nil}, nil
 	}
-	available, err := r.contextShell("command -v "+shellQuote(binary), ctx, 20, "environment")
+	available, err := r.contextShell("command -v "+util.ShellQuote(binary), ctx, 20, "environment")
 	if err != nil {
 		return nil, err
 	}
 	var version any
 	if va := r.Harness.Base().VersionArgv; exitZero(available) && len(va) > 0 {
 		argv := append([]string{binary}, va[1:]...)
-		result, err := r.contextShell(shellJoin(argv), ctx, 20, "environment")
+		result, err := r.contextShell(util.ShellJoin(argv), ctx, 20, "environment")
 		if err != nil {
 			return nil, err
 		}

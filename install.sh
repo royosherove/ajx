@@ -19,7 +19,8 @@ Requires curl and standard shell tools. No Go, Python, Git or sudo needed.
   --no-skills        Install only the CLI
   --no-path          Do not update shell startup files
   --update           Refresh existing managed skill locations without adding new ones
-  --no-summary       Let the caller display the completion summary
+  --compact-summary  Show the concise CLI update summary
+  --no-summary       Omit the completion summary; keep progress and diagnostics
   --replace          Back up conflicting files/folders before replacing them
   --help            Show this help
 
@@ -29,14 +30,7 @@ Rerun the same command to update. Existing managed installations update together
 EOF
 }
 
-summary_box() {
-    local version=$1 width=40 row border
-    shift
-    for row in "$@"; do
-        if [[ ${#row} -gt "$width" ]]; then width=${#row}; fi
-    done
-    printf -v border '%*s' "$((width + 2))" ''
-    border=${border// /-}
+print_banner() {
     printf '\n'
     cat <<'EOF'
    ░███        ░█████ ░██    ░██
@@ -47,9 +41,38 @@ summary_box() {
 ░██    ░██ ░██   ░██   ░██  ░██
 ░██    ░██  ░██████   ░██    ░██
 EOF
-    printf 'v%s\n\n+%s+\n' "$version" "$border"
+    printf 'v%s\n\n' "$1"
+}
+
+summary_box() {
+    local width=40 row border
+    for row in "$@"; do
+        if [[ ${#row} -gt "$width" ]]; then width=${#row}; fi
+    done
+    printf -v border '%*s' "$((width + 2))" ''
+    border=${border// /-}
+    printf '+%s+\n' "$border"
     for row in "$@"; do printf '| %-*s |\n' "$width" "$row"; done
-    printf '+%s+\n\n' "$border"
+    printf '+%s+\n' "$border"
+}
+
+print_compact_summary() {
+    local version=$1 title=$2 cli_only=$3 had_skill=$4 skill_status=Installed
+    if [[ "$cli_only" == true ]]; then
+        skill_status='Not managed by AJX'
+        if [[ "$had_skill" == true ]]; then skill_status='Left unchanged'; fi
+    elif [[ "$had_skill" == true ]]; then
+        skill_status='Updated; locations kept'
+    fi
+    print_banner "$version"
+    summary_box "$title" "" "$(printf '%-14s%s' CLI Ready)" \
+        "$(printf '%-14s%s' 'Agent skills' "$skill_status")"
+    if [[ "$cli_only" == false ]]; then
+        say ''
+        say 'Next: start a fresh agent session to load the updated skill.'
+    fi
+    say ''
+    say 'Details: ajx version --json'
 }
 
 sha256() {
@@ -146,7 +169,8 @@ configure_path() {
 
 main() {
     local release_version="" package_dir="" no_skills=false no_path=false replace=false
-    local offline_install=false no_summary=false path_configured=false kiro_skill=false
+    local offline_install=false no_summary=false compact_summary=false had_skill=false
+    local path_configured=false kiro_skill=false
     local update_existing=false refresh_skills=false pointer
     local root bin target os arch tmp expected="" base home_physical index matches
     local checksum filename extra archive listing pkg commit release stamp dest native_version
@@ -167,6 +191,7 @@ main() {
             --no-skills) no_skills=true; shift ;;
             --no-path) no_path=true; shift ;;
             --update) update_existing=true; shift ;;
+            --compact-summary) compact_summary=true; shift ;;
             --no-summary) no_summary=true; shift ;;
             --replace) replace=true; shift ;;
             --help|-h) usage; return ;;
@@ -266,9 +291,10 @@ main() {
         [[ "$installed_version" == "${release_version#v}" ]] ||
             die 'The executable version does not match the selected release'
     fi
+    if [[ -d "$root/current/skill" ]]; then had_skill=true; fi
     if [[ "$no_skills" == true ]]; then
         skills=()
-    elif [[ "$update_existing" == true && ${#skills[@]} -eq 0 && -d "$root/current/skill" ]]; then
+    elif [[ "$update_existing" == true && ${#skills[@]} -eq 0 && "$had_skill" == true ]]; then
         refresh_skills=true
     elif [[ ${#skills[@]} -eq 0 ]]; then
         skills=("$HOME/.agents/skills/ajx" "$HOME/.claude/skills/ajx" "$HOME/.kiro/skills/ajx")
@@ -318,6 +344,10 @@ main() {
     if [[ "$no_summary" == true ]]; then return; fi
     title='Installation complete'
     if [[ "$update_existing" == true ]]; then title='Update complete'; fi
+    if [[ "$compact_summary" == true ]]; then
+        print_compact_summary "$installed_version" "$title" "$no_skills" "$had_skill"
+        return
+    fi
     if [[ "$refresh_skills" == true ]]; then
         scope='CLI + existing agent skills'
     elif [[ ${#skills[@]} -gt 0 ]]; then
@@ -325,7 +355,9 @@ main() {
     else
         scope='CLI only; agent skills not changed'
     fi
-    summary_box "$installed_version" "$title" "" "$scope"
+    print_banner "$installed_version"
+    summary_box "$title" "" "$scope"
+    say ''
     say "CLI: $bin"
     if [[ "$refresh_skills" == true ]]; then
         say "Skill bundle: $root/current/skill"

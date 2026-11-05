@@ -117,7 +117,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from .base import Runner
-from .util import now
+from .util import env_name_matches, now
 
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -668,9 +668,9 @@ def validate_for_cell(profile, cell):
     if drops:
         _validate_unset(drops, field + ".unset_env")
         for key in _ISOLATION_ENV:
-            if _dropped(key, drops):
+            if env_name_matches(key, drops):
                 _fail(field + ".unset_env", f"cannot unset the isolated {key} path")
-        conflicts = sorted(key for key in env if _dropped(key, drops))
+        conflicts = sorted(key for key in env if env_name_matches(key, drops))
         if conflicts:
             _fail(field + ".env", "variables are both supplied and unset: "
                   + ", ".join(conflicts)
@@ -698,10 +698,6 @@ def _validate_unset(unset, field="environment.unset_env"):
     if not isinstance(unset, (list, tuple)) or any(
             not isinstance(v, str) or not _ENV_NAME.fullmatch(v[:-1] if v.endswith("*") else v) for v in unset):
         _fail(field, "expected variable names or trailing-star prefixes")
-
-
-def _dropped(key, unset):
-    return any(key.startswith(v[:-1]) if v.endswith("*") else key == v for v in unset)
 
 
 def _redact_env_output(text, env):
@@ -854,9 +850,9 @@ class EnvironmentRunner(Runner):
         _validate_unset(unset)
         extra = _checked_env(overrides)
         for key in _ISOLATION_ENV & set(extra):
-            if _dropped(key, unset):
+            if env_name_matches(key, unset):
                 _fail("environment.unset_env", f"cannot unset the isolated {key} path")
-        return {k: v for k, v in {**_BASE_ENV, **extra}.items() if not _dropped(k, unset)}
+        return {k: v for k, v in {**_BASE_ENV, **extra}.items() if not env_name_matches(k, unset)}
 
     def environment_env(self, ctx):
         paths = self._paths(ctx)
@@ -973,10 +969,11 @@ class EnvironmentRunner(Runner):
         drop = tuple(ctx.get("unset_env") or ()) + tuple(unset)
         _validate_unset(drop, "environment.host_env.unset")
         for key in fixed:
-            if _dropped(key, drop):
+            if env_name_matches(key, drop):
                 _fail("environment.host_env.unset", f"cannot unset the private host control {key}")
         _private_host_directories(run_dir, directories)
-        return {key: value for key, value in {**_BASE_ENV, **supplied, **fixed}.items() if not _dropped(key, drop)}
+        return {key: value for key, value in {**_BASE_ENV, **supplied, **fixed}.items()
+                if not env_name_matches(key, drop)}
 
     def _worker_env(self, ctx, env=None):
         isolated = self.environment_env(ctx)

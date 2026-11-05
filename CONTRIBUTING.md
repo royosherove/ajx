@@ -13,6 +13,15 @@ validated it in your pull request. Add regression tests when behavior changes.
 Use the existing fake harness for lifecycle tests. Live trials require a
 separate, explicit decision about credentials, permissions, and cost.
 
+For console JavaScript changes, also run the component tests with Node.js:
+
+```sh
+node --test .github/scripts/test_console_ui.cjs
+```
+
+These tests exercise rendering logic with synthetic DOM elements; they do not
+replace browser checks when changing layout, focus, or keyboard interaction.
+
 The suite skips real-container checks unless `AJX_TEST_CONTAINER_IMAGE` names a
 preloaded immutable Linux image ID or digest with Python and standard shell
 utilities. CI resolves a synthetic test image and exercises those checks on
@@ -41,6 +50,7 @@ python3 -I .github/scripts/test_security.py
 
 If you already use Git hooks, integrate `.githooks/pre-commit` and
 `.githooks/pre-push` into them instead of replacing your hooks configuration.
+Keep `security-common.sh` beside both hook scripts if you copy them elsewhere.
 Gitleaks must be on `PATH`, or you can
 set `git config --local ajx.gitleaksPath /absolute/path/to/gitleaks`.
 The commit hook scans staged blobs, including content that differs from the working

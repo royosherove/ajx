@@ -516,16 +516,13 @@ def _whole(v, label, low=None):
 
 
 def _model_name(v, harness=""):
-    name = str(v or "").strip()
-    if not name:
-        return None
     if _LENIENT.get():
-        return name
-    if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
-        raise PlanError(f"{name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, or the "
-                        "provider's model id (no spaces)")
+        return str(v or "").strip() or None
     try:
-        return model_catalog.resolve(harness, name)
+        return model_catalog.parse_name(v, harness)
+    except model_catalog.InvalidModelName as exc:
+        raise PlanError(f"{exc.name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, or the "
+                        "provider's model id (no spaces)") from None
     except ValueError as exc:
         raise PlanError(str(exc)) from exc
 

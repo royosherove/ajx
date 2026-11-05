@@ -286,6 +286,48 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("PATH", result.stdout)
         self.assertNotIn("Custom Kiro", result.stdout)
 
+    def assert_compact_summary(self, result, skill_status, *, cli_only=False):
+        self.assertIn(f"░██    ░██  ░██████   ░██    ░██\nv{self.version}\n\n+", result.stdout)
+        self.assertEqual(result.stdout.count("Update complete"), 1)
+        self.assertIn("Agent skills  " + skill_status, result.stdout)
+        self.assertIn("Details: ajx version --json", result.stdout)
+        self.assertEqual("fresh agent session" in result.stdout, not cli_only)
+        frame = [line for line in result.stdout.splitlines()
+                 if line.startswith("+") or line.startswith("|")]
+        self.assertTrue(frame)
+        self.assertTrue(all(len(line) == 44 for line in frame))
+        for detail in ("CLI:", "Skill:", "Skill bundle:", "PATH", "Custom Kiro",
+                       "Try the demo:", self.commit, "\x1b["):
+            self.assertNotIn(detail, result.stdout)
+
+    def test_compact_summary_tracks_full_and_cli_only_updates(self):
+        self.assert_compact_summary(
+            self.install("--update", "--no-path", "--compact-summary"), "Installed")
+        self.assert_compact_summary(
+            self.install("--update", "--no-path", "--compact-summary"),
+            "Updated; locations kept")
+        self.assert_compact_summary(
+            self.install("--update", "--no-path", "--compact-summary", "--no-skills"),
+            "Left unchanged", cli_only=True)
+
+    def test_compact_cli_only_summary_does_not_claim_unmanaged_skills_are_absent(self):
+        skill = self.home / ".agents/skills/ajx"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("manual skill")
+        self.assert_compact_summary(
+            self.install("--update", "--no-path", "--compact-summary", "--no-skills"),
+            "Not managed by AJX", cli_only=True)
+        self.assertEqual((skill / "SKILL.md").read_text(), "manual skill")
+
+    def test_no_summary_overrides_compact_regardless_of_argument_order(self):
+        for flags in (("--compact-summary", "--no-summary"),
+                      ("--no-summary", "--compact-summary")):
+            with self.subTest(flags=flags):
+                result = self.install("--update", "--no-path", *flags)
+                self.assertIn("Installing the AJX CLI", result.stdout)
+                for detail in ("░██", "Update complete", "Next:", "Details:"):
+                    self.assertNotIn(detail, result.stdout)
+
     def test_no_summary_preserves_progress_backup_notices_and_errors(self):
         skill = self.home / ".agents/skills/ajx"
         skill.mkdir(parents=True)

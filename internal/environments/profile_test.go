@@ -314,8 +314,8 @@ func TestPythonFormattingHelpers(t *testing.T) {
 	if pyRepr("it's") != `"it's"` || pyRepr("x") != "'x'" {
 		t.Fatal(pyRepr("it's"))
 	}
-	if shJoin([]string{"a b", "", "c'd", "--x=1"}) != `'a b' '' 'c'"'"'d' --x=1` {
-		t.Fatal(shJoin([]string{"a b", "", "c'd", "--x=1"}))
+	if util.ShellJoin([]string{"a b", "", "c'd", "--x=1"}) != `'a b' '' 'c'"'"'d' --x=1` {
+		t.Fatal(util.ShellJoin([]string{"a b", "", "c'd", "--x=1"}))
 	}
 }
 

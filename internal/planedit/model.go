@@ -150,24 +150,13 @@ func commands(list any) []any {
 	return out
 }
 
-// shlexQuote is shlex.quote.
-func shlexQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if regexp.MustCompile(`^[\w@%+=:,./-]+$`).MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
 func identity(cmd any) string {
 	if l, ok := cmd.([]any); ok {
 		parts := make([]string, len(l))
 		for i, a := range l {
-			parts[i] = shlexQuote(pyStr(a))
+			parts[i] = pyStr(a)
 		}
-		return strings.Join(parts, " ")
+		return util.ShellJoin(parts)
 	}
 	return pyStr(or(cmd, ""))
 }

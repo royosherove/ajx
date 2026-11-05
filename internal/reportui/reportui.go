@@ -838,10 +838,6 @@ type Mark struct {
 	Asks    []any
 }
 
-var (
-	numberedItem = regexp.MustCompile(`^[` + pyfmt.WS + `]*` + pyfmt.Digit + `+[.)][` + pyfmt.WS + `]+`)
-)
-
 func appendUnique(list []string, items ...string) []string {
 	for _, it := range items {
 		if !util.Contains(list, it) {
@@ -849,55 +845,6 @@ func appendUnique(list []string, items ...string) []string {
 		}
 	}
 	return list
-}
-
-// startsWithLabel is re.match(rf"(?:{icon}\s*)?(?:\*\*)?{name}\b", text).
-func startsWithLabel(text, icon, name string) bool {
-	try := func(s string) bool {
-		s = strings.TrimPrefix(s, "**")
-		if !strings.HasPrefix(s, name) {
-			return false
-		}
-		r, size := pyfmt.RuneAt(s, len(name))
-		return size == 0 || !pyfmt.IsWord(r)
-	}
-	if rest, ok := strings.CutPrefix(text, icon); ok {
-		if try(pyfmt.LStrip(rest)) {
-			return true
-		}
-	}
-	return try(text)
-}
-
-// eventRefs is re.findall(r"\bE-\d{3,}\b", text).
-func eventRefs(text string) []string {
-	var out []string
-	for i := 0; i+1 < len(text); i++ {
-		if text[i] != 'E' || text[i+1] != '-' {
-			continue
-		}
-		if r, size := pyfmt.RuneBefore(text, i); size > 0 && pyfmt.IsWord(r) {
-			continue
-		}
-		j, count := i+2, 0
-		for j < len(text) {
-			r, size := pyfmt.RuneAt(text, j)
-			if !pyfmt.IsDigit(r) {
-				break
-			}
-			j += size
-			count++
-		}
-		if count < 3 {
-			continue
-		}
-		if r, size := pyfmt.RuneAt(text, j); size > 0 && pyfmt.IsWord(r) {
-			continue
-		}
-		out = append(out, text[i:j])
-		i = j - 1
-	}
-	return out
 }
 
 // Annotations attaches only cited labels. Narrative steps take precedence over broader ask labels.
@@ -918,38 +865,16 @@ func Annotations(markdown string, data M, events []M) map[string]*Mark {
 			}
 		}
 	}
-	inChronology := false
-	var blocks, block []string
-	for _, line := range pyfmt.SplitLines(markdown) {
-		if strings.HasPrefix(line, "## ") {
-			if len(block) > 0 {
-				blocks = append(blocks, strings.Join(block, "\n"))
-				block = nil
-			}
-			inChronology = strings.Contains(strings.ToLower(line), "chronolog")
-		} else if inChronology {
-			numbered := numberedItem.MatchString(line)
-			if numbered && len(block) > 0 {
-				blocks = append(blocks, strings.Join(block, "\n"))
-				block = nil
-			}
-			if len(block) > 0 || numbered {
-				block = append(block, line)
-			}
-		}
-	}
-	if len(block) > 0 {
-		blocks = append(blocks, strings.Join(block, "\n"))
-	}
-	for _, blk := range blocks {
-		first := strings.TrimLeft(numberedItem.ReplaceAllString(blk, ""), "* ")
+	for _, block := range ChronologicalSteps(markdown) {
+		blk := strings.Join(block, "\n")
+		first := StepContent(blk)
 		var names []string
 		for _, name := range LabelNames {
-			if startsWithLabel(first, Labels[name][0], name) {
+			if StartsWithLabel(first, Labels[name][0], name) {
 				names = append(names, name)
 			}
 		}
-		add(eventRefs(blk), names, "Chronological account")
+		add(EventReferences(blk), names, "Chronological account")
 	}
 	narrated := map[string]bool{}
 	for id, m := range result {

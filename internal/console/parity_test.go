@@ -443,6 +443,9 @@ func TestJourneyHighlightsMatchPython(t *testing.T) {
 			"## Other\n5. ignored\n## Chronological (again)\n10. ⏳ **Wait** — slow\r\n11. Cost\n",
 		"no headings at all\n1. a step\n",
 		"## Chronological account\n" + strings.Repeat("1. 🔀 Fork. "+strings.Repeat("long text ", 40)+"\n", 3),
+		"## Chronology\r\n  １.\u00a0⏳ **Wait**: E-００１ E-002x éE-003\r\n\tcontinued  text\r\n" +
+			"2. Waité E-004\r\n## Other\r\n3. ignored\r\n## CHRONOLOGICAL again\n4. no references\n",
+		"## Chronological account\n1. \n\t**Fork**: chose E-005\n2. **Wait**\n\ncontinued E-006\n",
 	}
 	got := util.List(python(t, `
 print(json.dumps([console.journey_highlights(s) for s in data]))

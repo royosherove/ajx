@@ -419,92 +419,24 @@ func sameFile(path string, info os.FileInfo, original string) bool {
 	return err1 == nil && err2 == nil && string(a) == string(b)
 }
 
-var (
-	stepRe   = regexp.MustCompile(`^[` + pyfmt.WS + `]*` + pyfmt.Digit + `+[.)][` + pyfmt.WS + `]+`)
-	spacesRe = regexp.MustCompile(`[` + pyfmt.WS + `]+`)
-)
-
-// startsWithLabel is re.match(rf"(?:{icon}\s*)?(?:\*\*)?{name}\b", text).
-func startsWithLabel(text, icon, name string) bool {
-	try := func(s string) bool {
-		s = strings.TrimPrefix(s, "**")
-		if !strings.HasPrefix(s, name) {
-			return false
-		}
-		r, size := pyfmt.RuneAt(s, len(name))
-		return size == 0 || !pyfmt.IsWord(r)
-	}
-	if rest, ok := strings.CutPrefix(text, icon); ok && try(pyfmt.LStrip(rest)) {
-		return true
-	}
-	return try(text)
-}
-
-// eventRefs is re.findall(r"\bE-\d{3,}\b", text).
-func eventRefs(text string) []any {
-	out := []any{}
-	for i := 0; i+1 < len(text); i++ {
-		if text[i] != 'E' || text[i+1] != '-' {
-			continue
-		}
-		if r, size := pyfmt.RuneBefore(text, i); size > 0 && pyfmt.IsWord(r) {
-			continue
-		}
-		j, count := i+2, 0
-		for j < len(text) {
-			r, size := pyfmt.RuneAt(text, j)
-			if !pyfmt.IsDigit(r) {
-				break
-			}
-			j += size
-			count++
-		}
-		if count < 3 {
-			continue
-		}
-		if r, size := pyfmt.RuneAt(text, j); size > 0 && pyfmt.IsWord(r) {
-			continue
-		}
-		out = append(out, text[i:j])
-		i = j - 1
-	}
-	return out
-}
+var spacesRe = regexp.MustCompile(`[` + pyfmt.WS + `]+`)
 
 // JourneyHighlights are the labeled steps of the journey's chronological
 // account: [{label, text, refs}] in order.
 func JourneyHighlights(markdown string) []any {
-	var steps, block []string
-	inChronology := false
-	for _, line := range pyfmt.SplitLines(markdown) {
-		if strings.HasPrefix(line, "## ") {
-			if len(block) > 0 {
-				steps = append(steps, strings.Join(block, " "))
-				block = nil
-			}
-			inChronology = strings.Contains(strings.ToLower(line), "chronolog")
-		} else if inChronology {
-			numbered := stepRe.MatchString(line)
-			if numbered && len(block) > 0 {
-				steps = append(steps, strings.Join(block, " "))
-				block = nil
-			}
-			if len(block) > 0 || numbered {
-				block = append(block, pyfmt.Strip(line))
-			}
-		}
-	}
-	if len(block) > 0 {
-		steps = append(steps, strings.Join(block, " "))
-	}
 	out := []any{}
-	for _, step := range steps {
-		first := strings.TrimLeft(stepRe.ReplaceAllString(step, ""), "* ")
+	for _, block := range reportui.ChronologicalSteps(markdown) {
+		plain := make([]string, len(block))
+		for i, line := range block {
+			plain[i] = pyfmt.Strip(line)
+		}
+		step := strings.Join(plain, " ")
+		first := reportui.StepContent(step)
 		var label any
 		text := first
 		for _, name := range reportui.LabelNames {
 			icon := reportui.Labels[name][0]
-			if startsWithLabel(first, icon, name) {
+			if reportui.StartsWithLabel(first, icon, name) {
 				label = name
 				prefix := regexp.MustCompile(`^(?:` + regexp.QuoteMeta(icon) + `[` + pyfmt.WS + `]*)?(?:\*\*)?` +
 					regexp.QuoteMeta(name) + `(?:\*\*)?[.:]?[` + pyfmt.WS + `]*`)
@@ -512,7 +444,7 @@ func JourneyHighlights(markdown string) []any {
 				break
 			}
 		}
-		out = append(out, M{"label": label, "text": clip(spacesRe.ReplaceAllString(text, " "), 280), "refs": eventRefs(step)})
+		out = append(out, M{"label": label, "text": clip(spacesRe.ReplaceAllString(text, " "), 280), "refs": lines(reportui.EventReferences(step))})
 	}
 	return out
 }

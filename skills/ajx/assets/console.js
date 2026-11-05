@@ -69,6 +69,26 @@
     return { user: "by you", agent: "by your agent", outside: "outside the console", console: "by the console" }[actor] || "";
   }
 
+  function runStage(run, name) {
+    return (run.stages || []).find((stage) => stage.name === name) || {};
+  }
+
+  function stageStatus(run, name) {
+    return runStage(run, name).status || null;
+  }
+
+  function verificationBadge(verify) {
+    const cls = { succeeded: "good", partial: "warn", failed: "bad" }[verify.outcome] || "";
+    const label = { succeeded: "Verified", partial: "Some checks failed", failed: "Checks failed", not_run: "No checks" }[verify.outcome] || verify.outcome;
+    return h("span", { class: "badge " + cls, text: `${label} (${verify.passed}/${verify.total})` });
+  }
+
+  function verificationWarning(verify) {
+    return (verify.auth_errors || []).length
+      ? h("div", { class: "errbox", text: "A check hit credential errors: it measured AJX's access, not the worker's result." })
+      : null;
+  }
+
   let toastTimer;
   function toast(msg, bad, action) {
     const el = $("#toast");
@@ -218,7 +238,7 @@
   // Reports by output folder, attempt and render time, so a fresh folder's first report counts as new.
   function reportKeys(s) {
     return s.runs.filter((r) => r.links && r.links.report)
-      .map((r) => `${s.output.dir}|${r.id}|${((r.stages || []).find((x) => x.name === "render") || {}).at || ""}`);
+      .map((r) => `${s.output.dir}|${r.id}|${runStage(r, "render").at || ""}`);
   }
 
   function stoppedLastJob(s) {  // the user asked the latest job to stop (or restart)
@@ -2266,7 +2286,7 @@
   // marked it: a mark an earlier, crashed run left behind is not progress, even during a later job.
   function liveStage(s, r) {
     if (!r.current || !["running", "stopping"].includes(s.process.state)) return null;
-    const at = Date.parse((r.stages.find((x) => x.name === r.current) || {}).at || ""), since = Date.parse(s.process.since || "");
+    const at = Date.parse(runStage(r, r.current).at || ""), since = Date.parse(s.process.since || "");
     return Number.isNaN(at) || Number.isNaN(since) || at >= since - 2000 ? r.current : null;
   }
 
@@ -2314,7 +2334,6 @@
     const cur = (r) => liveStage(L.s, r);  // a mark an earlier, crashed run left behind is not progress
     const stale = (r) => Boolean(r.current) && !cur(r);
     const shownStatus = (r, x) => (x.status === "running" && x.name !== cur(r) ? "interrupted" : x.status);
-    const stageOf = (r, name) => (r.stages.find((x) => x.name === name) || {}).status || null;
     const ids = (list) => list.map((x) => x.id).join(", ");
     const bytes = (n) => (!(n >= 0) ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
     function hk(text) {  // a short key for data-key: worker-chosen file names never go into a selector
@@ -2345,9 +2364,9 @@
 
     function unconfirmed(r) {
       const env = r.environment_cleanup;
-      return ["failed", "auth_errors", "skipped"].includes(r.teardown) || ["error", "interrupted"].includes(stageOf(r, "teardown"))
-        || Boolean(env && env.confirmed !== true) || stageOf(r, "release") === "error"
-        || (stale(r) && (stageOf(r, "teardown") !== "done" || stageOf(r, "release") !== "done"));  // AJX stopped before it could clean up
+      return ["failed", "auth_errors", "skipped"].includes(r.teardown) || ["error", "interrupted"].includes(stageStatus(r, "teardown"))
+        || Boolean(env && env.confirmed !== true) || stageStatus(r, "release") === "error"
+        || (stale(r) && (stageStatus(r, "teardown") !== "done" || stageStatus(r, "release") !== "done"));  // AJX stopped before it could clean up
     }
 
     function staleText(r) {
@@ -2421,7 +2440,7 @@
       const passed = verified.filter((r) => r.verify.outcome === "succeeded").length, failed = verified.length - passed;
       const reporting = started.filter((r) => REPORTING.includes(cur(r)));
       const reporter = m.reporter || {}, rep = reporter.cli || (m.workers.find((w) => (harnessOf(s, w.cli) || {}).reporter) || { cli: "claude-code" }).cli;
-      const analysisFailed = started.filter((r) => stageOf(r, "extract") === "error");
+      const analysisFailed = started.filter((r) => stageStatus(r, "extract") === "error");
       const ready = s.runs.filter((r) => r.complete && r.links.report).length, out = s.output;
       const results = h("button", { type: "button", class: "cp-node" + (ready ? "" : " cp-dim"), "data-key": "lv-results", onclick: () => setTab("results") },
         h("span", { class: "cp-tag cp-" + (ready ? "g" : "m"), text: ready ? "open" : "later" }),
@@ -2450,7 +2469,7 @@
       const rs = atts.map((x) => x.r).filter((r) => r.started);
       const busy = rs.filter((r) => ["teardown", "release", "archive"].includes(cur(r)));
       const bad = rs.filter(unconfirmed);
-      const done = rs.filter((r) => stageOf(r, "archive") === "done" && !unconfirmed(r));
+      const done = rs.filter((r) => stageStatus(r, "archive") === "done" && !unconfirmed(r));
       const after = e.kind === "folder" ? "after each attempt: task cleanup, then its folder moves into the evidence"
         : e.kind === "container" ? "after each attempt: task cleanup, then the container is removed"
           : "after each attempt: task cleanup, then the profile is released and its folders move into the evidence";
@@ -2699,7 +2718,7 @@
     }
 
     function verifySection(s, r) {
-      const v = r.verify, now = cur(r) === "verify", status = stageOf(r, "verify");
+      const v = r.verify, now = cur(r) === "verify", status = stageStatus(r, "verify");
       // Where each check ran: the run's own record; an older server leaves the current plan's settings.
       const recorded = v && (v.checks || []).some((c) => "location" in c);
       const inside = recorded ? v.checks.filter((c) => c.location === "environment").length : s.plan_model.checks.filter((c) => c.where === "worker").length;
@@ -2707,10 +2726,7 @@
       const body = [];
       if (now) body.push(h("ul", { class: "lv-steps" }, step("now", "Running the success checks", "")));
       else if (v) {
-        const cls = { succeeded: "good", partial: "warn", failed: "bad" }[v.outcome] || "";
-        const label = { succeeded: "Verified", partial: "Some checks failed", failed: "Checks failed", not_run: "No checks" }[v.outcome] || v.outcome;
-        body.push(h("span", { class: "badge " + cls, text: `${label} (${v.passed}/${v.total})` }),
-          (v.auth_errors || []).length ? h("div", { class: "errbox", text: "A check hit credential errors: it measured AJX's access, not the worker's result." }) : null,
+        body.push(verificationBadge(v), verificationWarning(v),
           h("ul", { class: "lv-steps" }, (v.checks || []).map((c) => step(c.passed ? "ok" : "bad", c.name || "check", "",
             c.detail ? h("div", { class: "tiny muted lv-detail", text: c.detail }) : null,
             recorded && inside && c.location === "environment" ? h("div", { class: "tiny muted", text: "ran inside its environment" }) : null))));
@@ -2736,7 +2752,7 @@
     }
 
     function cleanupSection(s, r, e) {
-      const td = r.teardown, tds = stageOf(r, "teardown"), rel = stageOf(r, "release"), arc = stageOf(r, "archive"), env = r.environment_cleanup;
+      const td = r.teardown, tds = stageStatus(r, "teardown"), rel = stageStatus(r, "release"), arc = stageStatus(r, "archive"), env = r.environment_cleanup;
       const n = "teardown_commands" in r && tds === "done" ? r.teardown_commands.length : ((s.plan_model.account || {}).teardown || []).length;
       const crashed = stale(r) ? `AJX stopped during ${r.current}` : "";
       const task = tds === "running" && cur(r) === "teardown" ? step("now", "Task cleanup", "running…")
@@ -2794,7 +2810,7 @@
     }
 
     function reportSection(s, r) {
-      const status = (name) => stageOf(r, name), j = r.journey, says = journeySays(s, r), now = cur(r);
+      const status = (name) => stageStatus(r, name), j = r.journey, says = journeySays(s, r), now = cur(r);
       const nar = status("narrate"), ext = status("extract"), ren = status("render");
       const stopped = ["done", "error", "interrupted"].includes(r.execute.status) || stale(r);  // the worker already stopped
       const transcript = step(now === "normalize" ? "now" : stageTone(status("normalize")), "Transcript", status("normalize") === "done" ? "read" : now === "normalize" ? "reading…"
@@ -2811,7 +2827,7 @@
         links.length ? h("span", { class: "lv-links" }, links.map((a, i) => [i ? " · " : "", a])) : null);
       return h("div", { class: "mini" }, h("h3", { text: "Reporting" }), h("ul", { class: "lv-steps" }, transcript, journey, asks, report),
         r.recovery.filter((x) => x.stages === "extract,measure,render").map((x) => recoveryBox(s, r, x)),
-        r.execute.interrupted && !r.complete && !now && !REPORTING.some((x) => stageOf(r, x))
+        r.execute.interrupted && !r.complete && !now && !REPORTING.some((x) => stageStatus(r, x))
           ? h("div", { class: "notebox" }, "The run was stopped before the report. ", h("b", { text: "Finish the report" }), " on the Plan tab writes it without running the task again.") : null,
         h("div", { class: "tiny muted lv-foot", text: "After the worker stops. The reporter runs on your machine." }));
     }
@@ -2915,10 +2931,7 @@
 
   function verifyText(v) {
     if (!v) return [h("span", { class: "muted", text: "Runs after the worker stops." })];
-    const cls = { succeeded: "good", partial: "warn", failed: "bad" }[v.outcome] || "";
-    const label = { succeeded: "Verified", partial: "Some checks failed", failed: "Checks failed", not_run: "No checks" }[v.outcome] || v.outcome;
-    return [h("span", { class: "badge " + cls, text: `${label} (${v.passed}/${v.total})` }),
-      v.auth_errors.length ? h("div", { class: "errbox", text: "A check hit credential errors: it measured AJX's access, not the worker's result." }) : null,
+    return [verificationBadge(v), verificationWarning(v),
       h("ul", { class: "list small" }, v.checks.map((c) => h("li", {}, c.passed ? "\u2713 " : "\u2717 ", c.name)))];
   }
 
@@ -2929,7 +2942,7 @@
     else if (td === "failed") parts.push(h("span", { class: "badge bad", text: "task cleanup failed" }));
     else if (td === "auth_errors") parts.push(h("span", { class: "badge bad", text: "cleanup hit credential errors" }));
     else if (td === "skipped") parts.push(h("span", { class: "badge warn", text: "cleanup did not run" }));
-    else if ((r.stages.find((x) => x.name === "teardown") || {}).status === "done") parts.push(h("span", { class: "badge good", text: "nothing to clean up" }));
+    else if (stageStatus(r, "teardown") === "done") parts.push(h("span", { class: "badge good", text: "nothing to clean up" }));
     else parts.push(h("span", { class: "muted", text: "Runs after verification." }));
     if (env) parts.push(h("div", { class: "tiny", text: env.confirmed ? "Environment removed." : `Environment: ${env.status}` }));
     if (["failed", "auth_errors", "skipped"].includes(td)) parts.push(h("div", { class: "errbox", text: "Resources the task created may still exist." }));
@@ -3075,7 +3088,7 @@
   function resultCard(s, r) {
     const a = r.asks, v = r.verify;
     const head = h("div", { class: "row spread" },
-      h("div", { class: "row" }, h("h2", { text: r.id, style: "margin:0" }), v ? verifyText(v)[0] : h("span", { class: "badge", text: "no verification" }),
+      h("div", { class: "row" }, h("h2", { text: r.id, style: "margin:0" }), v ? verificationBadge(v) : h("span", { class: "badge", text: "no verification" }),
         r.review_status ? h("span", { class: "badge " + (r.review_status === "ready" ? "good" : "warn"), text: r.review_status === "ready" ? "report ready" : "report incomplete" }) : h("span", { class: "badge", text: "report pending" })),
       h("div", { class: "row" },
         r.links.report ? link(r.links.report, "Report") : null,
@@ -3170,7 +3183,7 @@
     }
 
     function journeyWords(s, r) {  // the journey column of the comparison, and the card when there is none yet
-      const pv = provenance(r), nar = (r.stages.find((x) => x.name === "narrate") || {}).status;
+      const pv = provenance(r), nar = stageStatus(r, "narrate");
       if (pv) return { own: ["", "own account"], reconstruction: ["warn", "reconstruction"], unavailable: ["bad", "none"],
                        other: ["", "see its card"], unknown: ["warn", "not recorded"] }[pv.kind];
       if (r.never_ran) return ["", "never ran"];
@@ -3180,7 +3193,7 @@
     }
 
     function pendingJourney(s, r) {
-      const nar = (r.stages.find((x) => x.name === "narrate") || {}).status, now = liveStage(s, r);
+      const nar = stageStatus(r, "narrate"), now = liveStage(s, r);
       if (r.never_ran) return "No journey: the attempt never ran.";
       if (now === "narrate") return "The journey is being written…";
       if (nar === "error") return "Writing the journey failed. The Live tab shows the error and how to retry.";
@@ -3221,7 +3234,7 @@
 
     // ---------------------------------------------------------------- the verified outcome
     function outcome(s, r) {  // [tone, short, sentence]
-      const v = r.verify, res = r.result || {}, ver = (r.stages.find((x) => x.name === "verify") || {}).status;
+      const v = r.verify, res = r.result || {}, ver = stageStatus(r, "verify");
       if (r.never_ran) return ["bad", "never ran", "Never ran: its preparation failed or was stopped, so the worker did not start."];
       if (v) {
         const n = Number(v.total) || 0, p = Number(v.passed) || 0, auth = (v.auth_errors || []).length;

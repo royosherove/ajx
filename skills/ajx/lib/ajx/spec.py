@@ -24,6 +24,14 @@ class SpecError(ValueError):
     pass
 
 
+class RunHarnessError(Exception):
+    """A saved run's harness could not be resolved; views choose their own error detail."""
+
+    def __init__(self, name, cause):
+        self.name, self.cause = name, cause
+        super().__init__(cause)
+
+
 def _need(cond, msg):
     if not cond:
         raise SpecError(msg)
@@ -280,6 +288,25 @@ def harness_for(spec, name):
         from .builtin.generic import Declarative
         return Declarative(name, spec["adapters"][name])
     return plugins.get("harness", name)()
+
+
+def harness_for_run(spec, run_dir):
+    """Resolve a run's trial adapter, then its recorded harness; None means unknown.
+
+    Run views may inspect incomplete output directories. Preserve the failed lookup's
+    name and original exception so each view can choose how much detail to display.
+    """
+    name = None
+    try:
+        for cell in (spec or {}).get("cells") or []:
+            prefix = f"{cell['id']}-r"
+            if run_dir.name.startswith(prefix) and run_dir.name[len(prefix):].isdigit():
+                return harness_for(spec, cell["harness"])
+        name = (((read_json(run_dir / "run.json", {}) or {}).get("agent") or {}).get("harness_name")
+                or ((read_json(run_dir / "environment.json", {}) or {}).get("harness") or {}).get("name"))
+        return plugins.get("harness", name)() if name else None
+    except Exception as exc:
+        raise RunHarnessError(name, exc) from exc
 
 
 def auth_for(spec, cell, override=None):

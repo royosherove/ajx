@@ -1669,7 +1669,7 @@ func (r *EnvironmentRunner) report(ctx *plugin.Ctx, handle util.M, fresh bool) (
 		marker := ".ajx-probe-" + util.Str(handle["owner"])
 		var commands []string
 		for _, kv := range handlePaths(handle) {
-			sentinel := shQuote(pathJoin(kv[1], marker))
+			sentinel := util.ShellQuote(pathJoin(kv[1], marker))
 			commands = append(commands, "(umask 077; : > "+sentinel+") && rm -f -- "+sentinel)
 		}
 		denied := []string{"/" + marker, pathJoin(ctxRunDir(ctx), marker)}
@@ -1679,7 +1679,7 @@ func (r *EnvironmentRunner) report(ctx *plugin.Ctx, handle util.M, fresh bool) (
 			}
 		}
 		for _, p := range denied {
-			quoted := shQuote(p)
+			quoted := util.ShellQuote(p)
 			commands = append(commands, "if (: > "+quoted+") 2>/dev/null; then rm -f -- "+quoted+"; exit 91; fi")
 		}
 		writes, err := r.ShellChecked("set -e; "+strings.Join(commands, "; "), ctx, 10, nil)
@@ -1698,7 +1698,7 @@ func (r *EnvironmentRunner) report(ctx *plugin.Ctx, handle util.M, fresh bool) (
 	if fresh {
 		for _, tool := range util.Maps(r.profile["tools"]) {
 			argv := util.Strings(tool["argv"])
-			result, err := r.ShellChecked(shJoin(argv), ctx, 15, nil)
+			result, err := r.ShellChecked(util.ShellJoin(argv), ctx, 15, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -2014,33 +2014,6 @@ func clearedEnv(image util.M) []string {
 }
 
 // ------------------------------------------------------------------ helpers
-
-// shQuote is Python shlex.quote.
-func shQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("@%+=:,./-_", c)) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-// shJoin is Python shlex.join.
-func shJoin(argv []string) string {
-	out := make([]string, len(argv))
-	for i, a := range argv {
-		out[i] = shQuote(a)
-	}
-	return strings.Join(out, " ")
-}
 
 // pySplitLines is Python str.splitlines().
 func pySplitLines(s string) []string {

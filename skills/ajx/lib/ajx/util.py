@@ -94,13 +94,17 @@ def fill_all(items, values):
     return [fill(str(item), values) for item in items]
 
 
+def env_name_matches(name, patterns):
+    """Match an exact environment name or a trailing-star prefix, case-sensitively."""
+    return any(name.startswith(pattern[:-1]) if pattern.endswith("*") else name == pattern
+               for pattern in patterns)
+
+
 def child_env(extra=None, drop=()):
     """Inherit the caller's environment (credentials are the auth profile's concern), minus
     variables an adapter or auth profile declares. Entries in `drop` ending in '*' are prefixes."""
-    exact = {d for d in drop if not d.endswith("*")}
-    prefixes = tuple(d[:-1] for d in drop if d.endswith("*"))
-    env = {k: v for k, v in os.environ.items()
-           if k not in exact and not (prefixes and k.startswith(prefixes))}
+    drop = tuple(drop)
+    env = {k: v for k, v in os.environ.items() if not env_name_matches(k, drop)}
     env.update(extra or {})
     return env
 
