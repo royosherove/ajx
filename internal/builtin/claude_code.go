@@ -509,34 +509,38 @@ func (h *ClaudeCode) Normalize(ctx *plugin.Ctx, stage string, excludeMessageIDs 
 			continue
 		}
 		if ev["type"] == "system" && ev["subtype"] == "init" {
-			var commands []string
-			for _, c := range util.List(util.Or(ev["slash_commands"], []any{})) {
-				commands = append(commands, s.pyStr(c))
-			}
-			ajx := []string{}
-			for _, c := range commands {
-				if strings.Contains(strings.ToLower(c), "ajx") {
-					ajx = append(ajx, c)
+			// Missing inventories are unknown, not empty and not interchangeable.
+			skills, skillsKnown := ev["skills"].([]any)
+			commands, commandsKnown := ev["slash_commands"].([]any)
+			inventory := func(items []any, known bool) (any, any) {
+				if !known {
+					return nil, nil
 				}
+				ajx := []string{}
+				for _, item := range items {
+					name := s.pyStr(item)
+					if strings.Contains(strings.ToLower(name), "ajx") {
+						ajx = append(ajx, name)
+					}
+				}
+				sort.Strings(ajx)
+				return int64(len(items)), anyList(ajx)
 			}
-			sort.Strings(ajx)
-			var servers []any
+			hr["skills_visible"], hr["ajx_skills_visible"] = inventory(skills, skillsKnown)
+			hr["slash_commands_visible"], hr["ajx_slash_commands_visible"] = inventory(commands, commandsKnown)
+			hr["skills_visibility_note"] = "Session inventories do not establish skill ownership or activation."
+			servers := []any{}
 			for _, m := range util.List(util.Or(ev["mcp_servers"], []any{})) {
 				servers = append(servers, util.MapOr(m)["name"])
-			}
-			if servers == nil {
-				servers = []any{}
 			}
 			hr["init_model"] = ev["model"]
 			hr["claude_code_version"] = ev["claude_code_version"]
 			hr["permission_mode"] = ev["permissionMode"]
 			hr["api_key_source"] = ev["apiKeySource"]
-			hr["skills_visible"] = int64(len(commands))
-			hr["ajx_skills_visible"] = anyList(ajx)
 			hr["mcp_servers"] = servers
-			if len(ajx) > 0 {
-				limitations = append(limitations, fmt.Sprintf("%s: AJX skill(s) %s were listed in the "+
-					"worker's session (user config); the run is evaluation-aware", stage, s.repr(anyList(ajx))))
+			if util.Truthy(hr["ajx_skills_visible"]) || util.Truthy(hr["ajx_slash_commands_visible"]) {
+				limitations = append(limitations, fmt.Sprintf("%s: AJX names were listed in session skill or slash-command inventories; "+
+					"visibility does not prove activation or access to this trial", stage))
 			}
 		}
 		if ev["type"] == "assistant" && !util.Truthy(ev["parent_tool_use_id"]) {
@@ -670,7 +674,10 @@ func (h *ClaudeCode) Normalize(ctx *plugin.Ctx, stage string, excludeMessageIDs 
 					res = strings.Join(parts, "\n")
 				}
 				call["end"] = ts
-				call["is_error"] = util.Truthy(block["is_error"])
+				call["is_error"] = nil
+				if flag, ok := block["is_error"].(bool); ok {
+					call["is_error"] = flag
+				}
 				call["output"] = s.excerpt(res, 1500)
 			}
 		}
