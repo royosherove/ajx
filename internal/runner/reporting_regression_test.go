@@ -95,6 +95,10 @@ func TestNarrationFailureSurvivesReconstruction(t *testing.T) {
 			M{"final_text": "", "harness_reported": M{"safety_stops": 1}}},
 		{"invocation", "resume_error", "synthetic resume failure", true, true,
 			runtimeErr("synthetic resume failure"), nil},
+		{"comment-terminator", "resume_error", "synthetic —> failure", true, true,
+			runtimeErr("synthetic -->\nfailure"), nil},
+		{"long-message", "resume_error", "[truncated; see narration_failure.message]", true, true,
+			runtimeErr("%s", "synthetic -->\n"+strings.Repeat("λ detail ", 10000)), nil},
 		{"unsupported", "resume_unsupported", "does not support", false, true, nil, nil},
 		{"missing-session", "session_unavailable", "session identifier", true, false, nil, nil},
 	} {
@@ -128,12 +132,22 @@ func TestNarrationFailureSurvivesReconstruction(t *testing.T) {
 			if !strings.Contains(journey, tc.message) || strings.Contains(journey, "harness cannot resume or resume failed") {
 				t.Fatalf("provenance lost failure: %s", journey)
 			}
+			header := strings.SplitN(journey, "\n", 2)[0]
+			if len([]rune(header)) > 600 || strings.Count(header, "-->") != 1 {
+				t.Fatalf("provenance header is unbounded or closes early: %.650s", header)
+			}
+			if tc.failure != nil && util.Get(r.State, "narration_failure", "message") != pyErrString(tc.failure) {
+				t.Fatal("structured state lost the full narration failure")
+			}
 			if err := r.stageRender(); err != nil {
 				t.Fatal(err)
 			}
 			run := readMapT(t, filepath.Join(r.RunDir, "run.json"))
 			if util.Get(run, "narration_failure", "category") != tc.category {
 				t.Fatalf("run.json lost failure: %v", run["narration_failure"])
+			}
+			if tc.failure != nil && util.Get(run, "narration_failure", "message") != pyErrString(tc.failure) {
+				t.Fatal("run.json lost the full narration failure")
 			}
 		})
 	}

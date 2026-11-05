@@ -1145,12 +1145,23 @@ func (r *Run) stageNarrate() error {
 	if strings.TrimSpace(util.S(result["text"])) != "" {
 		// The full message remains structured in state/run.json. Keep the
 		// provenance comment on one line and prevent closing its HTML comment.
-		reason := strings.ReplaceAll(strings.Join(strings.Fields(util.S(failure["message"])), " "), "--", "—")
+		reason := narrationFailureSummary(util.S(failure["message"]))
 		return r.writeJourney(util.S(result["text"]),
 			"EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "+
 				"agent could not narrate ("+util.S(failure["category"])+": "+reason+"). No recollection is claimed.")
 	}
 	return r.writeJourney("# Journey unavailable\n\nThe reporter returned no text.", JourneyUnavailable)
+}
+
+func narrationFailureSummary(message string) string {
+	const maxCharacters = 320
+	const truncated = "… [truncated; see narration_failure.message]"
+	reason := strings.ReplaceAll(strings.Join(strings.Fields(message), " "), "--", "—")
+	chars := []rune(reason)
+	if len(chars) > maxCharacters {
+		return string(chars[:maxCharacters-len([]rune(truncated))]) + truncated
+	}
+	return reason
 }
 
 func (r *Run) stageExtract() error {

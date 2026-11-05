@@ -53,6 +53,8 @@ harness = "fake"
         cases = (
             ("safety_stop", True, True, None, {"final_text": "", "harness_reported": {"safety_stops": 1}}),
             ("resume_error", True, True, RuntimeError("synthetic failure"), {}),
+            ("resume_error", True, True, RuntimeError("synthetic -->\nfailure"), {}),
+            ("resume_error", True, True, RuntimeError("synthetic -->\n" + "λ detail " * 10000), {}),
             ("resume_unsupported", False, True, None, {}),
             ("session_unavailable", True, False, None, {}),
         )
@@ -73,8 +75,21 @@ harness = "fake"
                 journey = (run.run_dir / "journey.md").read_text()
                 self.assertIn(category, journey)
                 self.assertNotIn("harness cannot resume or resume failed", journey)
+                header = journey.splitlines()[0]
+                self.assertLessEqual(len(header), 600)
+                self.assertEqual(header.count("-->"), 1)
+                if error:
+                    self.assertEqual(run.state["narration_failure"]["message"],
+                                     f"{type(error).__name__}: {error}")
+                    if "-->" in str(error):
+                        self.assertIn("synthetic —>", header)
+                    if len(str(error)) > 1000:
+                        self.assertIn("[truncated; see narration_failure.message]", header)
                 run.stage_render()
-                self.assertEqual(read_json(run.run_dir / "run.json")["narration_failure"]["category"], category)
+                failure = read_json(run.run_dir / "run.json")["narration_failure"]
+                self.assertEqual(failure["category"], category)
+                if error:
+                    self.assertEqual(failure["message"], f"{type(error).__name__}: {error}")
 
     def test_final_record_failure_does_not_prevent_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:

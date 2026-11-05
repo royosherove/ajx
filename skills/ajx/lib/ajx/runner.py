@@ -53,6 +53,14 @@ CREDENTIAL_FILES = ("auth.json", ".credentials.json", "credentials.json", "crede
 TASK_INPUT_KEYS = ("materials", "fixture_dir", "human", "identity_cmd")
 
 
+def _narration_failure_summary(message):
+    """Bound the comment summary; the structured failure retains its full message."""
+    limit = 320
+    truncated = "… [truncated; see narration_failure.message]"
+    reason = " ".join(message.split()).replace("--", "—")
+    return reason[:limit - len(truncated)] + truncated if len(reason) > limit else reason
+
+
 def task_inputs(spec):
     """The checks, lifecycle commands and task conditions attempts were made with. Recorded in
     matrix-plan.json so the console can keep a folder's attempts comparable (`ajx run` does not
@@ -661,7 +669,7 @@ class Run:
         self.state["narrate"] = {**result["proc"], "reconstruction": True,
                                  **({"self_narration_rejected": rejected} if rejected else {})}
         if result["text"].strip():
-            reason = " ".join(failure["message"].split()).replace("--", "—")
+            reason = _narration_failure_summary(failure["message"])
             self._write_journey(result["text"],
                                 "EDITORIAL RECONSTRUCTION by the reporter agent from recorded evidence; the original "
                                 f"agent could not narrate ({failure['category']}: {reason}). No recollection is claimed.")
