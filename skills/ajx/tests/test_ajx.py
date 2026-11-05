@@ -2,6 +2,7 @@
 and a full lifecycle with a fake harness (no LLM calls)."""
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -1160,6 +1161,63 @@ class PortableReporterTest(unittest.TestCase):
     @staticmethod
     def register():
         return {"asks": [], "journey_errata": [], "strengths": [], "gates": [], "no_obstacles_observed": True}
+
+    def test_init_task_file_preserves_bytes_and_hashes_kept_or_forced_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, trial = Path(tmp) / "source.md", Path(tmp) / "trial"
+            original = "  Keep café.\r\n\r\nSecond line.\n\n".encode()
+            source.write_bytes(original)
+            args = ["init", str(trial), "--product", "demo", "--task-file", str(source)]
+            code, out = _run_cli(args)
+            self.assertEqual(code, 0)
+            self.assertEqual((trial / "task-prompt.md").read_bytes(), original)
+            self.assertIn("task-prompt.md sha256: " + hashlib.sha256(original).hexdigest(), out)
+            replacement = b"Replacement without final newline."
+            source.write_bytes(replacement)
+            code, out = _run_cli(args)
+            self.assertEqual(code, 0)
+            self.assertIn("task-prompt.md sha256: " + hashlib.sha256(original).hexdigest(), out)
+            self.assertEqual((trial / "task-prompt.md").read_bytes(), original)
+            code, out = _run_cli(args + ["--force"])
+            self.assertEqual(code, 0)
+            self.assertEqual((trial / "task-prompt.md").read_bytes(), replacement)
+            self.assertIn("task-prompt.md sha256: " + hashlib.sha256(replacement).hexdigest(), out)
+
+    def test_init_rejects_bad_task_inputs_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, data in (("empty", b" \r\n\t"), ("invalid", b"\xff\xfe"), ("valid", b"Task.\n")):
+                (root / name).write_bytes(data)
+            for source in ("missing", "empty", "invalid", ""):
+                with self.subTest(source=source):
+                    trial = root / ("trial-" + source)
+                    code, _ = _run_cli(["init", str(trial), "--product", "demo", "--task-file", str(root / source)])
+                    self.assertEqual(code, 2)
+                    self.assertFalse(trial.exists())
+            trial = root / "trial-conflict"
+            with self.assertRaises(SystemExit) as exc:
+                _run_cli(["init", str(trial), "--product", "demo", "--task", "",
+                          "--task-file", str(root / "valid")])
+            self.assertEqual(exc.exception.code, 2)
+            self.assertFalse(trial.exists())
+            code, _ = _run_cli(["init", str(trial), "--product", "demo", "--task", " \n"])
+            self.assertEqual(code, 2)
+            self.assertFalse(trial.exists())
+
+    def test_init_accepts_valid_budget_and_rejects_invalid_values_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for i, value in enumerate(("0.01", "2.5", "300", "3e2")):
+                trial = Path(tmp) / f"valid-{i}"
+                code, _ = _run_cli(["init", str(trial), "--product", "demo", "--task", "Task.",
+                                    "--max-budget-usd", value])
+                self.assertEqual(code, 0)
+                self.assertEqual(specmod.load(trial / "trial.toml")["trial"]["max_budget_usd"], float(value))
+                self.assertEqual((trial / "task-prompt.md").read_bytes(), b"Task.")
+            for i, value in enumerate(("", "0", "-1", "NaN", "Inf", "-Inf", "1e309", "many")):
+                trial = Path(tmp) / f"invalid-{i}"
+                code, _ = _run_cli(["init", str(trial), "--product", "demo", "--max-budget-usd=" + value])
+                self.assertEqual(code, 2, value)
+                self.assertFalse(trial.exists())
 
     def test_init_selects_each_common_harness_for_worker_and_reporter(self):
         for harness in ("claude-code", "codex", "kiro-cli"):

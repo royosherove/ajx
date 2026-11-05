@@ -180,12 +180,14 @@ ajx init trials/jq --product jq --harness codex --no-input \
 | Flag | Writes |
 |---|---|
 | `--task TEXT` | `task-prompt.md`: exactly the supplied argument, without added framing, trimming, or a final newline |
+| `--task-file FILE` | `task-prompt.md`: the file's exact UTF-8 bytes; mutually exclusive with `--task` |
 | `--material TEXT` (repeatable) | `[task] materials` |
 | `--check CHECK` (repeatable) | a `[[verify]]` entry: a shell command (or `shell:CMD`), `file:GLOB` beneath the workspace, or `http:URL` |
 | `--check-name NAME` (repeatable) | readable check names, paired with `--check` values in order; name every check or omit all names |
 | `--product-version-cmd CMD` | `[trial] product_version_cmd`, recorded before and after each run |
 | `--model`, `--reporter-model` | the cell's and the reporter's `model` |
 | `--timeout SECONDS`, `--repetitions N` | `timeout_seconds`, `repetitions` |
+| `--max-budget-usd USD` | `[trial] max_budget_usd`: a finite positive worker budget; excludes reporting calls and depends on harness support |
 | `--fixture DIR` | `[task] fixture_dir`; the folder must exist |
 | `--environment container --image IMAGE` | an `[environments.container]` profile with the documented defaults, selected by the cell |
 
@@ -193,10 +195,17 @@ An explicit `--task` is the complete prompt. `--material` records allowed
 materials in the trial metadata and does not append them to that prompt;
 include any instructions about using them in the task text. Shell command
 substitution such as `--task "$(cat task.md)"` removes trailing newlines before
-AJX receives the argument. To preserve a file byte for byte, copy it to
-`task-prompt.md` after scaffolding and before approving or launching the trial.
+AJX receives the argument. Use `--task-file task.md` to preserve file bytes,
+including CRLF and trailing newlines. The file must contain nonempty UTF-8 text.
+Task-file output includes the saved `task-prompt.md` SHA-256; native `init --json`
+returns it as `prompt_sha256`. If an existing prompt is kept, the hash describes
+that kept file. Use `--force` only when you intend to replace existing trial files.
 The interactive wizard still composes its prompt from the task and materials
-entered in the form.
+entered in the form; a supplied task file is kept verbatim instead.
+
+The Python alternative also accepts `--task`, `--task-file`, and
+`--max-budget-usd`. A requested budget is not a cap on the whole investigation:
+reporting and separately launched inner trials have their own costs.
 
 Generated checks include their explicit `type`, including `type = "shell"`.
 Older trial files that omit this field still default to shell checks.

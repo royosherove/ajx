@@ -95,7 +95,11 @@ func BuildParser() *Parser {
 	s.Opt("--reporter", "", "")
 	s.Opt("--model", "", "worker model (default: the harness default)")
 	s.Opt("--reporter-model", "MODEL", "reporter model (default: the harness default)")
-	s.Opt("--task", "TEXT", "complete worker prompt, written verbatim into task-prompt.md; include allowed materials in this text")
+	taskInput := s.MutexGroup(false)
+	taskInput.Add(s, &Arg{Flags: []string{"--task"}, Metavar: "TEXT",
+		Help: "complete worker prompt, written verbatim into task-prompt.md; include allowed materials in this text"})
+	taskInput.Add(s, &Arg{Flags: []string{"--task-file"}, Metavar: "FILE",
+		Help: "copy a UTF-8 worker prompt into task-prompt.md without changing its bytes"})
 	s.Opt("--product-version-cmd", "CMD", "command that records the product version before and after each run")
 	s.Add(&Arg{Flags: []string{"--material"}, Kind: Append, Metavar: "TEXT",
 		Help: "a URL or document the worker may use (repeatable)"})
@@ -104,6 +108,7 @@ func BuildParser() *Parser {
 	s.Add(&Arg{Flags: []string{"--check-name"}, Kind: Append, Metavar: "NAME",
 		Help: "readable check name; supply one per --check in the same order, or omit all (repeatable)"})
 	s.IntOpt("--timeout", "SECONDS", "worker time limit (default 1800)", nil)
+	s.Opt("--max-budget-usd", "USD", "positive worker budget; enforcement depends on the harness, excluding reporting calls")
 	s.IntOpt("--repetitions", "N", "attempts per cell (default 1)", nil)
 	s.Opt("--fixture", "DIR", "starting files copied into every fresh workspace")
 	s.Opt("--environment", "NAME", "local (default) or container")

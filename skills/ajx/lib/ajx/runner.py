@@ -522,7 +522,7 @@ class Run:
 
     def stage_execute(self):
         ctx = self.ctx()
-        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model') or 'agent default'}")
+        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model') or 'harness default'}")
         # Record what we can before launching so a crash mid-run still leaves a findable session.
         planned = self.harness.plan(ctx) or {}
         requested = {k: self.cell.get(k) for k in ("harness", "model", "effort", "config", "auth")}

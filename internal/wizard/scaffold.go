@@ -7,6 +7,7 @@ package wizard
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,12 +29,14 @@ type Options struct {
 	Harness, Reporter          string
 	Model, ReporterModel       string
 	Task                       string
-	TaskVerbatim               bool // an explicit --task is already the complete worker prompt
+	TaskVerbatim               bool   // an explicit task input is already the complete worker prompt
+	TaskFile                   string // source label; Task holds its bytes read once before the wizard
 	Materials                  []string
 	Checks                     []string // shell command, "file:GLOB", "http:URL", "shell:CMD"
 	CheckNames                 []string // optional names paired with Checks in order
 	ProductVersionCmd          string
 	Timeout, Repetitions       int
+	MaxBudgetUSD               *float64
 	TimeoutSet, RepetitionsSet bool   // distinguish omitted CLI flags from explicit zero
 	Fixture                    string // as given (relative to the working directory or absolute)
 	Environment, Image         string // "" | "local" | "container"
@@ -158,6 +161,9 @@ func Resolve(o *Options) error {
 	}
 	if o.TaskVerbatim && strings.TrimSpace(o.Task) == "" {
 		return spec.Errorf("--task must not be empty")
+	}
+	if b := o.MaxBudgetUSD; b != nil && (math.IsNaN(*b) || math.IsInf(*b, 0) || *b <= 0) {
+		return spec.Errorf("--max-budget-usd must be a finite positive number")
 	}
 	switch o.Environment {
 	case "", "local":
@@ -367,6 +373,9 @@ func Render(o Options, trialDir string) (string, string, error) {
 	if o.Timeout > 0 {
 		t = replaceLine(t, "timeout_seconds = ", "timeout_seconds = "+strconv.Itoa(o.Timeout), false)
 	}
+	if o.MaxBudgetUSD != nil {
+		t = replaceLine(t, "# max_budget_usd = ", "max_budget_usd = "+strconv.FormatFloat(*o.MaxBudgetUSD, 'g', -1, 64), true)
+	}
 	if o.ProductVersionCmd != "" {
 		t = replaceLine(t, "product_version_cmd = ", "product_version_cmd = "+tomlString(o.ProductVersionCmd), true)
 	}
@@ -488,6 +497,7 @@ func ResolvePath(p string) (string, error) {
 // Result says what Write did.
 type Result struct {
 	Dir, TrialFile, PromptFile string
+	PromptSHA256               string
 	Written, Kept              []string
 	ID                         string
 	Valid                      bool
@@ -527,6 +537,10 @@ func Write(o Options) (*Result, error) {
 			return nil, err
 		}
 		res.Written = append(res.Written, f.path)
+	}
+	res.PromptSHA256, err = util.Sha256File(res.PromptFile)
+	if err != nil {
+		return nil, err
 	}
 	if sp, err := spec.Load(res.TrialFile, spec.LoadOpts{SkipReadiness: true}); err != nil {
 		res.Problem = err.Error()

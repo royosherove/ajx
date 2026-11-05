@@ -767,7 +767,7 @@ func (r *Run) harnessFacts(ctx *plugin.Ctx, refresh bool) (M, error) {
 
 func (r *Run) stageExecute() error {
 	ctx := r.Ctx()
-	model := "agent default"
+	model := "harness default"
 	if util.Truthy(r.Cell["model"]) {
 		model = pyStr(r.Cell["model"])
 	}
