@@ -575,20 +575,13 @@ def _status_tail(spec, states, limit):
 def _run_harness(spec, run_dir):
     """The run's harness adapter: the trial cell's when a trial file was given, else the name the run
     recorded (run.json after render, environment.json from prepare). (None, reason) when unavailable."""
-    name = None
     try:
-        if spec:
-            for cell in spec["cells"]:
-                prefix = f"{cell['id']}-r"
-                if run_dir.name.startswith(prefix) and run_dir.name[len(prefix):].isdigit():
-                    return specmod.harness_for(spec, cell["harness"]), None
-        name = (((read_json(run_dir / "run.json", {}) or {}).get("agent") or {}).get("harness_name")
-                or ((read_json(run_dir / "environment.json", {}) or {}).get("harness") or {}).get("name"))
-        if not name:
+        harness = specmod.harness_for_run(spec, run_dir)
+        if harness is None:
             return None, "harness unknown: no trial cell matches this run and it records no harness yet"
-        return plugins.get("harness", name)(), None
-    except Exception as exc:  # noqa: BLE001 - status must not fail on a half-written or odd run dir
-        return None, f"harness {name!r} unavailable: {type(exc).__name__}: {exc}"
+        return harness, None
+    except specmod.RunHarnessError as exc:
+        return None, f"harness {exc.name!r} unavailable: {type(exc.cause).__name__}: {exc.cause}"
 
 
 def _clock(at):

@@ -495,19 +495,13 @@ def check(trial, actor="user"):
 # --------------------------------------------------------------------------- run views
 
 def _harness_for_run(spec, run_dir):
-    name = None
     try:
-        for cell in (spec or {}).get("cells") or []:
-            prefix = f"{cell['id']}-r"
-            if run_dir.name.startswith(prefix) and run_dir.name[len(prefix):].isdigit():
-                return specmod.harness_for(spec, cell["harness"]), None
-        name = (((read_json(run_dir / "run.json", {}) or {}).get("agent") or {}).get("harness_name")
-                or ((read_json(run_dir / "environment.json", {}) or {}).get("harness") or {}).get("name"))
-        if not name:
+        harness = specmod.harness_for_run(spec, run_dir)
+        if harness is None:
             return None, "The agent for this run is not known yet."
-        return plugins.get("harness", name)(), None
-    except Exception as exc:  # noqa: BLE001 - a status view must not fail on an odd run dir
-        return None, f"agent {name!r} unavailable: {type(exc).__name__}"
+        return harness, None
+    except specmod.RunHarnessError as exc:
+        return None, f"agent {exc.name!r} unavailable: {type(exc.cause).__name__}"
 
 
 def _feed(spec, run_dir, limit):
@@ -1648,14 +1642,11 @@ def save_settings(trial, changes, base_sha, actor="user"):
 
 def _model_name(value, harness=""):
     """A model name as an agent CLI takes it: an alias such as sonnet, or the provider's model id."""
-    name = str(value or "").strip()
-    if not name:
-        return None
-    if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
-        raise ConsoleError(f"{name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, opus or "
-                           "haiku, or the provider's model id (no spaces), or leave it empty for the agent's default")
     try:
-        return model_catalog.resolve(harness, name)
+        return model_catalog.parse_name(value, harness)
+    except model_catalog.InvalidModelName as exc:
+        raise ConsoleError(f"{exc.name!r} is not a model name an agent CLI accepts: use an alias such as sonnet, opus or "
+                           "haiku, or the provider's model id (no spaces), or leave it empty for the agent's default") from None
     except ValueError as exc:
         raise ConsoleError(str(exc)) from exc
 

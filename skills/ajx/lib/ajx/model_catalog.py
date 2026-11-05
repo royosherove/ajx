@@ -8,6 +8,24 @@ CATALOG = json.loads((SKILL_ROOT / "assets" / "model-catalog.json").read_text(en
 KNOWN_MODELS = {name: entry["models"] for name, entry in CATALOG.items()}
 
 
+class InvalidModelName(ValueError):
+    """A value does not have the supported CLI model-name shape."""
+
+    def __init__(self, name):
+        self.name = name
+        super().__init__(name)
+
+
+def parse_name(value, harness=""):
+    """Normalize and resolve a CLI model name, returning None for the default."""
+    name = str(value or "").strip()
+    if not name:
+        return None
+    if any(ch.isspace() for ch in name) or name.startswith("-") or len(name) > 200:
+        raise InvalidModelName(name)
+    return resolve(harness, name)
+
+
 def hint(harness):
     return CATALOG.get(harness, {}).get(
         "hint", "Use a model ID accepted by this agent, or leave it empty for the agent's default.")

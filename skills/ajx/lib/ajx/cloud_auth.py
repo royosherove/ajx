@@ -7,10 +7,7 @@ Legacy runs retain each provider's existing credential-chain behavior.
 import re
 
 from .base import Auth
-
-
-def _matches(name, patterns):
-    return any(name.startswith(p[:-1]) if p.endswith("*") else name == p for p in patterns)
+from .util import env_name_matches
 
 
 def _supplied(env, name):
@@ -36,7 +33,7 @@ class CloudAuth(Auth):
         env = super().env()
         for declared, alias in self.env_aliases:
             value = env.get(declared, "")
-            if value.strip() and alias not in env and not _matches(alias, self.unset()):
+            if value.strip() and alias not in env and not env_name_matches(alias, self.unset()):
                 env[alias] = value
         return env
 
@@ -52,7 +49,7 @@ class CloudAuth(Auth):
 
     def environment_problems(self, env, environment):
         unset = self.unset()
-        env = {k: v for k, v in env.items() if not _matches(k, unset)}
+        env = {k: v for k, v in env.items() if not env_name_matches(k, unset)}
         out = super().problems(env)
         route_names = tuple(name for route in self.credential_routes for name in route)
         for name in (*self.required_env, *route_names, *self.endpoint_routes, *self.optional_env):
@@ -63,7 +60,7 @@ class CloudAuth(Auth):
         if self.endpoint_routes and not any(_supplied(env, name) for name in self.endpoint_routes):
             out.append("declare " + " or ".join(self.endpoint_routes) + " in the worker env to select the endpoint")
 
-        unsupported = sorted(k for k, v in env.items() if v and _matches(k, self.unsupported_env))
+        unsupported = sorted(k for k, v in env.items() if v and env_name_matches(k, self.unsupported_env))
         if unsupported:
             out.append(
                 f"{self.name} does not support {', '.join(unsupported)} in explicit environments; "

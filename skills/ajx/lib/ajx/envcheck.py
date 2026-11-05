@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import spec as specmod
 from .base import AWS_CREDENTIAL_ENV, excerpt
-from .util import child_env, run_shell
+from .util import child_env, env_name_matches, run_shell
 
 # Values are printed only for names that are routinely non-secret; anything else shows as hidden.
 SHOWN_SUFFIXES = ("_PROFILE", "_REGION", "_LOCATION", "_PROJECT", "_PROJECT_ID", "_SUBSCRIPTION_ID", "_ACCOUNT_ID")
@@ -104,10 +104,6 @@ def shown(name, value):
     if any(h in up for h in SENSITIVE_HINTS) or not (up in SHOWN_NAMES or up.endswith(SHOWN_SUFFIXES)):
         return "<value hidden>"
     return json.dumps(value if len(value) <= 80 else value[:77] + "...")
-
-
-def _matches(name, patterns):
-    return any(name == p or (p.endswith("*") and name.startswith(p[:-1])) for p in patterns)
 
 
 def check_vars(spec, run_token):
@@ -283,7 +279,7 @@ def collision_findings(spec, cell, auth, view):
     supplied = auth.env()
     layered = {**spec["env"], **{k: str(v) for k, v in (cell.get("env") or {}).items()}}
     return [k for k, v in layered.items()
-            if _matches(k, patterns) and not (k in supplied and supplied[k] == v)]
+            if env_name_matches(k, patterns) and not (k in supplied and supplied[k] == v)]
 
 
 def collision_text(names, auth, view):
@@ -317,7 +313,7 @@ DEFAULT_AWS_IDENTITY = "aws sts get-caller-identity --output text"
 def uses_aws(spec, auth, view):
     """The model reads AWS credentials (Bedrock) or the task identity is an aws command."""
     return bool(shutil.which("aws", path=view["effective"].get("PATH"))) and (
-        _matches("AWS_PROFILE", auth.model_vars(view["effective"]))
+        env_name_matches("AWS_PROFILE", auth.model_vars(view["effective"]))
         or (spec["task"].get("identity_cmd") or "").lstrip().startswith("aws "))
 
 
@@ -368,7 +364,7 @@ def shell_startup_controls(cell, ctx):
 def _aws_settings_sources(view):
     grouped = {}
     for name, source in view.get("source", {}).items():
-        if _matches(name, AWS_CREDENTIAL_ENV):
+        if env_name_matches(name, AWS_CREDENTIAL_ENV):
             grouped.setdefault(source, []).append(name)
     return [{"source": source, "names": sorted(names)} for source, names in sorted(grouped.items())]
 
