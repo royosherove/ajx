@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/royosherove/ajx"
 	"github.com/royosherove/ajx/internal/spec"
 	"github.com/royosherove/ajx/internal/util"
 
@@ -104,7 +105,7 @@ func TestUsageErrorsMatchArgparse(t *testing.T) {
 func TestHelpAndVersion(t *testing.T) {
 	offline(t)
 	code, out, _ := run(t, "--version")
-	if code != 0 || out != "AJX 1.2.0\n" {
+	if code != 0 || out != "AJX "+ajx.Version+"\n" {
 		t.Fatalf("version: %d %q", code, out)
 	}
 	code, out, _ = run(t, "console", "stop", "-h")
@@ -120,7 +121,7 @@ func TestHelpAndVersion(t *testing.T) {
 		t.Fatalf("console again -h:\n%s", out)
 	}
 	code, out, _ = run(t, "version", "--json")
-	if code != 0 || decode(t, out)["version"] != "1.2.0" {
+	if code != 0 || decode(t, out)["version"] != ajx.Version {
 		t.Fatalf("version --json: %s", out)
 	}
 	for _, sh := range []string{"bash", "zsh", "fish"} {

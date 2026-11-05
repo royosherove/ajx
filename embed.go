@@ -6,7 +6,7 @@ package ajx
 import "embed"
 
 // Version is the AJX release this CLI implements.
-const Version = "1.2.0"
+const Version = "1.2.1"
 
 // Skill holds skills/ajx resources. Paths keep the "skills/ajx/" prefix; use
 // internal/res for access that honors the AJX_SKILL_DIR override.
