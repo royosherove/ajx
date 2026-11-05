@@ -21,6 +21,7 @@ Requires curl and standard shell tools. No Go, Python, Git or sudo needed.
   --update           Refresh existing managed skill locations without adding new ones
   --compact-summary  Show the concise CLI update summary
   --no-summary       Omit the completion summary; keep progress and diagnostics
+  --no-progress      Hide the download progress bar; keep status and errors
   --replace          Back up conflicting files/folders before replacing them
   --help            Show this help
 
@@ -32,7 +33,8 @@ EOF
 
 print_banner() {
     printf '\n'
-    cat <<'EOF'
+    # BEGIN GENERATED LOGO (skills/ajx/assets/logo.txt)
+    cat <<'AJX_LOGO'
    ░███        ░█████ ░██    ░██
   ░██░██         ░██   ░██  ░██
  ░██  ░██        ░██    ░██░██
@@ -40,7 +42,8 @@ print_banner() {
 ░██    ░██ ░██   ░██    ░██░██
 ░██    ░██ ░██   ░██   ░██  ░██
 ░██    ░██  ░██████   ░██    ░██
-EOF
+AJX_LOGO
+    # END GENERATED LOGO
     printf 'v%s\n\n' "$1"
 }
 
@@ -81,6 +84,16 @@ sha256() {
     else
         shasum -a 256 "$1" | cut -d ' ' -f 1
     fi
+}
+
+download_file() {
+    local url=$1 destination=$2 progress=${3:-false}
+    local -a display=(--silent)
+    # stderr, not stdin, determines whether curl can redraw a progress bar.
+    # This also works when the installer itself is piped into Bash.
+    if [[ "$progress" == true && -t 2 ]]; then display=(--progress-bar); fi
+    curl --fail --show-error --location --proto '=https' --tlsv1.2 \
+        --retry 3 "${display[@]}" "$url" --output "$destination"
 }
 
 destination_path() {
@@ -169,12 +182,12 @@ configure_path() {
 
 main() {
     local release_version="" package_dir="" no_skills=false no_path=false replace=false
-    local offline_install=false no_summary=false compact_summary=false had_skill=false
+    local offline_install=false no_summary=false no_progress=false compact_summary=false had_skill=false
     local path_configured=false kiro_skill=false
     local update_existing=false refresh_skills=false pointer
     local root bin target os arch tmp expected="" base home_physical index matches
     local checksum filename extra archive listing pkg commit release stamp dest native_version
-    local installed_version version_pattern title scope
+    local installed_version version_pattern title scope progress
     local -a skills profiles original_args
     original_args=("$@")
     skills=()
@@ -193,6 +206,7 @@ main() {
             --update) update_existing=true; shift ;;
             --compact-summary) compact_summary=true; shift ;;
             --no-summary) no_summary=true; shift ;;
+            --no-progress) no_progress=true; shift ;;
             --replace) replace=true; shift ;;
             --help|-h) usage; return ;;
             *) die "Unknown option: $1 (see --help)" ;;
@@ -226,8 +240,7 @@ main() {
         command -v curl >/dev/null 2>&1 || die 'Install curl to download AJX'
         base=https://github.com/royosherove/ajx/releases
         if [[ -z "$release_version" ]]; then
-            curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-                --retry 3 "$base/latest/download/VERSION" --output "$tmp/version" ||
+            download_file "$base/latest/download/VERSION" "$tmp/version" ||
                 die 'Could not find a stable AJX release. Check the repository Releases page.'
             release_version=$(cat "$tmp/version")
         fi
@@ -239,10 +252,12 @@ main() {
         package_dir="$tmp/download"
         mkdir -p "$package_dir"
         for filename in SHA256SUMS BUILD_COMMIT "ajx-$target.tar.gz"; do
-            curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-                --retry 3 "$base/$filename" --output "$package_dir/$filename" ||
+            progress=false
+            if [[ "$filename" == *.tar.gz && "$no_progress" == false ]]; then progress=true; fi
+            download_file "$base/$filename" "$package_dir/$filename" "$progress" ||
                 die "Could not download $filename for $release_version. Check the release and network connection."
         done
+        say 'Download complete. Verifying package...'
         expected=$(cat "$package_dir/BUILD_COMMIT")
         [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || die 'The release did not provide a valid source commit'
     fi

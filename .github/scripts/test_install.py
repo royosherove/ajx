@@ -1,4 +1,5 @@
 """Offline installer regression tests; optionally exercise a real native package."""
+import errno
 import hashlib
 import io
 import json
@@ -6,11 +7,13 @@ import os
 from pathlib import Path
 import platform
 import re
+import select
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import urllib.request
 
@@ -85,17 +88,60 @@ class InstallTest(unittest.TestCase):
                 archive.addfile(entry, io.BytesIO(payload) if payload is not None else None)
         self.checksum()
 
-    def install(self, *args, online=False, ok=True):
+    def install(self, *args, online=False, ok=True, terminal=False):
         cmd = ["/bin/bash", str(ROOT / "install.sh")]
         if not online:
             cmd += ["--package-dir", str(self.package)]
-        result = subprocess.run(cmd + list(args), env=self.env, cwd=self.root,
-                                text=True, capture_output=True, timeout=40)
+        cmd += list(args)
+        if terminal:
+            result = self.run_with_terminal_stderr(cmd)
+        else:
+            result = subprocess.run(cmd, env=self.env, cwd=self.root,
+                                    text=True, capture_output=True, timeout=40)
         if ok:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
+
+    def run_with_terminal_stderr(self, cmd):
+        """Keep stdin/stdout nonterminal, as with a piped installer or --yes."""
+        master, slave = os.openpty()
+        chunks = []
+        try:
+            with tempfile.TemporaryFile() as output:
+                process = subprocess.Popen(cmd, env=self.env, cwd=self.root,
+                                           stdin=subprocess.DEVNULL, stdout=output,
+                                           stderr=slave)
+                os.close(slave)
+                slave = None
+                deadline = time.monotonic() + 40
+                try:
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not select.select([master], [], [], remaining)[0]:
+                            raise subprocess.TimeoutExpired(cmd, 40)
+                        try:
+                            data = os.read(master, 65536)
+                        except OSError as exc:
+                            if exc.errno == errno.EIO:  # Linux signals PTY EOF this way.
+                                break
+                            raise
+                        if not data:
+                            break
+                        chunks.append(data)
+                    process.wait(timeout=max(0.1, deadline - time.monotonic()))
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait()
+                output.seek(0)
+                return subprocess.CompletedProcess(
+                    cmd, process.returncode, output.read().decode(), b"".join(chunks).decode())
+        finally:
+            if slave is not None:
+                os.close(slave)
+            os.close(master)
 
     def assert_not_installed(self):
         self.assertFalse((self.home / ".local/share/ajx").exists())
@@ -409,19 +455,24 @@ class InstallTest(unittest.TestCase):
             self.assertFalse((self.root / "escaped").exists())
             self.assert_not_installed()
 
-    def fake_curl(self, version=None, missing=False, commit=None):
+    def fake_curl(self, version=None, missing=False, commit=None, fail_file=None):
         # Serve public release assets through a fake curl, without credentials/network.
         commit = commit or self.commit
         version = version or f"v{self.version}"
         script = f"""#!{sys.executable}
-import pathlib, shutil, sys, urllib.parse
+import json, os, pathlib, shutil, sys, urllib.parse
 a = sys.argv[1:]
 url = next(x for x in a if x.startswith("https://"))
 with open({str(self.root / 'requests')!r}, "a") as log:
     log.write(url + "\\n")
-if {missing!r}:
-    sys.exit(22)
+with open({str(self.root / 'curl-calls.jsonl')!r}, "a") as log:
+    log.write(json.dumps({{"args": a, "stderr_tty": os.isatty(2)}}) + "\\n")
 name = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]
+if {missing!r} or name == {fail_file!r}:
+    sys.stderr.write("curl: (22) synthetic download failure\\n")
+    sys.exit(22)
+if "--progress-bar" in a and "--silent" not in a:
+    sys.stderr.write("\\r############ 50.0%\\r######################## 100.0%\\n")
 if name == "install.sh":
     sys.stdout.write(pathlib.Path({str(ROOT / "install.sh")!r}).read_text())
     sys.exit(0)
@@ -438,6 +489,60 @@ else:
         curl = self.fakebin / "curl"
         curl.write_text(script)
         curl.chmod(0o755)
+
+    def test_terminal_download_progress_only_for_archive(self):
+        self.fake_curl()
+        result = self.install("--no-path", "--no-summary", online=True, terminal=True)
+        self.assertIn("50.0%", result.stderr)
+        self.assertIn("100.0%", result.stderr)
+        self.assertNotIn("50.0%", result.stdout)
+        self.assertNotIn("Installation complete", result.stdout)
+        self.assertIn("Download complete. Verifying package...", result.stdout)
+        calls = [json.loads(line) for line in
+                 (self.root / "curl-calls.jsonl").read_text().splitlines()]
+        self.assertEqual(len(calls), 4)
+        for call in calls:
+            args = call["args"]
+            archive = any(arg.endswith(".tar.gz") for arg in args)
+            self.assertTrue(call["stderr_tty"])
+            self.assertEqual("--progress-bar" in args, archive)
+            self.assertEqual("--silent" in args, not archive)
+            for flag in ("--fail", "--show-error", "--location", "--tlsv1.2"):
+                self.assertIn(flag, args)
+            self.assertEqual(args[args.index("--proto") + 1], "=https")
+            self.assertEqual(args[args.index("--retry") + 1], "3")
+
+    def test_redirected_download_has_plain_status_without_animation(self):
+        self.fake_curl()
+        result = self.install("--no-path", online=True)
+        self.assertIn("Downloading AJX", result.stdout)
+        self.assertIn("Download complete. Verifying package...", result.stdout)
+        self.assertEqual(result.stderr, "")
+        for line in (self.root / "curl-calls.jsonl").read_text().splitlines():
+            call = json.loads(line)
+            self.assertFalse(call["stderr_tty"])
+            self.assertIn("--silent", call["args"])
+            self.assertNotIn("--progress-bar", call["args"])
+
+    def test_no_progress_suppresses_terminal_animation(self):
+        self.fake_curl()
+        result = self.install("--no-path", "--no-progress", online=True, terminal=True)
+        self.assertIn("Downloading AJX", result.stdout)
+        self.assertIn("Installation complete", result.stdout)
+        self.assertEqual(result.stderr, "")
+        for line in (self.root / "curl-calls.jsonl").read_text().splitlines():
+            call = json.loads(line)
+            self.assertTrue(call["stderr_tty"])
+            self.assertNotIn("--progress-bar", call["args"])
+
+    def test_archive_download_failure_keeps_error_and_changes_nothing(self):
+        self.fake_curl(fail_file=self.archive.name)
+        result = self.install("--no-progress", online=True, terminal=True, ok=False)
+        self.assertIn("synthetic download failure", result.stderr)
+        self.assertIn(f"Could not download {self.archive.name}", result.stderr)
+        self.assertNotIn("Download complete", result.stdout)
+        self.assertNotIn("Installation complete", result.stdout)
+        self.assert_not_installed()
 
     def test_latest_release_download_without_github_login(self):
         with (self.package / "SHA256SUMS").open("a") as sums:

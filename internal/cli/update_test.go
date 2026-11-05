@@ -146,7 +146,7 @@ func TestUpdateCompletionDelegatesHumanOutputAndPreservesJSON(t *testing.T) {
 			latestRelease = func() (update.Release, error) { return release, nil }
 			jsonOutput := false
 			installUpdate = func(r update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
-				if options.CLIOnly != tc.cliOnly || options.NoSummary != jsonOutput {
+				if options.CLIOnly != tc.cliOnly || options.NoSummary != jsonOutput || options.NoProgress != jsonOutput {
 					t.Errorf("incorrect installer options: %+v", options)
 				}
 				fmt.Fprintln(stdout, "Downloading the update...")

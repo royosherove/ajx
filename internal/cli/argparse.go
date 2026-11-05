@@ -222,6 +222,7 @@ func (e *UsageError) Error() string { return e.Msg }
 type Exit struct {
 	Code int
 	Text string
+	Help bool
 }
 
 func (e *Exit) Error() string { return "exit" }
@@ -383,9 +384,9 @@ func (p *Parser) parseKnown(argv []string, ns *Namespace) ([]string, error) {
 		}
 		switch a.Kind {
 		case HelpFlag:
-			return &Exit{0, p.FormatHelp()}
+			return &Exit{Code: 0, Text: p.FormatHelp(), Help: true}
 		case VersionFlag:
-			return &Exit{0, p.Version + "\n"}
+			return &Exit{Code: 0, Text: p.Version + "\n"}
 		case StoreTrue:
 			ns.Values[a.Dest] = true
 		case Append:

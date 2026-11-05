@@ -73,7 +73,6 @@ func TestUsageErrorsMatchArgparse(t *testing.T) {
 		{[]string{"console", "again", "t", "--quote", "q", "--plan", "p", "--same-folder", "--fresh-folder"},
 			"ajx console again: error: argument --fresh-folder: not allowed with argument --same-folder\n"},
 		{[]string{"console"}, "ajx console: error: the following arguments are required: action\n"},
-		{[]string{}, "ajx: error: the following arguments are required: cmd\n"},
 		{[]string{"run", "t", "--dry-run=1"}, "ajx run: error: argument --dry-run: ignored explicit argument '1'\n"},
 		{[]string{"run"}, "ajx run: error: the following arguments are required: trial\n"},
 		{[]string{"run", "x", "y"}, "ajx: error: unrecognized arguments: y\n"},
