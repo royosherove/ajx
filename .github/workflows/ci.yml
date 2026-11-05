@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -10,22 +10,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python: ['3.11', '3.13', '3.14']
-        os: [ubuntu-latest, macos-15]
-        exclude:
-          - python: '3.11'
-            os: macos-15
-        include:
-          - python: '3.11'
-            os: macos-15-intel
+        os: [ubuntu-latest]
+        include: ${{ fromJSON(github.ref == 'refs/heads/main' && '[{"python":"3.13","os":"macos-15"}]' || '[]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,13 +41,10 @@ jobs:
           python skills/ajx/bin/ajx --version
 
   go:
-    name: Go CLI / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Go CLI / ubuntu-latest
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15]
     env:
       GOFLAGS: -mod=vendor
       GOPROXY: 'off'
@@ -86,6 +83,7 @@ jobs:
 
   containers:
     name: Container environment integration
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -116,7 +114,7 @@ jobs:
   binaries:
     name: Download / ${{ matrix.target }}
     needs: [test, go, containers, security]
-    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -170,12 +168,14 @@ jobs:
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
           TARGET: ${{ matrix.target }}
         run: |
+          # Keep Markdown backticks literal in the printf format.
+          # shellcheck disable=SC2016
           printf '### AJX %s\n\n[Download the tested package](%s)\n\nCommit: `%s`\n' \
             "$TARGET" "$ARTIFACT_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Publish versioned release
-    needs: [binaries]
+    needs: [security]
     if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -189,14 +189,10 @@ jobs:
           persist-credentials: false
       - name: Require a release of main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: Download the four tested packages
+      - name: Publish the packages tested on main
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'ajx-*' --dir "$RUNNER_TEMP/packages"
-      - name: Publish complete release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -I .github/scripts/publish_release.py --packages "$RUNNER_TEMP/packages" --output "$RUNNER_TEMP/release" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
+        run: python3 -I .github/scripts/publish_release.py --from-main-ci --packages "$RUNNER_TEMP/packages" --output "$RUNNER_TEMP/release" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
 
   security:
     name: Secrets and privacy

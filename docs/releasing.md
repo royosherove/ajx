@@ -31,12 +31,20 @@ Set the Go version in `embed.go` and the Python version in
 is on `main` and its checks pass, create and push an annotated `vX.Y.Z` tag at
 that commit. Use your GitHub no-reply identity for the tag and commits.
 
-The tag starts the full CI workflow, including Python, Go, container and privacy
-checks. It then tests, builds and installs packages on all four native platforms.
-The publishing job checks that the tag belongs to `main` and that every package
-matches its version and commit. It uploads the complete asset set to a draft
-release before making the release public. Published assets are not overwritten;
-a fix needs a new version.
+Pull requests run the Linux Python compatibility matrix, Go, container and privacy
+checks. Pushes to `main` test the merged commit, add one macOS Python compatibility
+run, and test, build and install packages on all four native platforms. Native
+macOS checks cover both Apple Silicon and Intel. Branch pushes do not duplicate
+the pull request checks; outdated pull request runs are cancelled.
+
+The tag starts a fresh privacy scan, including its tag metadata, then downloads
+the four packages from a successful `main` CI run for that exact commit. It does
+not rebuild or repeat the runtime matrix. The publishing job checks the source
+run, artifact provenance, tag ancestry, version, commit, skills and checksums,
+then uploads the complete asset set to a draft release before making it public.
+Missing or expired packages block publication; rerun `main` CI for that commit
+and retry the release workflow. Published assets are not overwritten; a fix
+needs a new version.
 
 Stable tags update the latest release used by the anonymous one-line installer.
 A tag with a prerelease suffix creates a prerelease and does not replace the

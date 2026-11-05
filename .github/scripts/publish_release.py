@@ -11,6 +11,93 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = ("darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64")
+REPOSITORY = "royosherove/ajx"
+
+
+def github_json(path):
+    return json.loads(subprocess.check_output(
+        ["gh", "api", f"repos/{REPOSITORY}/{path}"], text=True
+    ))
+
+
+def is_main_build(run, commit):
+    """Accept completed CI from this repository, never a PR or another ref."""
+    return (
+        type(run.get("id")) is int and run["id"] > 0
+        and type(run.get("run_attempt")) is int and run["run_attempt"] > 0
+        and run.get("head_sha") == commit and run.get("head_branch") == "main"
+        and run.get("event") in ("push", "workflow_dispatch")
+        and run.get("path") == ".github/workflows/ci.yml"
+        and run.get("status") == "completed" and run.get("conclusion") == "success"
+        and run.get("repository", {}).get("full_name") == REPOSITORY
+        and run.get("head_repository", {}).get("full_name") == REPOSITORY
+    )
+
+
+def has_native_packages(inventory, run):
+    artifacts = inventory.get("artifacts", [])
+    names = {f"ajx-{target}" for target in TARGETS}
+    if (inventory.get("total_count") != len(artifacts)
+            or len(artifacts) != len(names)
+            or {item.get("name") for item in artifacts} != names):
+        return False
+    repository_id = run.get("repository", {}).get("id")
+    if type(repository_id) is not int or repository_id <= 0:
+        return False
+    return all(
+        type(item.get("id")) is int and item["id"] > 0
+        and item.get("expired") is False
+        and item.get("workflow_run", {}).get("id") == run["id"]
+        and item["workflow_run"].get("head_sha") == run["head_sha"]
+        and item["workflow_run"].get("head_branch") == "main"
+        and item["workflow_run"].get("repository_id") == repository_id
+        and item["workflow_run"].get("head_repository_id") == repository_id
+        for item in artifacts
+    )
+
+
+def download_main_packages(packages, commit):
+    """Promote the exact tested main build instead of rebuilding a release tag."""
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("Release commit must be a full Git SHA")
+    if packages.exists() and any(packages.iterdir()):
+        raise ValueError("Package download directory must be empty")
+    response = github_json(
+        "actions/workflows/ci.yml/runs"
+        f"?branch=main&head_sha={commit}&status=success&per_page=100"
+    )
+    candidates = sorted(
+        (run for run in response.get("workflow_runs", []) if is_main_build(run, commit)),
+        key=lambda run: run["id"], reverse=True,
+    )
+    for run in candidates:
+        inventory = github_json(f"actions/runs/{run['id']}/artifacts?per_page=100")
+        if not has_native_packages(inventory, run):
+            continue
+        packages.mkdir(parents=True, exist_ok=True)
+        command = [
+            "gh", "run", "download", str(run["id"]), "--repo", REPOSITORY,
+            "--dir", str(packages),
+        ]
+        for target in TARGETS:
+            command.extend(["--name", f"ajx-{target}"])
+        subprocess.run(command, check=True)
+        # A rerun may replace artifacts while downloading. Do not publish a
+        # mixture of attempts, or an attempt whose checks are still running.
+        latest = github_json(f"actions/runs/{run['id']}")
+        after = github_json(f"actions/runs/{run['id']}/artifacts?per_page=100")
+        if (not is_main_build(latest, commit)
+                or latest["run_attempt"] != run["run_attempt"]
+                or not has_native_packages(after, latest)
+                or {item["id"] for item in inventory["artifacts"]}
+                != {item["id"] for item in after["artifacts"]}):
+            raise ValueError("Main CI changed during download; retry after it completes")
+        print(f"Using tested packages from https://github.com/{REPOSITORY}/actions/runs/{run['id']}")
+        return run["id"]
+    raise ValueError(
+        "No successful main CI build has all four unexpired native packages for "
+        f"{commit}. Rerun main CI for this commit before releasing."
+    )
 
 
 def prepare(packages, output, tag, commit):
@@ -63,7 +150,7 @@ def publish(packages, output, tag, commit):
     ).strip()
     if actual != commit:
         raise ValueError("The release tag points to a different commit")
-    repo = "royosherove/ajx"
+    repo = REPOSITORY
     existing = subprocess.run(
         ["gh", "release", "view", tag, "--repo", repo, "--json", "isDraft"],
         text=True, capture_output=True,
@@ -117,5 +204,9 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--from-main-ci", action="store_true",
+                        help="Download the successful native package build for this exact main commit")
     args = parser.parse_args()
+    if args.from_main_ci:
+        download_main_packages(args.packages, args.commit)
     publish(args.packages, args.output, args.tag, args.commit)
