@@ -495,6 +495,28 @@ func idKey(v any) string {
 	return "x:" + util.Compact(v)
 }
 
+// inventoryEntry keeps only explicit names and source labels. A string inventory
+// entry has no source information; plugins listed elsewhere are not joined to it.
+func inventoryEntry(item any) M {
+	var name, source any
+	switch value := item.(type) {
+	case string:
+		name = value
+	case M:
+		if n, ok := value["name"].(string); ok {
+			name = n
+			if s, ok := value["source"].(string); ok && s != "" {
+				source = s
+			}
+		}
+	}
+	status := "unknown"
+	if source != nil {
+		status = "reported"
+	}
+	return M{"name": name, "source": source, "source_status": status}
+}
+
 func (h *ClaudeCode) Normalize(ctx *plugin.Ctx, stage string, excludeMessageIDs []string) (M, error) {
 	s := newScope()
 	sid := ctx.StageState(stage)["session_id"]
@@ -518,7 +540,7 @@ func (h *ClaudeCode) Normalize(ctx *plugin.Ctx, stage string, excludeMessageIDs 
 				}
 				ajx := []string{}
 				for _, item := range items {
-					name := s.pyStr(item)
+					name := util.S(inventoryEntry(item)["name"])
 					if strings.Contains(strings.ToLower(name), "ajx") {
 						ajx = append(ajx, name)
 					}
@@ -528,6 +550,14 @@ func (h *ClaudeCode) Normalize(ctx *plugin.Ctx, stage string, excludeMessageIDs 
 			}
 			hr["skills_visible"], hr["ajx_skills_visible"] = inventory(skills, skillsKnown)
 			hr["slash_commands_visible"], hr["ajx_slash_commands_visible"] = inventory(commands, commandsKnown)
+			hr["skills_inventory"] = nil
+			if skillsKnown {
+				entries := []any{}
+				for _, item := range skills {
+					entries = append(entries, inventoryEntry(item))
+				}
+				hr["skills_inventory"] = entries
+			}
 			hr["skills_visibility_note"] = "Session inventories do not establish skill ownership or activation."
 			servers := []any{}
 			for _, m := range util.List(util.Or(ev["mcp_servers"], []any{})) {

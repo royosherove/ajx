@@ -318,6 +318,10 @@ def _doctor_cells(spec, tmp):
               f"config={cell['config']}")
         print(f"    auth={auth.profile} ({auth.name}) env={sorted(auth.env())} unset={auth.unset()} "
               f"isolates_config={auth.isolates_config}")
+        for label, key in (("configuration", "configuration"), ("shell startup", "shell_startup")):
+            note = (checks.get(key) or {}).get("note")
+            if note:
+                print(f"    {label}: {note}")
         for s in checks["harness_settings"]:
             print(f"    harness settings env applied over the worker env: {s['source']} sets {', '.join(s['names'])}")
         print(f"    harness auth identity (model credentials): {checks['auth_identity'] or 'n/a'}")

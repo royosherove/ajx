@@ -373,7 +373,7 @@ func WriteRunJSON(sp, cellM M, rep int, runDir string, state M, h plugin.Harness
 			"listing does not establish their origin, activation, or exposure to evaluation instructions")
 	}
 	inventory := M{}
-	for _, key := range []string{"skills_visible", "slash_commands_visible", "ajx_skills_visible", "ajx_slash_commands_visible"} {
+	for _, key := range []string{"skills_visible", "skills_inventory", "slash_commands_visible", "ajx_skills_visible", "ajx_slash_commands_visible"} {
 		if value, ok := hr[key]; ok {
 			inventory[key] = value
 		}

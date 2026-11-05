@@ -26,16 +26,43 @@ class EvidenceIntegrityTest(unittest.TestCase):
             self.assertEqual(hr["slash_commands_visible"], 4)
             self.assertEqual(hr["ajx_skills_visible"], ["ajx"])
             self.assertEqual(hr["ajx_slash_commands_visible"], ["ajx"])
+            self.assertEqual(hr["skills_inventory"], [
+                {"name": "review", "source": None, "source_status": "unknown"},
+                {"name": "ajx", "source": None, "source_status": "unknown"},
+            ])
             self.assertFalse(any("user config" in note or "is evaluation-aware" in note for note in tel["limitations"]))
             del init["skills"]
             _write_raw(ctx["run_dir"] / "execute.raw.jsonl", [init])
             hr = plugins.get("harness", "claude-code")().normalize(ctx, "execute")["harness_reported"]
             self.assertIsNone(hr["skills_visible"])
             self.assertIsNone(hr["ajx_skills_visible"])
+            self.assertIsNone(hr["skills_inventory"])
             init["skills"] = []
             _write_raw(ctx["run_dir"] / "execute.raw.jsonl", [init])
             hr = plugins.get("harness", "claude-code")().normalize(ctx, "execute")["harness_reported"]
             self.assertEqual(hr["skills_visible"], 0)
+            self.assertEqual(hr["skills_inventory"], [])
+
+    def test_skill_sources_require_explicit_per_entry_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = _execute_ctx(tmp)
+            init = {**_init(), "skills": [
+                {"name": "review", "source": "plugin:example"},
+                {"name": "ajx", "description": "source not supplied"},
+                "plain", {"name": "other", "source": {"unknown": "shape"}},
+                {"source": "ajx"},
+            ], "plugins": [{"name": "plain", "path": "/synthetic/plugins/plain"}]}
+            _write_raw(ctx["run_dir"] / "execute.raw.jsonl", [init])
+            hr = plugins.get("harness", "claude-code")().normalize(ctx, "execute")["harness_reported"]
+            self.assertEqual(hr["skills_inventory"], [
+                {"name": "review", "source": "plugin:example", "source_status": "reported"},
+                {"name": "ajx", "source": None, "source_status": "unknown"},
+                {"name": "plain", "source": None, "source_status": "unknown"},
+                {"name": "other", "source": None, "source_status": "unknown"},
+                {"name": None, "source": None, "source_status": "unknown"},
+            ])
+            self.assertEqual(hr["ajx_skills_visible"], ["ajx"])
+            self.assertEqual(hr["skills_visible"], 5)
 
     def test_missing_tool_error_flag_stays_unknown(self):
         with tempfile.TemporaryDirectory() as tmp:
