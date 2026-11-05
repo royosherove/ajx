@@ -249,17 +249,24 @@ class ClaudeCode(Harness):
             if not ev:
                 continue
             if ev.get("type") == "system" and ev.get("subtype") == "init":
-                commands = [str(c) for c in ev.get("slash_commands") or []]
-                out["harness_reported"].update({
+                skills = ev.get("skills")
+                commands = ev.get("slash_commands")
+                reported = out["harness_reported"]
+                reported.update({
                     "init_model": ev.get("model"), "claude_code_version": ev.get("claude_code_version"),
                     "permission_mode": ev.get("permissionMode"), "api_key_source": ev.get("apiKeySource"),
-                    "skills_visible": len(commands),
-                    "ajx_skills_visible": sorted(c for c in commands if "ajx" in c.lower()),
+                    "skills_visible": len(skills) if isinstance(skills, list) else None,
+                    "slash_commands_visible": len(commands) if isinstance(commands, list) else None,
+                    "ajx_skills_visible": sorted(str(s) for s in skills if "ajx" in str(s).lower())
+                        if isinstance(skills, list) else None,
+                    "ajx_slash_commands_visible": sorted(str(c) for c in commands if "ajx" in str(c).lower())
+                        if isinstance(commands, list) else None,
+                    "skills_visibility_note": "Session inventories do not establish skill ownership or activation.",
                     "mcp_servers": [m.get("name") for m in ev.get("mcp_servers") or []]})
-                if out["harness_reported"]["ajx_skills_visible"]:
+                if reported["ajx_skills_visible"] or reported["ajx_slash_commands_visible"]:
                     out["limitations"].append(
-                        f"{stage}: AJX skill(s) {out['harness_reported']['ajx_skills_visible']} were listed in the "
-                        "worker's session (user config); the run is evaluation-aware")
+                        f"{stage}: AJX names were listed in session skill or slash-command inventories; "
+                        "visibility does not prove activation or access to this trial")
             if ev.get("type") == "assistant" and not ev.get("parent_tool_use_id"):
                 for block in (ev.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -331,7 +338,7 @@ class ClaudeCode(Harness):
                             content = block.get("content")
                             if isinstance(content, list):
                                 content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
-                            call.update(end=ts, is_error=bool(block.get("is_error")),
+                            call.update(end=ts, is_error=block.get("is_error") if isinstance(block.get("is_error"), bool) else None,
                                         output=excerpt(content, 1500))
         out["events"], out["message_ids"] = events, order
         out["usage"] = [{"id": m, "at": messages[m]["at"], "output_tokens": messages[m]["output_tokens"]}

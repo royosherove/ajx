@@ -536,13 +536,14 @@ func TestClaudeMissingTranscriptAndAJXSkillLimitations(t *testing.T) {
 	tel := ccNormalize(t, []any{init}, nil)
 	lims := strs(tel["limitations"])
 	want := []string{
-		"execute: AJX skill(s) ['AJX:run', 'ajx'] were listed in the worker's session (user config); the run is evaluation-aware",
+		"execute: AJX names were listed in session skill or slash-command inventories; visibility does not prove activation or access to this trial",
 		"execute: no result event in stream (killed, crashed, or timed out)",
 		"execute: transcript for session " + ccSID + " not found (remote runner or moved config); tokens unavailable",
 	}
 	eq(t, lims, want, "limitations")
 	hr := tel["harness_reported"].(M)
-	eq(t, hr["skills_visible"], 3, "skills_visible")
+	eq(t, hr["skills_visible"], nil, "skills_visible")
+	eq(t, hr["slash_commands_visible"], 3, "slash_commands_visible")
 	eq(t, hr["mcp_servers"], []any{"x"}, "mcp_servers")
 	eq(t, tel["usage_status"], "unavailable", "usage_status")
 }
