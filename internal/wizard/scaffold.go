@@ -601,7 +601,7 @@ narrate_timeout_seconds = 900     # for the resumed self-narration and reporter 
 # max_budget_usd = 5              # enforced by harnesses that support it (claude-code)
 order_seed = 0
 cache = "isolated"                # isolated | shared package caches
-shell_startup = "inherit"         # skip: the worker's tool shell reads no ~/.zshenv or BASH_ENV (local runs)
+shell_startup = "inherit"         # skip: redirect ZDOTDIR and unset BASH_ENV/ENV (legacy local runs; not a file-read boundary)
 
 [task]
 prompt_file = "task-prompt.md"    # exact bytes are hashed; never edited by ajx
