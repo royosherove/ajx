@@ -17,9 +17,10 @@ import (
 
 // report collects human lines (printed unless JSON) and a JSON document.
 type report struct {
-	json  bool
-	lines []string
-	doc   util.M
+	json       bool
+	showBanner bool
+	lines      []string
+	doc        util.M
 }
 
 func newReport(command string, json bool) *report {
@@ -46,7 +47,7 @@ func (r *report) emit() {
 }
 
 func cmdDoctor(ns *Namespace) (int, error) {
-	return runDoctor(ns.Str("trial"), ns.Bool("json"))
+	return runDoctor(ns.Str("trial"), ns.Bool("json"), true)
 }
 
 // Doctor runs `ajx doctor` and returns its exit code, lines and document.
@@ -56,8 +57,9 @@ func Doctor(trial string, json bool) (int, []string, util.M, error) {
 	return code, r.lines, r.doc, err
 }
 
-func runDoctor(trial string, json bool) (int, error) {
+func runDoctor(trial string, json, showBanner bool) (int, error) {
 	r := newReport("doctor", json)
+	r.showBanner = showBanner && !json
 	code, err := doctor(trial, r)
 	if err != nil {
 		return code, err
@@ -95,6 +97,9 @@ func doctor(trial string, r *report) (int, error) {
 	} else {
 		plugin.Load("")
 		r.doc["trial"] = nil
+	}
+	if r.showBanner {
+		printBanner()
 	}
 	r.doc["implementation"] = "go"
 	r.doc["version"] = ajx.Version

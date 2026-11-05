@@ -22,6 +22,39 @@ def load_cli():
 
 
 class OnboardingTest(unittest.TestCase):
+    def test_root_help_entry_points_share_banner(self):
+        cli = load_cli()
+        prefix = (SKILL / "assets/logo.txt").read_text(encoding="utf-8") + f"v{cli.__version__}\n\n"
+        baseline = None
+        for args in ([], ["help"], ["--help"], ["-h"]):
+            with self.subTest(args=args):
+                output, diagnostic = io.StringIO(), io.StringIO()
+                with mock.patch("subprocess.run", side_effect=AssertionError("no commands allowed")), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostic), \
+                        self.assertRaises(SystemExit) as result:
+                    cli.main(args)
+                self.assertEqual(result.exception.code, 0)
+                self.assertEqual(diagnostic.getvalue(), "")
+                self.assertTrue(output.getvalue().startswith(prefix + "usage: ajx"))
+                self.assertEqual(output.getvalue().count(prefix), 1)
+                if baseline is not None:
+                    self.assertEqual(output.getvalue(), baseline)
+                baseline = output.getvalue()
+
+    def test_banner_does_not_decorate_subcommand_help_version_or_errors(self):
+        cli = load_cli()
+        logo = (SKILL / "assets/logo.txt").read_text(encoding="utf-8")
+        for args, code in ((["doctor", "--help"], 0), (["--version"], 0),
+                           (["unknown-command"], 2), (["doctor", "--unknown"], 2),
+                           (["help", "--unknown"], 2)):
+            with self.subTest(args=args):
+                output, diagnostic = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostic), \
+                        self.assertRaises(SystemExit) as result:
+                    cli.main(args)
+                self.assertEqual(result.exception.code, code)
+                self.assertNotIn(logo, output.getvalue() + diagnostic.getvalue())
+
     def test_docs_reads_local_reference_without_processes(self):
         cli = load_cli()
         for topic, relative in [
@@ -62,6 +95,9 @@ class OnboardingTest(unittest.TestCase):
                 contextlib.redirect_stdout(output):
             self.assertEqual(cli.main(["doctor"]), 0)
         self.assertTrue(output.getvalue().splitlines()[-1].startswith("READY:"))
+        prefix = (SKILL / "assets/logo.txt").read_text(encoding="utf-8") + f"v{cli.__version__}\n\n"
+        self.assertTrue(output.getvalue().startswith(prefix + "python "))
+        self.assertEqual(output.getvalue().count(prefix), 1)
 
     def test_doctor_keeps_startup_source_in_identity_warning(self):
         cli = load_cli()

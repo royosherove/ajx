@@ -21,9 +21,10 @@ var chooseUpdate = wizard.UpdateChoice
 var installUpdate = runUpdateInstaller
 
 type updateInstallOptions struct {
-	CLIOnly   bool
-	Replace   bool
-	NoSummary bool
+	CLIOnly    bool
+	Replace    bool
+	NoSummary  bool
+	NoProgress bool
 }
 
 func cmdUpdate(ns *Namespace) (int, error) {
@@ -95,7 +96,7 @@ func cmdUpdate(ns *Namespace) (int, error) {
 		writer = Stderr
 	}
 	options := updateInstallOptions{
-		CLIOnly: scope == "cli", Replace: ns.Bool("replace"), NoSummary: ns.Bool("json"),
+		CLIOnly: scope == "cli", Replace: ns.Bool("replace"), NoSummary: ns.Bool("json"), NoProgress: ns.Bool("json"),
 	}
 	if err := installUpdate(release, options, writer, Stderr); err != nil {
 		return 1, err
@@ -146,6 +147,9 @@ func runUpdateInstaller(release update.Release, options updateInstallOptions, st
 	args := []string{script, "--version", "v" + release.Version, "--no-path", "--update", "--compact-summary"}
 	if options.NoSummary {
 		args = append(args, "--no-summary")
+	}
+	if options.NoProgress {
+		args = append(args, "--no-progress")
 	}
 	if options.CLIOnly {
 		args = append(args, "--no-skills")

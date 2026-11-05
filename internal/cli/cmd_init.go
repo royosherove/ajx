@@ -177,7 +177,7 @@ func cmdInit(ns *Namespace) (int, error) {
 	case wizard.NextConsole:
 		return consoleOpen(r.TrialFile, consoleOpenOpts{OpenBrowser: true})
 	case wizard.NextDoctor:
-		return runDoctor(r.TrialFile, false)
+		return runDoctor(r.TrialFile, false, false)
 	}
 	return 0, nil
 }

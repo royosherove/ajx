@@ -18,3 +18,10 @@ var Skill embed.FS
 //
 //go:embed install.sh
 var Installer string
+
+// Logo is shared by both CLIs. The standalone installer's generated copy is
+// checked by tests so it can run without downloading additional resources.
+//
+//go:generate python3 -I .github/scripts/sync_logo.py
+//go:embed skills/ajx/assets/logo.txt
+var Logo string

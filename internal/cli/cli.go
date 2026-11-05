@@ -246,6 +246,9 @@ func BuildParser() *Parser {
 // Main runs the CLI and returns the exit code.
 func Main(argv []string) int {
 	argv = append([]string(nil), argv...)
+	if len(argv) == 0 || (len(argv) == 1 && argv[0] == "help") {
+		argv = []string{"--help"}
+	}
 	if len(argv) >= 2 && argv[0] == "console" && !util.Contains(ConsoleActions, argv[1]) && !strings.HasPrefix(argv[1], "-") {
 		argv = append([]string{"console", "open"}, argv[1:]...) // `ajx console trials/x` opens the console
 	}
@@ -254,6 +257,9 @@ func Main(argv []string) int {
 	if err != nil {
 		var ex *Exit
 		if errors.As(err, &ex) {
+			if ex.Help && ns.Leaf == p {
+				printBanner()
+			}
 			fmt.Fprint(Stdout, ex.Text)
 			return ex.Code
 		}

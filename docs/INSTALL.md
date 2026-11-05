@@ -83,10 +83,14 @@ ajx update --cli-only              # update just the executable
 ajx update --with-skills --json    # update with a structured result for scripts
 ```
 
-The completion summary shows the installed version and whether skills were
-updated or left unchanged. With `--json`, stdout contains one JSON document;
-download progress and diagnostics go to stderr. Build and skill hashes remain
-available in the JSON result and through `ajx version --json`.
+In a terminal, the package download shows a progress bar on stderr, including
+a percentage when the server provides the file size. Redirected output uses
+plain status lines without animation. The completion summary shows the installed
+version and whether skills were updated or left unchanged.
+
+With `--json`, stdout contains one JSON document; plain status and diagnostics
+go to stderr, with no progress animation. Build and skill hashes remain available
+in the JSON result and through `ajx version --json`.
 
 `--yes` is shorthand for accepting CLI + skill. Non-interactive use requires
 an explicit choice or `--check`; it never waits for input. AJX does not
@@ -122,6 +126,7 @@ bash ajx-install.sh --help
 | `--no-path` | Leave shell startup files untouched; invoke `~/.local/bin/ajx` directly |
 | `--compact-summary` | Show the concise summary used by `ajx update` |
 | `--no-summary` | Omit either completion summary; keep progress and diagnostics |
+| `--no-progress` | Hide the terminal download bar; keep plain status and errors |
 | `--version v1.0.0` | Pin to a specific released version instead of selecting the newest |
 | `--replace` | Move conflicting existing files/folders to adjacent `.ajx-backup-*` paths before installing |
 | `--package-dir DIR` | Install from a trusted, already downloaded package; no network needed |

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	ajx "github.com/royosherove/ajx"
 )
 
 var (
@@ -231,7 +232,7 @@ func TestParityPlugins(t *testing.T) {
 func TestParityUsageErrors(t *testing.T) {
 	dir := t.TempDir()
 	for _, args := range [][]string{
-		{}, {"bogus"}, {"run"}, {"run", "x", "y"}, {"run", "x", "--bogus"}, {"status", "x", "--tail", "abc"},
+		{"bogus"}, {"run"}, {"run", "x", "y"}, {"run", "x", "--bogus"}, {"status", "x", "--tail", "abc"},
 		{"console"}, {"console", "again", "t", "--quote", "q", "--plan", "p"},
 		{"console", "again", "t", "--quote", "q", "--plan", "p", "--same-folder", "--fresh-folder"},
 		{"console", "wait", "t", "--timeout", "1.5"}, {"run", "t", "--dry-run=1"}, {"console", "note", "t"},
@@ -254,6 +255,25 @@ func TestParityUsageErrors(t *testing.T) {
 	for _, args := range [][]string{{"--version"}, {"console", "-h"}, {"console", "stop", "-h"}, {"console", "again", "-h"},
 		{"console", "open", "-h"}, {"console", "wait", "-h"}} {
 		same(t, strings.Join(args, " "), runCLI(t, "py", dir, args...), runCLI(t, "go", dir, args...), nil)
+	}
+}
+
+func TestParityBrandedHelp(t *testing.T) {
+	dir := t.TempDir()
+	prefix := ajx.Logo + "v" + ajx.Version + "\n\nusage: ajx"
+	for _, implementation := range []string{"py", "go"} {
+		var baseline string
+		for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
+			result := runCLI(t, implementation, dir, args...)
+			if result.code != 0 || result.stderr != "" || !strings.HasPrefix(result.stdout, prefix) {
+				t.Fatalf("%s %v: code=%d stdout=%q stderr=%q",
+					implementation, args, result.code, result.stdout, result.stderr)
+			}
+			if baseline != "" && result.stdout != baseline {
+				t.Fatalf("%s %v: help differs from bare ajx", implementation, args)
+			}
+			baseline = result.stdout
+		}
 	}
 }
 
@@ -348,7 +368,13 @@ func TestParityValidateAndDoctor(t *testing.T) {
 		path := filepath.Join(trial, "trial.toml")
 		same(t, "validate "+path, runCLI(t, "py", dir, "validate", path), runCLI(t, "go", dir, "validate", path), nil)
 		py, gov := runCLI(t, "py", dir, "doctor", path), runCLI(t, "go", dir, "doctor", path)
-		// the first line names the implementation (python 3.x / go 1.x)
+		banner := ajx.Logo + "v" + ajx.Version + "\n\n"
+		if !strings.HasPrefix(py.stdout, banner) || !strings.HasPrefix(gov.stdout, banner) {
+			t.Fatalf("doctor %s did not show the shared banner:\npython: %s\ngo: %s", path, py.stdout, gov.stdout)
+		}
+		py.stdout = strings.TrimPrefix(py.stdout, banner)
+		gov.stdout = strings.TrimPrefix(gov.stdout, banner)
+		// After the shared banner, the first line names the implementation.
 		py.stdout = strings.SplitN(py.stdout, "\n", 2)[1]
 		gov.stdout = strings.SplitN(gov.stdout, "\n", 2)[1]
 		// Native readiness now rejects a failed identity command even when

@@ -5,6 +5,11 @@ It reads the same trial files and report formats as the Python CLI, with
 additional setup, JSON, recovery and CI features. Use the same executable to
 run and recover an attempt; either implementation can view completed reports.
 
+Run `ajx`, `ajx help`, or `ajx --help` to show the command guide with the AJX
+logo and installed version. `ajx doctor` shows the same banner before its
+readiness checks. `ajx doctor --json` remains a single JSON document without a
+banner; version queries, command-specific help, and shell completions stay concise.
+
 The Go CLI adds:
 
 - an interactive setup wizard for `ajx init`, with flags for every question;
