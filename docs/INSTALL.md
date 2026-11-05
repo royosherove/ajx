@@ -80,7 +80,13 @@ ajx update --check                 # show available updates; change nothing
 ajx update --check --json          # the same check, for an agent or script
 ajx update --with-skills           # update CLI + skill without prompting
 ajx update --cli-only              # update just the executable
+ajx update --with-skills --json    # update with a structured result for scripts
 ```
+
+The completion summary shows the installed version and whether skills were
+updated or left unchanged. With `--json`, stdout contains one JSON document;
+download progress and diagnostics go to stderr. Build and skill hashes remain
+available in the JSON result and through `ajx version --json`.
 
 `--yes` is shorthand for accepting CLI + skill. Non-interactive use requires
 an explicit choice or `--check`; it never waits for input. AJX does not
@@ -114,6 +120,7 @@ bash ajx-install.sh --help
 | `--no-skills` | Install only the CLI |
 | `--update` | Refresh existing managed skill locations without adding new ones |
 | `--no-path` | Leave shell startup files untouched; invoke `~/.local/bin/ajx` directly |
+| `--no-summary` | Omit the completion summary when a caller displays its own; keep progress and diagnostics |
 | `--version v1.0.0` | Pin to a specific released version instead of selecting the newest |
 | `--replace` | Move conflicting existing files/folders to adjacent `.ajx-backup-*` paths before installing |
 | `--package-dir DIR` | Install from a trusted, already downloaded package; no network needed |
