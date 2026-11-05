@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+scanner=$(git config --local --get ajx.gitleaksPath || command -v gitleaks || true)
+if [ -z "$scanner" ] || [ ! -x "$scanner" ]; then
+    echo "Install Gitleaks and follow CONTRIBUTING.md before pushing." >&2
+    exit 1
+fi
+
+# A push may name a commit that is no longer reachable from a local ref.
+# Include every outgoing object, not only the refs visible to --all.
+revisions=(--all)
+tag_candidates=$(git for-each-ref --format='%(objectname)' refs/tags)
+while read -r local_ref local_oid remote_ref remote_oid; do
+    [[ -n "$local_oid" ]] || continue
+    [[ "$local_oid" =~ ^0+$ ]] && continue  # deletion
+    if [[ ! "$local_oid" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+        echo "Invalid outgoing object identifier; push blocked." >&2
+        exit 1
+    fi
+    if ! commit=$(git rev-parse --verify "${local_oid}^{commit}" 2>/dev/null); then
+        echo "Outgoing object is not a scannable commit; inspect it before publishing." >&2
+        exit 1
+    fi
+    revisions+=("$commit")
+    tag_candidates+=$'\n'"$local_oid"
+done
+log_options="${revisions[*]}"
+
+# Annotated tags have their own author and message, including nested tags.
+# Keep their object IDs so the metadata scan covers both local and outgoing tags.
+tag_objects=""
+while IFS= read -r object; do
+    [[ -n "$object" ]] || continue
+    while [[ "$(git cat-file -t "$object")" == tag ]]; do
+        tag_objects+=$'\n'"$object"
+        object=$(git cat-file tag "$object" | sed -n '1s/^object //p')
+    done
+done <<< "$tag_candidates"
+
+"$scanner" git --redact --no-banner --ignore-gitleaks-allow \
+    --max-decode-depth 2 --max-archive-depth 2 \
+    --config "$root/.gitleaks.toml" --log-opts="$log_options"
+{
+    git log --format='%an <%ae>%n%cn <%ce>%n%B' "${revisions[@]}" --
+    while IFS= read -r object; do
+        [[ -n "$object" ]] || continue
+        git cat-file tag "$object"
+    done <<< "$tag_objects"
+} | "$scanner" stdin --redact --no-banner --ignore-gitleaks-allow \
+        --max-decode-depth 2 --max-archive-depth 2 \
+        --config "$root/.gitleaks.toml"

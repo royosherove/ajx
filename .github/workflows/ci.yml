@@ -222,12 +222,6 @@ jobs:
           echo "$RUNNER_TEMP/ajx-security-bin" >> "$GITHUB_PATH"
       - name: Verify disclosure rules and staged-content hook
         run: python3 -I .github/scripts/test_security.py
-      - name: Scan complete history and commit metadata
+      - name: Scan complete history and commit and tag metadata
         shell: bash
-        run: |
-          set -euo pipefail
-          gitleaks git --redact --no-banner --ignore-gitleaks-allow \
-            --max-decode-depth 2 --max-archive-depth 2 \
-            --config .gitleaks.toml --log-opts=--all
-          git log --all --format='%an <%ae>%n%cn <%ce>%n%B' |
-            gitleaks stdin --redact --no-banner --ignore-gitleaks-allow --config .gitleaks.toml
+        run: .githooks/pre-push </dev/null
