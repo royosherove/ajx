@@ -38,6 +38,13 @@ class StageProgressTest(unittest.TestCase):
                     run.mark("extract", "done")
             self.assertEqual(logs, [])
 
+    def test_closed_output_does_not_fail_a_saved_transition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = fixtures.ReportingLifecycleTest().make_run(tmp)
+            run.log = mock.Mock(side_effect=BrokenPipeError("output closed"))
+            run.mark("release", "done")
+            self.assertEqual(fixtures.read_json(run.state_path)["stages"]["release"]["status"], "done")
+
 
 if __name__ == "__main__":
     unittest.main()

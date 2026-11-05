@@ -302,7 +302,12 @@ class Run:
     def mark(self, stage, status, **extra):
         self.state["stages"][stage] = {"status": status, "at": now(), **extra}
         self.save()
-        self.log(f"[{self.run_id}] stage {stage}: {status}")
+        try:
+            self.log(f"[{self.run_id}] stage {stage}: {status}")
+        except OSError:
+            # Diagnostic output must not turn a saved transition into a failure
+            # or prevent cleanup when the output pipe has gone away.
+            pass
 
     def _sync_run_record(self):
         # Update derived metadata after stage/cleanup work so a failed write
