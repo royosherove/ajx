@@ -93,11 +93,58 @@ func cmdUpdate(ns *Namespace) (int, error) {
 	}
 	document["updated"] = true
 	document["scope"] = scope
-	emit("Updated AJX to " + release.Version + ". " + map[bool]string{
-		true:  "Your installed skill was left unchanged.",
-		false: "Start a fresh agent session to load the updated skill.",
-	}[scope == "cli"])
+	if ns.Bool("json") {
+		emit("Updated AJX to " + release.Version + ". " + map[bool]string{
+			true:  "Your installed skill was left unchanged.",
+			false: "Start a fresh agent session to load the updated skill.",
+		}[scope == "cli"])
+	} else {
+		printUpdateComplete(Stdout, release.Version, scope == "cli", state.SkillInstalled)
+	}
 	return 0, nil
+}
+
+const updateLogo = `   ░███        ░█████ ░██    ░██
+  ░██░██         ░██   ░██  ░██
+ ░██  ░██        ░██    ░██░██
+░█████████       ░██     ░███
+░██    ░██ ░██   ░██    ░██░██
+░██    ░██ ░██   ░██   ░██  ░██
+░██    ░██  ░██████   ░██    ░██`
+
+func printUpdateComplete(w io.Writer, version string, cliOnly, skillInstalled bool) {
+	skillStatus := "Installed"
+	if cliOnly {
+		skillStatus = "Not managed by AJX"
+		if skillInstalled {
+			skillStatus = "Left unchanged"
+		}
+	} else if skillInstalled {
+		skillStatus = "Updated; locations kept"
+	}
+	lines := []string{
+		"Update complete",
+		"",
+		fmt.Sprintf("%-14s%s", "CLI", "Ready"),
+		fmt.Sprintf("%-14s%s", "Agent skills", skillStatus),
+	}
+	width := 40
+	for _, line := range lines {
+		if len(line) > width {
+			width = len(line)
+		}
+	}
+	border := "+" + strings.Repeat("-", width+2) + "+"
+	fmt.Fprintf(w, "\n%s\nv%s\n\n", updateLogo, version)
+	fmt.Fprintln(w, border)
+	for _, line := range lines {
+		fmt.Fprintf(w, "| %-*s |\n", width, line)
+	}
+	fmt.Fprintln(w, border)
+	if !cliOnly {
+		fmt.Fprintln(w, "\nNext: start a fresh agent session to load the updated skill.")
+	}
+	fmt.Fprintln(w, "\nDetails: ajx version --json")
 }
 
 func runUpdateInstaller(release update.Release, cliOnly, replace bool, stdout, stderr io.Writer) error {
@@ -132,7 +179,7 @@ func runUpdateInstaller(release update.Release, cliOnly, replace bool, stdout, s
 	if err := os.WriteFile(script, []byte(ajx.Installer), 0o600); err != nil {
 		return err
 	}
-	args := []string{script, "--version", "v" + release.Version, "--no-path", "--update"}
+	args := []string{script, "--version", "v" + release.Version, "--no-path", "--update", "--no-summary"}
 	if cliOnly {
 		args = append(args, "--no-skills")
 	}

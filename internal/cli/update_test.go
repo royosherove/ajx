@@ -128,3 +128,111 @@ func TestUpdateStillOffersSkillWhenCLIIsCurrent(t *testing.T) {
 		t.Fatalf("up-to-date installation prompted or changed: %d %s", code, out)
 	}
 }
+
+func TestUpdateCompletionExplainsSelectedScope(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		cliOnly, skill bool
+		wantSkill      string
+	}{
+		{"existing skills", false, true, "Updated; locations kept"},
+		{"new skills", false, false, "Installed"},
+		{"CLI only with skills", true, true, "Left unchanged"},
+		{"CLI only without managed skills", true, false, "Not managed by AJX"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := offline(t)
+			if tc.skill {
+				dir := filepath.Join(home, ".local/share/ajx/current/skill")
+				for _, part := range []string{"prompts", "schemas", "references", "assets", "examples"} {
+					if err := os.MkdirAll(filepath.Join(dir, part), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old skill"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			oldLatest, oldInstall, oldBuild := latestRelease, installUpdate, Build
+			t.Cleanup(func() { latestRelease, installUpdate, Build = oldLatest, oldInstall, oldBuild })
+			Build = "previous-build"
+			release := update.Release{Schema: 1, Version: ajx.Version, Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}
+			latestRelease = func() (update.Release, error) { return release, nil }
+			installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
+				fmt.Fprintln(stdout, "Downloading the update...")
+				fmt.Fprintln(stdout, "Preserved previous installation: synthetic-backup")
+				return nil
+			}
+			flag := "--with-skills"
+			if tc.cliOnly {
+				flag = "--cli-only"
+			}
+			code, output, errors := run(t, "update", flag)
+			if code != 0 || errors != "" {
+				t.Fatalf("update failed: %d %s %s", code, output, errors)
+			}
+			for _, want := range []string{updateLogo + "\nv" + ajx.Version + "\n\n+", "Update complete", tc.wantSkill,
+				"Preserved previous installation: synthetic-backup", "Details: ajx version --json"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("missing %q in completion:\n%s", want, output)
+				}
+			}
+			if strings.Count(output, "Update complete") != 1 {
+				t.Errorf("expected one completion summary:\n%s", output)
+			}
+			if strings.Contains(output, "fresh agent session") == tc.cliOnly {
+				t.Errorf("incorrect session guidance for CLI-only=%v:\n%s", tc.cliOnly, output)
+			}
+			for _, unwanted := range []string{release.Commit, release.SkillHash, "PATH", "Custom Kiro", "\x1b["} {
+				if strings.Contains(output, unwanted) {
+					t.Errorf("unexpected %q in human completion:\n%s", unwanted, output)
+				}
+			}
+
+			code, output, errors = run(t, "update", flag, "--json")
+			doc := decode(t, output) // Rejects extra logo, progress, or boxed text on stdout.
+			if code != 0 || doc["ok"] != true || doc["updated"] != true {
+				t.Fatalf("invalid JSON result: %d %s", code, output)
+			}
+			scope := "all"
+			if tc.cliOnly {
+				scope = "cli"
+			}
+			if doc["scope"] != scope {
+				t.Errorf("incorrect JSON scope: %s", output)
+			}
+			status := doc["status"].(map[string]any)
+			details := status["release"].(map[string]any)
+			if details["commit"] != release.Commit || details["skill_sha256"] != release.SkillHash {
+				t.Errorf("agent metadata was lost: %s", output)
+			}
+			if !strings.Contains(errors, "synthetic-backup") || strings.Contains(output, "Update complete") {
+				t.Errorf("installer diagnostics must remain separate from JSON: %s %s", output, errors)
+			}
+		})
+	}
+}
+
+func TestFailedInstallerNeverPrintsCompletion(t *testing.T) {
+	offline(t)
+	oldLatest, oldInstall, oldBuild := latestRelease, installUpdate, Build
+	t.Cleanup(func() { latestRelease, installUpdate, Build = oldLatest, oldInstall, oldBuild })
+	Build = "previous-build"
+	latestRelease = func() (update.Release, error) {
+		return update.Release{Schema: 1, Version: ajx.Version, Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}, nil
+	}
+	installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
+		fmt.Fprintln(stderr, "synthetic installation error")
+		return fmt.Errorf("installer failed")
+	}
+	for _, args := range [][]string{{"update", "--yes"}, {"update", "--yes", "--json"}} {
+		code, output, errors := run(t, args...)
+		if code != 1 || !strings.Contains(errors, "synthetic installation error") ||
+			strings.Contains(output, "Update complete") || strings.Contains(output, "is ready") {
+			t.Fatalf("failed installer reported success: %d %s %s", code, output, errors)
+		}
+		if args[len(args)-1] == "--json" && decode(t, output)["ok"] != false {
+			t.Fatalf("failed installer returned success JSON: %s", output)
+		}
+	}
+}

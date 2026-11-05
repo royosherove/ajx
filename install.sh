@@ -19,6 +19,7 @@ Requires curl and standard shell tools. No Go, Python, Git or sudo needed.
   --no-skills        Install only the CLI
   --no-path          Do not update shell startup files
   --update           Refresh existing managed skill locations without adding new ones
+  --no-summary       Let the caller display the completion summary
   --replace          Back up conflicting files/folders before replacing them
   --help            Show this help
 
@@ -26,6 +27,29 @@ Defaults: ~/.local/bin/ajx, with versioned files under ~/.local/share/ajx.
 Skills: ~/.agents/skills/ajx, ~/.claude/skills/ajx, ~/.kiro/skills/ajx.
 Rerun the same command to update. Existing managed installations update together.
 EOF
+}
+
+summary_box() {
+    local version=$1 width=40 row border
+    shift
+    for row in "$@"; do
+        if [[ ${#row} -gt "$width" ]]; then width=${#row}; fi
+    done
+    printf -v border '%*s' "$((width + 2))" ''
+    border=${border// /-}
+    printf '\n'
+    cat <<'EOF'
+   ░███        ░█████ ░██    ░██
+  ░██░██         ░██   ░██  ░██
+ ░██  ░██        ░██    ░██░██
+░█████████       ░██     ░███
+░██    ░██ ░██   ░██    ░██░██
+░██    ░██ ░██   ░██   ░██  ░██
+░██    ░██  ░██████   ░██    ░██
+EOF
+    printf 'v%s\n\n+%s+\n' "$version" "$border"
+    for row in "$@"; do printf '| %-*s |\n' "$width" "$row"; done
+    printf '+%s+\n\n' "$border"
 }
 
 sha256() {
@@ -117,14 +141,16 @@ configure_path() {
         if [[ -f "$file" ]] && grep -Fqx "$line" "$file"; then continue; fi
         printf '\n%s\n' "$line" >> "$file"
     done
+    path_configured=true
 }
 
 main() {
     local release_version="" package_dir="" no_skills=false no_path=false replace=false
-    local offline_install=false
+    local offline_install=false no_summary=false path_configured=false kiro_skill=false
     local update_existing=false refresh_skills=false pointer
     local root bin target os arch tmp expected="" base home_physical index matches
     local checksum filename extra archive listing pkg commit release stamp dest native_version
+    local installed_version version_pattern title scope
     local -a skills profiles original_args
     original_args=("$@")
     skills=()
@@ -141,6 +167,7 @@ main() {
             --no-skills) no_skills=true; shift ;;
             --no-path) no_path=true; shift ;;
             --update) update_existing=true; shift ;;
+            --no-summary) no_summary=true; shift ;;
             --replace) replace=true; shift ;;
             --help|-h) usage; return ;;
             *) die "Unknown option: $1 (see --help)" ;;
@@ -230,8 +257,13 @@ main() {
     grep -Eq '"implementation"[[:space:]]*:[[:space:]]*"go"' <<< "$native_version" &&
         grep -Eq "\"build\"[[:space:]]*:[[:space:]]*\"$commit\"" <<< "$native_version" ||
         die 'The executable does not identify the expected build'
+    version_pattern='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    [[ "$native_version" =~ $version_pattern ]] || die 'The executable did not report its version'
+    installed_version=${BASH_REMATCH[1]}
+    [[ "$installed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] ||
+        die 'The executable reported an invalid version'
     if [[ -n "$release_version" ]]; then
-        grep -Fq "\"version\": \"${release_version#v}\"" <<< "$native_version" ||
+        [[ "$installed_version" == "${release_version#v}" ]] ||
             die 'The executable version does not match the selected release'
     fi
     if [[ "$no_skills" == true ]]; then
@@ -246,6 +278,9 @@ main() {
         [[ "$dest" == /*/ajx && "$dest" != *$'\n'* &&
             "$dest" != *//* && "/$dest/" != *"/../"* && "/$dest/" != *"/./"* ]] ||
             die '--skill-dir must be an absolute directory ending in /ajx, without dot components'
+        if [[ "$dest" == "$HOME/.kiro/skills/ajx" || "$dest" == "$home_physical/.kiro/skills/ajx" ]]; then
+            kiro_skill=true
+        fi
         dest=$(destination_path "$dest")
         skills[$index]=$dest
         [[ "$home_physical/" != "$dest/"* && "$root/" != "$dest/"* &&
@@ -275,24 +310,46 @@ main() {
     link_destination "$bin" "$root/cli-current/ajx" "$root/current/ajx"
     for dest in ${skills[@]+"${skills[@]}"}; do
         link_destination "$dest" "$root/current/skill"
-        say "Skill ready: $dest"
     done
     if [[ "$no_path" == false ]]; then configure_path; fi
-    "$bin" version
-    say "CLI ready: $bin"
+    # Validate the installed entry point without dumping build and hash metadata.
+    # Errors remain visible, and a failed executable must not report completion.
+    "$bin" version >/dev/null
+    if [[ "$no_summary" == true ]]; then return; fi
+    title='Installation complete'
+    if [[ "$update_existing" == true ]]; then title='Update complete'; fi
     if [[ "$refresh_skills" == true ]]; then
-        say 'Installation complete: CLI + existing agent skills. Existing skill locations were retained.'
+        scope='CLI + existing agent skills'
     elif [[ ${#skills[@]} -gt 0 ]]; then
-        say "Installation complete: CLI + agent skills (${#skills[@]} locations). No separate skill installation is needed."
+        scope="CLI + agent skills (${#skills[@]} locations)"
     else
-        say 'Installation complete: CLI only. Agent skills were skipped (--no-skills).'
+        scope='CLI only; agent skills not changed'
     fi
-    say 'Open a new terminal for PATH changes, and start a fresh agent session.'
-    say 'Try: ajx console demo trials/console-demo'
+    summary_box "$installed_version" "$title" "" "$scope"
+    say "CLI: $bin"
+    if [[ "$refresh_skills" == true ]]; then
+        say "Skill bundle: $root/current/skill"
+        say 'Your existing agent skill locations were retained.'
+    else
+        for dest in ${skills[@]+"${skills[@]}"}; do say "Skill: $dest"; done
+    fi
+    say ''
+    if [[ "$path_configured" == true ]]; then
+        say 'New terminal sessions will have ajx on PATH.'
+    fi
     if [[ "$no_skills" == false ]]; then
-        say 'Then ask your agent: Use the AJX skill to review my project.'
+        say 'Next: Start a fresh agent session to load the AJX skill.'
+    fi
+    if [[ "$update_existing" == false ]]; then
+        say 'Try the demo: ajx console demo trials/console-demo'
+        if [[ "$no_skills" == false ]]; then
+            say 'Agent prompt: Use the AJX skill to review my project.'
+        fi
+    fi
+    if [[ "$kiro_skill" == true ]]; then
         say 'Custom Kiro agents also need skill://~/.kiro/skills/ajx/SKILL.md in their resources list.'
     fi
+    say 'Details: ajx version'
 }
 
 main "$@"

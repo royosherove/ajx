@@ -72,6 +72,19 @@ class InstallTest(unittest.TestCase):
         digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
         (self.package / "SHA256SUMS").write_text(f"{digest}  {self.archive.name}\n")
 
+    def replace_package_cli(self, script):
+        with tarfile.open(self.archive, "r:gz") as archive:
+            entries = [(entry, archive.extractfile(entry).read() if entry.isfile() else None)
+                       for entry in archive.getmembers()]
+        names = {f"ajx-{TARGET}/ajx", f"ajx-{TARGET}/skill/bin/ajx"}
+        with tarfile.open(self.archive, "w:gz") as archive:
+            for entry, payload in entries:
+                if entry.name in names:
+                    payload = script.encode()
+                    entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload) if payload is not None else None)
+        self.checksum()
+
     def install(self, *args, online=False, ok=True):
         cmd = ["/bin/bash", str(ROOT / "install.sh")]
         if not online:
@@ -107,8 +120,20 @@ class InstallTest(unittest.TestCase):
         installed = self.install()
         self.assertIn("Installing the AJX CLI + matching agent skills.", installed.stdout)
         self.assertIn("CLI + agent skills (3 locations)", installed.stdout)
-        self.assertIn("No separate skill installation is needed.", installed.stdout)
+        self.assertIn(f"░██    ░██  ░██████   ░██    ░██\nv{self.version}\n\n+", installed.stdout)
+        self.assertEqual(installed.stdout.count("Installation complete"), 1)
+        self.assertIn("░██    ░██  ░██████   ░██    ░██", installed.stdout)
+        frame = [line for line in installed.stdout.splitlines()
+                 if line.startswith("+") or line.startswith("|")]
+        self.assertEqual(frame[0], frame[-1])
+        self.assertTrue(all(len(line) == len(frame[0]) for line in frame))
+        self.assertNotIn(self.commit, installed.stdout)
+        self.assertNotIn("skill sha256", installed.stdout)
         binary = self.home / ".local/bin/ajx"
+        self.assertIn(f"CLI: {binary.parent.resolve() / 'ajx'}", installed.stdout)
+        self.assertFalse(any(str(binary) in line for line in frame))
+        self.assertIn("New terminal sessions will have ajx on PATH.", installed.stdout)
+        self.assertIn("Custom Kiro agents", installed.stdout)
         version = json.loads(subprocess.check_output(
             [str(binary), "version", "--json"], env=self.env, text=True))
         self.assertEqual(version["build"], self.commit)
@@ -201,11 +226,16 @@ class InstallTest(unittest.TestCase):
         self.assertTrue(binary.is_symlink())
 
     def test_cli_only_does_not_require_a_skill_or_shell_setup(self):
-        self.install("--no-skills", "--no-path")
+        result = self.install("--no-skills", "--no-path")
         self.assertTrue((self.home / ".local/bin/ajx").exists())
         self.assertFalse((self.home / ".agents").exists())
         self.assertFalse((self.home / ".zshrc").exists())
         self.assertFalse((self.home / ".local/share/ajx/current").exists())
+        self.assertIn("CLI only; agent skills not changed", result.stdout)
+        self.assertNotIn("PATH", result.stdout)
+        self.assertNotIn("agent session", result.stdout)
+        self.assertNotIn("Agent prompt:", result.stdout)
+        self.assertNotIn("Custom Kiro", result.stdout)
 
     def test_cli_only_upgrade_preserves_old_skills_including_legacy_custom_hosts(self):
         custom = self.home / "custom agent/ajx"
@@ -228,6 +258,10 @@ class InstallTest(unittest.TestCase):
         # A later full update advances the original custom skill location only.
         result = self.install("--update", "--no-path")
         self.assertIn("CLI + existing agent skills", result.stdout)
+        self.assertEqual(result.stdout.count("Update complete"), 1)
+        self.assertIn(f"Skill bundle: {root.resolve() / 'current/skill'}", result.stdout)
+        self.assertNotIn("Try the demo:", result.stdout)
+        self.assertNotIn("PATH", result.stdout)
         self.assertNotEqual((root / "current").resolve(), old_skill_target)
         self.assertEqual((custom / "bin/ajx").resolve(), (root / "current/skill/bin/ajx").resolve())
         self.assertFalse((self.home / ".agents").exists())
@@ -244,9 +278,58 @@ class InstallTest(unittest.TestCase):
 
     def test_custom_skill_directory(self):
         custom = self.home / "another host/skills/ajx"
-        self.install("--skill-dir", str(custom), "--no-path")
+        result = self.install("--skill-dir", str(custom), "--no-path")
         self.assertTrue((custom / "bin/ajx").is_file())
         self.assertFalse((self.home / ".agents").exists())
+        self.assertIn(f"Skill: {custom.parent.resolve() / 'ajx'}", result.stdout)
+        self.assertIn("fresh agent session", result.stdout)
+        self.assertNotIn("PATH", result.stdout)
+        self.assertNotIn("Custom Kiro", result.stdout)
+
+    def test_no_summary_preserves_progress_backup_notices_and_errors(self):
+        skill = self.home / ".agents/skills/ajx"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("my existing skill")
+        failed = self.install("--no-summary", "--no-path", ok=False)
+        self.assertIn("Already exists:", failed.stderr)
+        self.assertIn("--replace", failed.stderr)
+        self.assert_not_installed()
+        self.fake_curl()
+        result = self.install("--no-summary", "--no-path", "--replace", online=True)
+        self.assertIn("Installing the AJX CLI", result.stdout)
+        self.assertIn(f"Downloading AJX v{self.version}", result.stdout)
+        self.assertIn("Preserved previous installation:", result.stdout)
+        self.assertEqual(next(skill.parent.glob("ajx.ajx-backup-*/SKILL.md")).read_text(),
+                         "my existing skill")
+        for suppressed in ("Installation complete", "Update complete", "CLI:", "Skill:",
+                           "Next:", "Try the demo:", "Custom Kiro", "Details:",
+                           "░██", self.commit):
+            self.assertNotIn(suppressed, result.stdout)
+
+    def test_no_summary_still_checks_the_installed_executable(self):
+        version = json.dumps({"implementation": "go", "build": self.commit,
+                              "version": self.version})
+        self.replace_package_cli(
+            "#!/bin/sh\n"
+            'if [ "${2:-}" = "--json" ]; then\n'
+            f"  printf '%s\\n' '{version}'\n"
+            "else\n"
+            "  echo 'synthetic installed CLI failure' >&2\n"
+            "  exit 17\n"
+            "fi\n")
+        result = self.install("--no-summary", "--no-path", ok=False)
+        self.assertEqual(result.returncode, 17)
+        self.assertIn("synthetic installed CLI failure", result.stderr)
+        self.assertTrue((self.home / ".local/bin/ajx").is_symlink())
+        self.assertNotIn("Installation complete", result.stdout)
+
+    def test_invalid_reported_version_fails_before_installation(self):
+        version = json.dumps({"implementation": "go", "build": self.commit,
+                              "version": "not-a-version"})
+        self.replace_package_cli(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
+        result = self.install("--no-path", ok=False)
+        self.assertIn("invalid version", result.stderr)
+        self.assert_not_installed()
 
     def test_replace_cannot_move_the_home_or_install_root(self):
         (self.home / "home-link").symlink_to(self.home, target_is_directory=True)
@@ -318,7 +401,8 @@ else:
         with (self.package / "SHA256SUMS").open("a") as sums:
             sums.write("c" * 64 + "  another-platform.tar.gz\n")
         self.fake_curl()
-        self.install(online=True)
+        result = self.install(online=True)
+        self.assertIn(f"\nv{self.version}\n\n+", result.stdout)
         self.assertTrue((self.home / ".local/bin/ajx").is_file())
         requests = (self.root / "requests").read_text().splitlines()
         self.assertTrue(requests[0].endswith("/latest/download/VERSION"))
