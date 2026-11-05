@@ -519,7 +519,8 @@ func TestInventoryDoesNotEstablishInstructionVisibility(t *testing.T) {
 	p := newProfiles(t)
 	rd, _, state := p.makeRun("sample", 1, runOpts{})
 	inventory := M{"skills_visible": int64(2), "slash_commands_visible": int64(5),
-		"ajx_skills_visible": []any{"ajx"}, "ajx_slash_commands_visible": []any{"ajx"}}
+		"ajx_skills_visible": []any{"ajx"}, "ajx_slash_commands_visible": []any{"ajx"},
+		"skills_inventory": []any{M{"name": "ajx", "source": nil, "source_status": "unknown"}}}
 	if err := pyfmt.WriteJSON(filepath.Join(rd, "telemetry.execute.json"),
 		M{"events": []any{}, "harness_reported": inventory}); err != nil {
 		t.Fatal(err)

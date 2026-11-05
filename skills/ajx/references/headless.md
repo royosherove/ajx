@@ -46,7 +46,7 @@ requires unavailable human input, retain the blocked outcome and describe the
 interaction as a gate in its report.
 
 An agent can create the trial with `ajx init --no-input --json`, supplying the
-folder, `--product`, `--task`, worker/reporter choices and repeatable `--check`
+folder, `--product`, `--task` or `--task-file`, worker/reporter choices and repeatable `--check`
 flags. Use the returned next steps, then inspect validation and readiness.
 Missing prerequisites return errors; do not retry them as if the product failed.
 `ajx ci` also validates and checks readiness itself, so a pipeline with a
@@ -55,9 +55,15 @@ prepared trial can invoke that command directly.
 An explicit `--task` is the complete worker prompt and is written verbatim.
 `--material` records supplied materials in the trial metadata; include access
 instructions in the task text when the worker needs them. Shell command
-substitution removes trailing newlines before AJX sees its argument. When exact
-file bytes matter, write or copy the final `task-prompt.md` before validation
-and approval, then preserve it for the attempt.
+substitution removes trailing newlines before AJX sees its argument. Use
+`--task-file task.md` to copy a nonempty UTF-8 prompt without changing its bytes;
+do not also supply `--task`. The output reports the saved `task-prompt.md` hash
+as `prompt_sha256` in native JSON output. Existing files are kept unless
+`--force` is supplied, and the hash describes the file actually kept or written.
+
+Supply `--max-budget-usd 5` to write a positive worker budget into the trial.
+Enforcement depends on the harness. This does not include reporting costs or
+separately launched inner trials; inspect the full plan before approval.
 
 ### Check syntax when scaffolding
 

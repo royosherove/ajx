@@ -183,8 +183,10 @@ starts only if both pass. Any later change to those files voids the approval.
 When the task acts in a cloud or SaaS account (it declares `identity_cmd` or `[[preflight]]`),
 warnings from `ajx doctor` must be accepted before starting: tick **I accept these warnings for
 this run**, and the approval records them. If doctor says a startup file such as `~/.zshenv`
-sets the AWS profile for the worker's tool shell, set `shell_startup = "skip"` in `[trial]`
-instead of accepting the risk.
+sets the AWS profile for the worker's tool shell, set `shell_startup = "skip"` in `[trial]`,
+then rerun doctor and review the effective identity and remaining warnings.
+Skipping shell startup does not disable harness settings or establish a
+filesystem boundary; see [configuration inheritance](briefing.md#configuration-inheritance).
 
 ## Stop the console
 

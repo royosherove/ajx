@@ -151,3 +151,42 @@ func TestBundledDocsAreDiscoverableAndReadableOffline(t *testing.T) {
 		t.Fatalf("unknown documentation topic accepted: %d", code)
 	}
 }
+
+func TestPreparationDocsTopicsMatchBundledFiles(t *testing.T) {
+	offline(t)
+	t.Setenv("AJX_SKILL_DIR", "")
+	code, out, diagnostic := run(t, "docs", "--json")
+	if code != 0 {
+		t.Fatalf("docs index: %d %s %s", code, out, diagnostic)
+	}
+	index := map[string]string{}
+	for _, item := range util.Maps(decode(t, out)["topics"]) {
+		index[util.S(item["topic"])] = util.S(item["path"])
+	}
+	_, help, _ := run(t, "docs", "--help")
+	for _, topic := range []string{"briefing", "environments", "console"} {
+		t.Run(topic, func(t *testing.T) {
+			relative := "references/" + topic + ".md"
+			if index[topic] != relative || !strings.Contains(help, topic) {
+				t.Fatalf("topic is not discoverable: index=%v help=%s", index, help)
+			}
+			expected, err := os.ReadFile(filepath.Join(repoRoot(t), "skills", "ajx", relative))
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, text, diagnostic := run(t, "docs", topic)
+			if code != 0 || text != string(expected) {
+				t.Fatalf("plain document differs from bundled source: code=%d diagnostic=%s", code, diagnostic)
+			}
+			code, text, diagnostic = run(t, "docs", topic, "--json")
+			if code != 0 {
+				t.Fatalf("JSON document failed: %d %s", code, diagnostic)
+			}
+			document := decode(t, text)
+			if document["topic"] != topic || document["content"] != string(expected) ||
+				!strings.HasSuffix(util.S(document["source"]), relative) {
+				t.Fatalf("JSON document differs from bundled source: %v", document)
+			}
+		})
+	}
+}

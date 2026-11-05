@@ -363,6 +363,8 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		r.line("cell %-16s harness=%s model=%s config=%s", util.Str(cell["id"]), util.Str(cell["harness"]), model, util.Str(cell["config"]))
 		r.line("    auth=%s (%s) env=%s unset=%s isolates_config=%s", ab.Profile, auth.Name(),
 			spec.ReprList(util.SortedKeys(auth.Env())), spec.ReprList(auth.Unset()), pyBool(ab.IsolatesConfig))
+		r.line("    configuration: %s", util.Str(util.Get(checks, "configuration", "note")))
+		r.line("    shell startup: %s", util.Str(util.Get(checks, "shell_startup", "note")))
 		for _, s := range util.Maps(checks["harness_settings"]) {
 			r.line("    harness settings env applied over the worker env: %s sets %s", util.Str(s["source"]),
 				strings.Join(util.Strings(s["names"]), ", "))
@@ -446,6 +448,9 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		cellDoc["auth"] = util.M{"profile": ab.Profile, "type": auth.Name(), "env_names": strs(util.SortedKeys(auth.Env())),
 			"unset": strs(auth.Unset()), "isolates_config": ab.IsolatesConfig}
 		cellDoc["harness_settings"] = util.Or(checks["harness_settings"], []any{})
+		cellDoc["configuration"] = checks["configuration"]
+		cellDoc["shell_startup"] = checks["shell_startup"]
+		cellDoc["aws_settings_sources"] = checks["aws_settings_sources"]
 		cellDoc["tool_shell"] = checks["tool_shell"]
 		cellDoc["auth_identity"] = nilIfEmpty(authIdent)
 		cellDoc["auth_identity_ok"] = authOK

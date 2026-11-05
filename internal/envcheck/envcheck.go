@@ -111,7 +111,7 @@ const (
 		"AWS_REGION = \"<region>\" }; for the task, --profile <task profile> (an explicit --profile beats AWS_PROFILE " +
 		"in the environment). AWS_CONFIG_FILE and AWS_SHARED_CREDENTIALS_FILE are read by the model's AWS SDK too; " +
 		"put them in [env] only when the model does not authenticate through AWS."
-	SkipHint = "set shell_startup = \"skip\" in [trial] so the worker's tool shell does not read it"
+	SkipHint = "set shell_startup = \"skip\" in [trial] to redirect ZDOTDIR and unset BASH_ENV/ENV for legacy local launches; this does not trace or block all startup-file reads"
 	// DefaultAWSIdentity is what an aws call that omits --profile acts as.
 	DefaultAWSIdentity = "aws sts get-caller-identity --output text"
 )
@@ -820,6 +820,80 @@ type InspectOpts struct {
 	Identities bool
 }
 
+// ConfigurationControls describes requested adapter controls, not an observed
+// filesystem boundary or evidence of which credential source authenticated.
+func ConfigurationControls(cell M, h plugin.Harness, auth plugin.Auth) M {
+	mode := util.OrStr(util.Str(cell["config"]), "clean")
+	var authAllows any
+	if auth != nil {
+		authAllows = auth.Base().IsolatesConfig
+	}
+	note := "Clean configuration was requested; inspect state.execute.config_isolated or the explicit configuration manifest for runtime evidence."
+	switch {
+	case mode == "user":
+		note = "User configuration was requested; no clean-configuration guarantee is made."
+	case !h.Base().CleanSupported:
+		note = "This adapter does not support clean configuration; a fresh task session does not remove caller configuration."
+	case authAllows == false:
+		note = "This auth profile requires caller configuration to remain available; clean mode applies only the adapter's supported controls. This does not establish which credential source was used."
+	}
+	return M{"requested_mode": mode, "auth_allows_isolation": authAllows,
+		"clean_supported": h.Base().CleanSupported,
+		"note":            note + " Configuration controls do not establish filesystem or network isolation."}
+}
+
+// ShellStartupControls records the controls prepared in ctx. The worker has not
+// necessarily started, and even a shell environment probe does not trace reads.
+func ShellStartupControls(cell M, ctx *plugin.Ctx) M {
+	mode := util.OrStr(util.Str(cell["shell_startup"]), "inherit")
+	scope := "worker_prepare"
+	if ctx.RunToken == "doctor" {
+		scope = "doctor_probe"
+	}
+	configured, unset := []any{}, []any{}
+	note := "Shell startup behavior is inherited; startup-file reads are not traced."
+	if ctx.EnvironmentProfile != nil {
+		note = "The explicit environment profile controls the launch; legacy shell_startup controls are not applied. Startup-file reads are not traced."
+	} else if mode == "skip" {
+		if ctx.RunDir != "" && ctx.Env["ZDOTDIR"] != "" &&
+			filepath.Clean(ctx.Env["ZDOTDIR"]) == filepath.Join(ctx.RunDir, "no-shell-startup") {
+			configured = append(configured, "ZDOTDIR")
+		}
+		for _, name := range spec.ShellStartupDrop {
+			if util.Contains(ctx.UnsetEnv, name) {
+				unset = append(unset, name)
+			}
+		}
+		note = "The prepared launch environment redirects ZDOTDIR and unsets BASH_ENV/ENV. This does not disable harness settings, system startup files, or every shell snapshot, and does not prove which files a worker reads."
+		if len(configured) != 1 || len(unset) != len(spec.ShellStartupDrop) {
+			note = "Skip was requested; only the listed launch environment adjustments were prepared. Startup-file reads are not traced."
+		}
+	}
+	return M{"requested_mode": mode, "evidence_scope": scope,
+		"configured_env_names": configured, "unset_env_names": unset,
+		"startup_files_read": nil, "note": note}
+}
+
+func awsSettingsSources(view M) []any {
+	grouped := map[string][]string{}
+	for name, source := range viewMap(view, "source") {
+		if Matches(name, plugin.AWSCredentialEnv) {
+			grouped[source] = append(grouped[source], name)
+		}
+	}
+	sources := make([]string, 0, len(grouped))
+	for source := range grouped {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+	out := []any{}
+	for _, source := range sources {
+		sort.Strings(grouped[source])
+		out = append(out, M{"source": source, "names": util.List(grouped[source])})
+	}
+	return out
+}
+
 // InspectCell is what doctor, validate and prepare report about one cell's
 // environment. Returns (report, view): the report holds no env values except
 // identity output, the view holds secrets. Commands honor ctx.Go.
@@ -863,14 +937,17 @@ func InspectCell(sp, cell M, h plugin.Harness, auth plugin.Auth, runner plugin.R
 	}
 	sort.Strings(restored)
 	report := M{
-		"local_runner":      local,
-		"harness_settings":  settings,
-		"tool_shell":        toolShell,
-		"tool_shell_probed": shellVars != nil,
-		"overrides":         overrides,
-		"collisions":        util.List(CollisionFindings(sp, cell, auth, view)),
-		"snapshot_restored": util.List(restored),
-		"errors":            util.List(viewErrors(view)),
+		"local_runner":         local,
+		"harness_settings":     settings,
+		"tool_shell":           toolShell,
+		"tool_shell_probed":    shellVars != nil,
+		"overrides":            overrides,
+		"collisions":           util.List(CollisionFindings(sp, cell, auth, view)),
+		"snapshot_restored":    util.List(restored),
+		"errors":               util.List(viewErrors(view)),
+		"configuration":        ConfigurationControls(cell, h, auth),
+		"shell_startup":        ShellStartupControls(cell, ctx),
+		"aws_settings_sources": awsSettingsSources(view),
 	}
 	if o.Identities {
 		if local || ctx.EnvironmentProfile == nil {
@@ -941,6 +1018,10 @@ func DefaultIdentityWarning(report M) string {
 	if src := report["aws_profile_source"]; util.Truthy(src) {
 		text += fmt.Sprintf(". %s sets the AWS profile for that shell; %s", util.Str(src), SkipHint)
 	}
+	for _, source := range util.Maps(report["aws_settings_sources"]) {
+		text += fmt.Sprintf(". Effective AWS environment settings %s come from %s; skipping shell startup does not disable these harness settings",
+			strings.Join(util.Strings(source["names"]), ", "), util.Str(source["source"]))
+	}
 	return text
 }
 
@@ -953,7 +1034,9 @@ func Record(report M) M {
 	}
 	return M{"harness_settings": report["harness_settings"], "tool_shell": report["tool_shell"],
 		"tool_shell_probed": report["tool_shell_probed"], "collisions": report["collisions"],
-		"snapshot_restored": report["snapshot_restored"], "errors": report["errors"], "overrides": overrides}
+		"snapshot_restored": report["snapshot_restored"], "errors": report["errors"], "overrides": overrides,
+		"configuration": report["configuration"], "shell_startup": report["shell_startup"],
+		"aws_settings_sources": report["aws_settings_sources"]}
 }
 
 // RecordedNotes is one sentence per recorded override or collision

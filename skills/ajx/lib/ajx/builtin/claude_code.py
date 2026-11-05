@@ -25,6 +25,18 @@ def _settings_file_env(path):
     return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}
 
 
+def _inventory_entry(item):
+    """Keep explicit names/source labels without joining unrelated plugin data."""
+    name, source = None, None
+    if isinstance(item, str):
+        name = item
+    elif isinstance(item, dict) and isinstance(item.get("name"), str):
+        name = item["name"]
+        if isinstance(item.get("source"), str) and item["source"]:
+            source = item["source"]
+    return {"name": name, "source": source, "source_status": "reported" if source is not None else "unknown"}
+
+
 # ----------------------------------------------------------------------------- result folding
 # A `claude -p` session emits one `result` event per segment when the agent schedules its own
 # continuation (ScheduleWakeup / self-resume). Observed live: num_turns, duration_ms and usage are
@@ -257,9 +269,14 @@ class ClaudeCode(Harness):
                     "permission_mode": ev.get("permissionMode"), "api_key_source": ev.get("apiKeySource"),
                     "skills_visible": len(skills) if isinstance(skills, list) else None,
                     "slash_commands_visible": len(commands) if isinstance(commands, list) else None,
-                    "ajx_skills_visible": sorted(str(s) for s in skills if "ajx" in str(s).lower())
+                    "skills_inventory": [_inventory_entry(s) for s in skills] if isinstance(skills, list) else None,
+                    "ajx_skills_visible": sorted(entry["name"] for s in skills
+                                                  if (entry := _inventory_entry(s))["name"]
+                                                  and "ajx" in entry["name"].lower())
                         if isinstance(skills, list) else None,
-                    "ajx_slash_commands_visible": sorted(str(c) for c in commands if "ajx" in str(c).lower())
+                    "ajx_slash_commands_visible": sorted(entry["name"] for c in commands
+                                                          if (entry := _inventory_entry(c))["name"]
+                                                          and "ajx" in entry["name"].lower())
                         if isinstance(commands, list) else None,
                     "skills_visibility_note": "Session inventories do not establish skill ownership or activation.",
                     "mcp_servers": [m.get("name") for m in ev.get("mcp_servers") or []]})

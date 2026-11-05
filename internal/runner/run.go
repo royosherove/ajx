@@ -200,7 +200,11 @@ func (r *Run) mark(stage, status string, extra M) error {
 		rec[k] = v
 	}
 	r.stages()[stage] = rec
-	return r.save()
+	if err := r.save(); err != nil {
+		return err
+	}
+	r.Log(fmt.Sprintf("[%s] stage %s: %s", r.RunID, stage, status))
+	return nil
 }
 
 // syncRunRecord updates derived metadata after all stage and cleanup work.
@@ -763,7 +767,7 @@ func (r *Run) harnessFacts(ctx *plugin.Ctx, refresh bool) (M, error) {
 
 func (r *Run) stageExecute() error {
 	ctx := r.Ctx()
-	model := "agent default"
+	model := "harness default"
 	if util.Truthy(r.Cell["model"]) {
 		model = pyStr(r.Cell["model"])
 	}

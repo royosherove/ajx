@@ -106,7 +106,8 @@ harness = "fake"
         with tempfile.TemporaryDirectory() as tmp:
             run = self.make_run(tmp)
             inventory = {"skills_visible": 2, "slash_commands_visible": 5,
-                         "ajx_skills_visible": ["ajx"], "ajx_slash_commands_visible": ["ajx"]}
+                         "ajx_skills_visible": ["ajx"], "ajx_slash_commands_visible": ["ajx"],
+                         "skills_inventory": [{"name": "ajx", "source": None, "source_status": "unknown"}]}
             write_json(run.run_dir / "telemetry.execute.json", {"harness_reported": inventory})
             record = render.write_run_json(run.spec, run.cell, 1, run.run_dir, run.state,
                                            run.harness, run.auth, run.runner)

@@ -76,15 +76,32 @@ differences in environments, product versions, skills, and measurement coverage.
 
 ## Configuration inheritance
 
-Default `auth = "inherit"` may retain harness configuration. Claude Code uses
-`--safe-mode` with the caller's config directory for its stored login and applies
-`settings.json` environment values; the run records that limitation. Use the
-supported auth profile for the intended isolation, not a fabricated
-`isolates_config` declaration. When doctor reports that a startup file such as
-`~/.zshenv` sets a task variable (for example `AWS_PROFILE`) for the worker's
-tool shell, set `shell_startup = "skip"` in `[trial]`: for local runs without an
-environment profile, the worker's `zsh -c` then reads no `~/.zshenv` and bash no
-`BASH_ENV`, while PATH stays as the launching shell had it. Shell startup files can affect legacy local tool
-shells. Use doctor and the adapter/profile references to explain what the worker
-will actually receive. Explicit environments have stricter authentication rules
-in [environments.md](environments.md).
+Default `auth = "inherit"` may retain harness configuration.
+`isolates_config = false` means the auth profile requires caller configuration
+to remain available. With that profile, Claude Code's clean mode retains the
+caller config directory and applies `--safe-mode` and `--strict-mcp-config`;
+it can still receive environment values from `settings.json`. This does not
+establish whether a stored login, inherited provider setting, or another
+credential source was used. Use a supported auth profile for the intended
+isolation; changing the declaration alone does not enforce it.
+
+Doctor explains the requested controls and names effective AWS-related settings
+sources alongside identity warnings. `READY` means its readiness checks passed,
+not that credentials or filesystem access are isolated. Use
+`state.execute.config_isolated` and any explicit agent configuration manifest
+for execution evidence. The `environment.json.env_checks` configuration and
+shell fields describe the prepared controls, not observed file reads.
+
+For legacy local runs, `shell_startup = "skip"` redirects `ZDOTDIR` to the run's
+`no-shell-startup/` directory and unsets `BASH_ENV` and `ENV`. That changes where
+shells look for some user startup files; it does not disable harness settings,
+system startup files, existing environment values, or every harness shell
+snapshot. AJX does not trace startup-file reads. A `.zcompdump` or other file in
+the redirected directory does not identify its writer or prove which user
+startup files ran. The directory can remain with the local run artifacts for
+diagnosis; it is separate from the worker workspace and is not a new home
+directory. Treat its contents as private run data.
+
+Use doctor and the adapter/profile references to explain what the worker will
+receive. Explicit environments use their own launch controls and have stricter
+authentication rules in [environments.md](environments.md).

@@ -20,7 +20,7 @@ func TestUpdateScopeCheckCancellationAndHeadlessContract(t *testing.T) {
 		latestRelease, installUpdate, chooseUpdate, interactive = oldLatest, oldInstall, oldChoice, oldInteractive
 	}()
 	latestRelease = func() (update.Release, error) {
-		return update.Release{Schema: 1, Version: "1.1.0", Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}, nil
+		return update.Release{Schema: 1, Version: ajx.Version, Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}, nil
 	}
 	interactive = func() bool { return false }
 	var called, cliOnly, replace bool

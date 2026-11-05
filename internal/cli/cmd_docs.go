@@ -12,6 +12,9 @@ import (
 var documentationTopics = []struct{ name, path string }{
 	{"guide", "SKILL.md"},
 	{"trial", "examples/trial.toml"},
+	{"briefing", "references/briefing.md"},
+	{"environments", "references/environments.md"},
+	{"console", "references/console.md"},
 	{"checks", "references/headless.md"},
 	{"reporting", "references/reporting.md"},
 	{"artifacts", "references/artifacts.md"},

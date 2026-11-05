@@ -24,13 +24,35 @@ def load_cli():
 class OnboardingTest(unittest.TestCase):
     def test_docs_reads_local_reference_without_processes(self):
         cli = load_cli()
-        for topic, relative in [("trial", "examples/trial.toml"), ("artifacts", "references/artifacts.md")]:
+        for topic, relative in [
+            ("trial", "examples/trial.toml"),
+            ("artifacts", "references/artifacts.md"),
+            ("briefing", "references/briefing.md"),
+            ("environments", "references/environments.md"),
+            ("console", "references/console.md"),
+        ]:
             with self.subTest(topic=topic):
                 output = io.StringIO()
                 with mock.patch("subprocess.run", side_effect=AssertionError("no commands allowed")), \
                         contextlib.redirect_stdout(output):
                     self.assertEqual(cli.main(["docs", topic]), 0)
                 self.assertEqual(output.getvalue(), (SKILL / relative).read_text())
+
+    def test_preparation_docs_are_discoverable(self):
+        cli = load_cli()
+        output = io.StringIO()
+        with mock.patch("subprocess.run", side_effect=AssertionError("no commands allowed")), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(cli.main(["docs"]), 0)
+        lines = output.getvalue().splitlines()
+        for topic in ("briefing", "environments", "console"):
+            self.assertIn(f"ajx docs {topic:12s} references/{topic}.md", lines)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
+            cli.main(["docs", "--help"])
+        self.assertEqual(result.exception.code, 0)
+        for topic in ("briefing", "environments", "console"):
+            self.assertIn(topic, output.getvalue())
 
     def test_doctor_prints_final_ready_verdict(self):
         cli = load_cli()

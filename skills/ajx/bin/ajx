@@ -24,7 +24,9 @@ Public quickstart: https://ajx.dev/agents/
 """
 
 import argparse
+import hashlib
 import json
+import math
 import re
 import os
 import signal
@@ -51,7 +53,7 @@ narrate_timeout_seconds = 900     # for the resumed self-narration and reporter 
 # max_budget_usd = 5              # enforced by harnesses that support it (claude-code)
 order_seed = 0
 cache = "isolated"                # isolated | shared package caches
-shell_startup = "inherit"         # skip: the worker's tool shell reads no ~/.zshenv or BASH_ENV (local runs)
+shell_startup = "inherit"         # skip: redirect ZDOTDIR and unset BASH_ENV/ENV (legacy local runs; not a file-read boundary)
 
 [task]
 prompt_file = "task-prompt.md"    # exact bytes are hashed; never edited by ajx
@@ -109,17 +111,48 @@ def cmd_init(args):
     reporter_name = args.reporter or (args.harness if plugins.get("harness", args.harness)().can_report else "claude-code")
     if reporter_name not in plugins.names("harness") or not plugins.get("harness", reporter_name)().can_report:
         raise specmod.SpecError(f"{reporter_name!r} has no restricted reporter adapter")
+    prompt_bytes = PROMPT_TEMPLATE.format(product=args.product).encode("utf-8")
+    if args.task is not None:
+        if not args.task.strip():
+            raise specmod.SpecError("--task must not be empty")
+        prompt_bytes = args.task.encode("utf-8")
+    if args.task_file is not None:
+        source = Path(args.task_file)
+        if not source.is_file():
+            raise specmod.SpecError("--task-file must name a readable regular file")
+        try:
+            prompt_bytes = source.read_bytes()
+        except OSError as exc:
+            raise specmod.SpecError(f"cannot read --task-file: {exc}") from None
+        try:
+            nonempty = bool(prompt_bytes.decode("utf-8").strip())
+        except UnicodeDecodeError:
+            nonempty = False
+        if not nonempty:
+            raise specmod.SpecError("--task-file must contain nonempty UTF-8 text")
+    budget = None
+    if args.max_budget_usd is not None:
+        try:
+            budget = float(args.max_budget_usd)
+        except ValueError:
+            raise specmod.SpecError("--max-budget-usd must be a finite positive number") from None
+        if not math.isfinite(budget) or budget <= 0:
+            raise specmod.SpecError("--max-budget-usd must be a finite positive number")
     d = Path(args.dir).resolve()
     d.mkdir(parents=True, exist_ok=True)
     tid = args.id or _trial_id(d.name)
     trial, prompt = d / "trial.toml", d / "task-prompt.md"
-    for path, text in ((trial, TRIAL_TEMPLATE.format(id=tid, product=args.product, harness=args.harness, reporter=reporter_name)),
-                       (prompt, PROMPT_TEMPLATE.format(product=args.product))):
+    trial_text = TRIAL_TEMPLATE.format(id=tid, product=args.product, harness=args.harness, reporter=reporter_name)
+    if budget is not None:
+        trial_text = trial_text.replace("# max_budget_usd = 5", f"max_budget_usd = {budget}", 1)
+    for path, data in ((trial, trial_text.encode("utf-8")), (prompt, prompt_bytes)):
         if path.exists() and not args.force:
             print(f"exists, not overwritten: {path}")
         else:
-            path.write_text(text, encoding="utf-8")
+            path.write_bytes(data)
             print(f"wrote {path}")
+    if args.task_file is not None:
+        print(f"task-prompt.md sha256: {hashlib.sha256(prompt.read_bytes()).hexdigest()}")
     print(f"Next: describe the task in task-prompt.md and add a [[verify]] check, then review and start it in the "
           f"browser with: ajx console {consolemod._short(d)}")
     return 0
@@ -153,6 +186,9 @@ def cmd_example(args):
 DOCUMENTATION_TOPICS = {
     "guide": "SKILL.md",
     "trial": "examples/trial.toml",
+    "briefing": "references/briefing.md",
+    "environments": "references/environments.md",
+    "console": "references/console.md",
     "checks": "references/headless.md",
     "reporting": "references/reporting.md",
     "artifacts": "references/artifacts.md",
@@ -285,6 +321,10 @@ def _doctor_cells(spec, tmp):
               f"config={cell['config']}")
         print(f"    auth={auth.profile} ({auth.name}) env={sorted(auth.env())} unset={auth.unset()} "
               f"isolates_config={auth.isolates_config}")
+        for label, key in (("configuration", "configuration"), ("shell startup", "shell_startup")):
+            note = (checks.get(key) or {}).get("note")
+            if note:
+                print(f"    {label}: {note}")
         for s in checks["harness_settings"]:
             print(f"    harness settings env applied over the worker env: {s['source']} sets {', '.join(s['names'])}")
         print(f"    harness auth identity (model credentials): {checks['auth_identity'] or 'n/a'}")
@@ -710,6 +750,10 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("init"); s.add_argument("dir"); s.add_argument("--product", required=True); s.add_argument("--id"); s.add_argument("--force", action="store_true")
     s.add_argument("--harness", default="claude-code"); s.add_argument("--reporter"); s.set_defaults(fn=cmd_init)
+    task_input = s.add_mutually_exclusive_group()
+    task_input.add_argument("--task", metavar="TEXT", help="complete worker prompt, written verbatim into task-prompt.md")
+    task_input.add_argument("--task-file", metavar="FILE", help="copy a UTF-8 worker prompt without changing its bytes")
+    s.add_argument("--max-budget-usd", metavar="USD", help="positive worker budget; enforcement depends on the harness, excluding reporting calls")
     s = sub.add_parser("example"); s.add_argument("dir"); s.set_defaults(fn=cmd_example)
     s = sub.add_parser("docs", help="read bundled documentation without network access")
     s.add_argument("topic", nargs="?", choices=DOCUMENTATION_TOPICS); s.set_defaults(fn=cmd_docs)

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from . import spec as specmod
-from .base import excerpt
+from .base import AWS_CREDENTIAL_ENV, excerpt
 from .util import child_env, run_shell
 
 # Values are printed only for names that are routinely non-secret; anything else shows as hidden.
@@ -251,7 +251,8 @@ def startup_source(name, env):
     return None
 
 
-SKIP_HINT = "set shell_startup = \"skip\" in [trial] so the worker's tool shell does not read it"
+SKIP_HINT = ('set shell_startup = "skip" in [trial] to redirect ZDOTDIR and unset BASH_ENV/ENV for '
+             'legacy local launches; this does not trace or block all startup-file reads')
 
 
 def override_text(finding, shell):
@@ -320,6 +321,58 @@ def uses_aws(spec, auth, view):
         or (spec["task"].get("identity_cmd") or "").lstrip().startswith("aws "))
 
 
+def configuration_controls(cell, harness, auth):
+    """Requested adapter controls, not an observed permission boundary."""
+    mode = cell.get("config") or "clean"
+    auth_allows = auth.isolates_config if auth is not None else None
+    note = ("Clean configuration was requested; inspect state.execute.config_isolated or the explicit "
+            "configuration manifest for runtime evidence.")
+    if mode == "user":
+        note = "User configuration was requested; no clean-configuration guarantee is made."
+    elif not harness.clean_supported:
+        note = ("This adapter does not support clean configuration; a fresh task session does not "
+                "remove caller configuration.")
+    elif auth_allows is False:
+        note = ("This auth profile requires caller configuration to remain available; clean mode applies only "
+                "the adapter's supported controls. This does not establish which credential source was used.")
+    return {"requested_mode": mode, "auth_allows_isolation": auth_allows,
+            "clean_supported": harness.clean_supported,
+            "note": note + " Configuration controls do not establish filesystem or network isolation."}
+
+
+def shell_startup_controls(cell, ctx):
+    """Prepared launch controls; an environment probe does not trace file reads."""
+    mode = cell.get("shell_startup") or "inherit"
+    configured, unset = [], []
+    note = "Shell startup behavior is inherited; startup-file reads are not traced."
+    if ctx.get("environment_profile"):
+        note = ("The explicit environment profile controls the launch; legacy shell_startup controls are "
+                "not applied. Startup-file reads are not traced.")
+    elif mode == "skip":
+        zdotdir = ctx.get("env", {}).get("ZDOTDIR")
+        if ctx.get("run_dir") and zdotdir and Path(zdotdir) == Path(ctx["run_dir"]) / "no-shell-startup":
+            configured.append("ZDOTDIR")
+        unset = [name for name in specmod.SHELL_STARTUP_DROP if name in ctx.get("unset_env", [])]
+        note = ("The prepared launch environment redirects ZDOTDIR and unsets BASH_ENV/ENV. This does not "
+                "disable harness settings, system startup files, or every shell snapshot, and does not prove "
+                "which files a worker reads.")
+        if configured != ["ZDOTDIR"] or len(unset) != len(specmod.SHELL_STARTUP_DROP):
+            note = ("Skip was requested; only the listed launch environment adjustments were prepared. "
+                    "Startup-file reads are not traced.")
+    return {"requested_mode": mode,
+            "evidence_scope": "doctor_probe" if ctx.get("run_token") == "doctor" else "worker_prepare",
+            "configured_env_names": configured, "unset_env_names": unset,
+            "startup_files_read": None, "note": note}
+
+
+def _aws_settings_sources(view):
+    grouped = {}
+    for name, source in view.get("source", {}).items():
+        if _matches(name, AWS_CREDENTIAL_ENV):
+            grouped.setdefault(source, []).append(name)
+    return [{"source": source, "names": sorted(names)} for source, names in sorted(grouped.items())]
+
+
 def inspect_cell(spec, cell, harness, auth, runner, cwd, ctx, identities=False):
     """What doctor, validate and prepare report about one cell's environment. Returns (report, view);
     the report holds no env values except identity output, the view holds secrets."""
@@ -339,6 +392,9 @@ def inspect_cell(spec, cell, harness, auth, runner, cwd, ctx, identities=False):
         "snapshot_restored": sorted(n for n in (*spec["env"], *(cell.get("env") or {}))
                                     if n in getattr(harness, "tool_shell_restores", ())),
         "errors": view["errors"],
+        "configuration": configuration_controls(cell, harness, auth),
+        "shell_startup": shell_startup_controls(cell, ctx),
+        "aws_settings_sources": _aws_settings_sources(view),
     }
     if identities:
         report["auth_identity"] = (auth_identity(auth, view["effective"])
@@ -377,6 +433,9 @@ def default_identity_warning(report):
             f"{default['output']}{whose}, not as the task identity; teardown does not look there")
     if report.get("aws_profile_source"):
         text += f". {report['aws_profile_source']} sets the AWS profile for that shell; {SKIP_HINT}"
+    for source in report.get("aws_settings_sources") or []:
+        text += (f". Effective AWS environment settings {', '.join(source['names'])} come from {source['source']}; "
+                 "skipping shell startup does not disable these harness settings")
     return text
 
 
@@ -385,6 +444,8 @@ def record(report):
     return {"harness_settings": report["harness_settings"], "tool_shell": report["tool_shell"],
             "tool_shell_probed": report["tool_shell_probed"], "collisions": report["collisions"],
             "snapshot_restored": report["snapshot_restored"], "errors": report["errors"],
+            "configuration": report.get("configuration"), "shell_startup": report.get("shell_startup"),
+            "aws_settings_sources": report.get("aws_settings_sources"),
             "overrides": [{k: f[k] for k in ("name", "origin", "settings_source", "shell_startup", "model_affected")}
                           for f in report["overrides"]]}
 

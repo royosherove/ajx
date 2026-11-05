@@ -302,6 +302,12 @@ class Run:
     def mark(self, stage, status, **extra):
         self.state["stages"][stage] = {"status": status, "at": now(), **extra}
         self.save()
+        try:
+            self.log(f"[{self.run_id}] stage {stage}: {status}")
+        except OSError:
+            # Diagnostic output must not turn a saved transition into a failure
+            # or prevent cleanup when the output pipe has gone away.
+            pass
 
     def _sync_run_record(self):
         # Update derived metadata after stage/cleanup work so a failed write
@@ -516,7 +522,7 @@ class Run:
 
     def stage_execute(self):
         ctx = self.ctx()
-        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model') or 'agent default'}")
+        self.log(f"[{self.run_id}] executing task with {self.harness.name} model={self.cell.get('model') or 'harness default'}")
         # Record what we can before launching so a crash mid-run still leaves a findable session.
         planned = self.harness.plan(ctx) or {}
         requested = {k: self.cell.get(k) for k in ("harness", "model", "effort", "config", "auth")}

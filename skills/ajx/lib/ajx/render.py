@@ -144,7 +144,7 @@ def write_run_json(spec, cell, rep, run_dir, state, harness, auth, runner):
     if ajx_visible:
         limitations.append("AJX extensions were listed in the harness session inventory; "
                            "listing does not establish their origin, activation, or exposure to evaluation instructions")
-    inventory = {key: hr[key] for key in ("skills_visible", "slash_commands_visible",
+    inventory = {key: hr[key] for key in ("skills_visible", "skills_inventory", "slash_commands_visible",
                                         "ajx_skills_visible", "ajx_slash_commands_visible") if key in hr}
     limitations += credential_limitations(env, verify, state.get("teardown"))
     profiles = profile_records(run_dir, state, cell)

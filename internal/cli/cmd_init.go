@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	ajx "github.com/royosherove/ajx"
 	"github.com/royosherove/ajx/internal/plugin"
@@ -20,8 +22,8 @@ var interactive = Interactive
 // wizardIO is the form's input/output (nil = the terminal).
 var wizardIO wizard.IO
 
-func initOptions(ns *Namespace) wizard.Options {
-	return wizard.Options{
+func initOptions(ns *Namespace) (wizard.Options, error) {
+	o := wizard.Options{
 		Dir: ns.Str("dir"), Product: ns.Str("product"), ID: ns.Str("id"), Force: ns.Bool("force"),
 		Harness: ns.Str("harness"), Reporter: ns.Str("reporter"), Model: ns.Str("model"),
 		ReporterModel: ns.Str("reporter_model"), Task: ns.Str("task"), Materials: ns.List("material"),
@@ -30,6 +32,29 @@ func initOptions(ns *Namespace) wizard.Options {
 		TimeoutSet: ns.Has("timeout"), RepetitionsSet: ns.Has("repetitions"),
 		Fixture: ns.Str("fixture"), Environment: ns.Str("environment"), Image: ns.Str("image"),
 	}
+	if ns.Has("task_file") {
+		path := ns.Str("task_file")
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return o, usageErr(ns, "--task-file must name a readable regular file")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return o, usageErr(ns, "cannot read --task-file: "+err.Error())
+		}
+		if !utf8.Valid(data) || strings.TrimSpace(string(data)) == "" {
+			return o, usageErr(ns, "--task-file must contain nonempty UTF-8 text")
+		}
+		o.Task, o.TaskFile, o.TaskVerbatim = string(data), path, true
+	}
+	if ns.Has("max_budget_usd") {
+		budget, err := strconv.ParseFloat(strings.TrimSpace(ns.Str("max_budget_usd")), 64)
+		if err != nil {
+			return o, usageErr(ns, "--max-budget-usd must be a finite positive number")
+		}
+		o.MaxBudgetUSD = &budget
+	}
+	return o, nil
 }
 
 func cmdInit(ns *Namespace) (int, error) {
@@ -39,7 +64,10 @@ func cmdInit(ns *Namespace) (int, error) {
 	if ns.Bool("wizard") && !canAsk {
 		return 2, usageErr(ns, "--wizard needs a terminal on stdin and stdout, CI unset and no --no-input/--yes/--json; pass the settings as flags instead")
 	}
-	o := initOptions(ns)
+	o, err := initOptions(ns)
+	if err != nil {
+		return 2, err
+	}
 	asked := false
 	if canAsk && (ns.Bool("wizard") || len(wizard.Missing(o)) > 0) {
 		if err := wizard.Ask(&o, wizardIO); err != nil {
@@ -112,7 +140,8 @@ func cmdInit(ns *Namespace) (int, error) {
 	if ns.Bool("json") {
 		emitJSON(util.M{"schema_version": SchemaVersion, "command": "init", "ok": r.Valid, "exit_code": code, "dir": r.Dir,
 			"trial_file": r.TrialFile, "prompt_file": r.PromptFile, "written": strs(r.Written), "kept": strs(r.Kept),
-			"trial_id": nilIfEmpty(r.ID), "harness": nilIfEmpty(r.Harness), "harnesses": strs(r.Harnesses),
+			"prompt_sha256": r.PromptSHA256,
+			"trial_id":      nilIfEmpty(r.ID), "harness": nilIfEmpty(r.Harness), "harnesses": strs(r.Harnesses),
 			"reporter": nilIfEmpty(r.Reporter), "valid": r.Valid, "problem": nilIfEmpty(r.Problem), "error": problem,
 			"next": nextCommands, "next_argv": nextArgv, "missing": missing,
 			"run_requires": []string{"complete the task and success checks", "doctor reports ready", "the trial scope is authorized"}})
@@ -124,6 +153,9 @@ func cmdInit(ns *Namespace) (int, error) {
 		} else {
 			outf("wrote %s\n", path)
 		}
+	}
+	if ns.Has("task_file") {
+		outf("task-prompt.md sha256: %s\n", r.PromptSHA256)
 	}
 	outln(next)
 	if !r.Valid {

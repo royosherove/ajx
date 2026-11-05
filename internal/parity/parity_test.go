@@ -10,6 +10,7 @@
 package parity
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 var (
@@ -295,6 +298,45 @@ func TestParityInit(t *testing.T) {
 				if r := runCLI(t, which, base, "validate", filepath.Join(d, "trial.toml")); r.code != 0 {
 					t.Errorf("%s validate %s: %d %s", which, d, r.code, r.stderr)
 				}
+			}
+		}
+	}
+}
+
+func TestParityInitTaskFileAndBudget(t *testing.T) {
+	base := t.TempDir()
+	task := []byte("  Keep café.\r\n\r\nAnd final newlines.\n\n")
+	source := filepath.Join(base, "source.md")
+	if err := os.WriteFile(source, task, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, which := range []string{"py", "go"} {
+		dir := filepath.Join(base, which, "trial")
+		r := runCLI(t, which, base, "init", dir, "--product", "demo", "--task-file", source,
+			"--max-budget-usd", "2.5")
+		if r.code != 0 {
+			t.Fatalf("%s init: %d %s %s", which, r.code, r.stdout, r.stderr)
+		}
+		saved, err := os.ReadFile(filepath.Join(dir, "task-prompt.md"))
+		if err != nil || string(saved) != string(task) {
+			t.Fatalf("%s changed task file bytes: %q, %v", which, saved, err)
+		}
+		if !strings.Contains(r.stdout, fmt.Sprintf("task-prompt.md sha256: %x", sha256.Sum256(task))) {
+			t.Fatalf("%s did not report the saved hash: %s", which, r.stdout)
+		}
+		var document struct {
+			Trial struct {
+				MaxBudgetUSD float64 `toml:"max_budget_usd"`
+			}
+		}
+		if _, err := toml.DecodeFile(filepath.Join(dir, "trial.toml"), &document); err != nil ||
+			document.Trial.MaxBudgetUSD != 2.5 {
+			t.Fatalf("%s budget: %+v, %v", which, document, err)
+		}
+		for _, validator := range []string{"py", "go"} {
+			r := runCLI(t, validator, base, "validate", filepath.Join(dir, "trial.toml"))
+			if r.code != 0 {
+				t.Fatalf("%s validate %s scaffold: %d %s", validator, which, r.code, r.stderr)
 			}
 		}
 	}

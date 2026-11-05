@@ -28,6 +28,49 @@ func (r *lineReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func TestAccessibleWizardKeepsTaskFileBytesAndBudget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", "/usr/bin:/bin")
+	codex := 0
+	for i, h := range Harnesses(false) {
+		if h.Name == "codex" {
+			codex = i + 1
+		}
+	}
+	budget := 2.5
+	o := Options{Dir: filepath.Join(t.TempDir(), "trial"), TaskFile: "source.md",
+		Task: "  Keep café.\r\n\r\n", TaskVerbatim: true, MaxBudgetUSD: &budget}
+	in := &lineReader{lines: []string{
+		"orders-cli",        // product
+		"orders-cli --help", // materials (no task editor for --task-file)
+		strconv.Itoa(codex), // worker
+		"",                  // model
+		"",                  // reporter
+		"",                  // reporter model
+		"1",                 // shell check
+		"test -s result",    // check command
+		"300",               // time limit
+		"1",                 // attempts
+		"",                  // fixture
+		"1",                 // local
+	}}
+	var out bytes.Buffer
+	if err := Ask(&o, IO{In: in, Out: &out, Accessible: true}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Write(o)
+	if err != nil || !res.Valid {
+		t.Fatalf("write: %+v %v", res, err)
+	}
+	prompt, err := os.ReadFile(res.PromptFile)
+	if err != nil || string(prompt) != "  Keep café.\r\n\r\n" {
+		t.Fatalf("wizard changed task file bytes: %q, %v", prompt, err)
+	}
+	if !strings.Contains(Summary(o, false), "$2.5 per worker") {
+		t.Fatalf("budget missing from review: %s", Summary(o, false))
+	}
+}
+
 func TestAccessibleWizardWritesATrialThatLoads(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", "/usr/bin:/bin")

@@ -200,10 +200,17 @@ func Ask(o *Options, x IO) error {
 			o.Dir = def
 		}
 	}
-	if err := run(
-		huh.NewText().Title("What should the user accomplish?").
+	var taskField huh.Field
+	if o.TaskFile != "" {
+		taskField = huh.NewNote().Title("Task file").
+			Description(o.TaskFile + "\nThe supplied prompt will be copied verbatim.")
+	} else {
+		taskField = huh.NewText().Title("What should the user accomplish?").
 			Description("Write it as the customer would ask. Do not mention evaluation, AJX or expected problems.\nEnter: new line · Tab: continue").
-			Lines(4).Value(&o.Task).Validate(required("the task")),
+			Lines(4).Value(&o.Task).Validate(required("the task"))
+	}
+	if err := run(
+		taskField,
 		huh.NewText().Title("Materials the worker may use").
 			Description("One URL or document per line (optional). Paste a list or type it here.\nEnter: new line · Tab: continue").Lines(3).Value(&materials),
 	); err != nil {
@@ -309,7 +316,7 @@ func askModel(title, harness string, value *string, x IO) error {
 	if resolved, err := modelcatalog.Resolve(harness, selected); err == nil {
 		selected = resolved
 	}
-	options := []huh.Option[string]{huh.NewOption("Agent default (uses the agent's configured model)", "")}
+	options := []huh.Option[string]{huh.NewOption("Harness default (uses the agent's configured model)", "")}
 	found := selected == ""
 	for _, id := range modelcatalog.Models(harness) {
 		options = append(options, huh.NewOption(id, id))
@@ -448,6 +455,10 @@ func Summary(o Options, color bool) string {
 		{"attempts", orDefault(itoa(o.Repetitions), "1")},
 		{"start files", orDefault(o.Fixture, "none")},
 		{"runs in", where},
+	}
+	if o.MaxBudgetUSD != nil {
+		rows = append(rows, [2]string{"budget", "$" + strconv.FormatFloat(*o.MaxBudgetUSD, 'g', -1, 64) +
+			" per worker; harness-dependent, excludes reporting"})
 	}
 	var b strings.Builder
 	for _, r := range rows {
