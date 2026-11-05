@@ -172,7 +172,7 @@ func unexpectedAJXMention(text, product string) bool {
 			(len(suffix) == 4 || !nameChar(suffix[4])) {
 			continue
 		}
-		if len(suffix) > 0 && nameChar(suffix[0]) {
+		if len(suffix) > 0 && (nameChar(suffix[0]) || suffix[0] == '/' || suffix[0] == '\\') {
 			return true
 		}
 	}

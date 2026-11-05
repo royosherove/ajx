@@ -91,8 +91,20 @@ class EvidenceIntegrityTest(unittest.TestCase):
     def test_only_bare_product_mentions_are_exempted(self):
         for command in ("ajx --help", "curl https://ajx.dev/agents/", "/opt/bin/ajx version"):
             self.assertFalse(evidence._unexpected_ajx_mention(command, "ajx"), command)
-        for command in ("cat ajx-review.md", "cat ajx_context.json", "curl https://ajx.dev.invalid"):
+        for command in ("cat ajx-review.md", "cat ajx_context.json", "curl https://ajx.dev.invalid",
+                        "cat /opt/shared/ajx/SKILL.md", "cat /opt/shared/ajx/prompts/narrate.md",
+                        r"type C:\shared\ajx\SKILL.md"):
             self.assertTrue(evidence._unexpected_ajx_mention(command, "ajx"), command)
+
+    def test_copied_ajx_instructions_outside_workspace_remain_flagged(self):
+        spec = {"trial": {"product": "AJX", "output_dir": "/outer/results", "workspace_root": "/work"},
+                "path": "/outer/trial.toml"}
+        tel = evidence.assign_ids({"events": [
+            tool_event("a", "Read", {"file_path": "/opt/shared/ajx/SKILL.md"}, None),
+            tool_event("b", "Read", {"file_path": "/opt/shared/ajx/prompts/narrate.md"}, None),
+        ]})
+        flags = evidence.isolation_scan(tel, spec, {"paths": {"workspace": "/work/0123456789"}})
+        self.assertEqual(len(flags), 2)
 
 
 if __name__ == "__main__":

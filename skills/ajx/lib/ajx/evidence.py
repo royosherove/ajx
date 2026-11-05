@@ -65,7 +65,7 @@ def _unexpected_ajx_mention(text, product):
         suffix = text[match.end():]
         if re.match(r"\.dev(?![\w.-])", suffix, re.I):
             continue
-        if suffix and re.match(r"[\w.-]", suffix):
+        if suffix and (re.match(r"[\w.-]", suffix) or suffix[0] in "/\\"):
             return True
     return False
 

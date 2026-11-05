@@ -69,9 +69,26 @@ func TestAJXProductSuppressesOnlyBareProductMentions(t *testing.T) {
 			t.Fatalf("ordinary product access flagged: %s", command)
 		}
 	}
-	for _, command := range []string{"cat ajx-review.md", "cat ajx_context.json", "curl https://ajx.dev.invalid"} {
+	for _, command := range []string{
+		"cat ajx-review.md", "cat ajx_context.json", "curl https://ajx.dev.invalid",
+		"cat /opt/shared/ajx/SKILL.md", "cat /opt/shared/ajx/prompts/narrate.md",
+		`type C:\shared\ajx\SKILL.md`,
+	} {
 		if !unexpectedAJXMention(command, "ajx") {
 			t.Fatalf("distinct AJX material was exempted: %s", command)
 		}
+	}
+}
+
+func TestCopiedAJXInstructionsOutsideWorkspaceRemainFlagged(t *testing.T) {
+	sp := M{"trial": M{"product": "AJX", "output_dir": "/outer/results", "workspace_root": "/work"},
+		"path": "/outer/trial.toml"}
+	tel := AssignIDs(M{"events": []any{
+		tool("a", "Read", M{"file_path": "/opt/shared/ajx/SKILL.md"}, "", ""),
+		tool("b", "Read", M{"file_path": "/opt/shared/ajx/prompts/narrate.md"}, "", ""),
+	}})
+	flags := IsolationScan(tel, sp, M{"paths": M{"workspace": "/work/0123456789"}})
+	if len(flags) != 2 {
+		t.Fatalf("copied AJX instructions outside the workspace were exempted: %v", flags)
 	}
 }
