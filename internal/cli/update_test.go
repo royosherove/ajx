@@ -24,8 +24,8 @@ func TestUpdateScopeCheckCancellationAndHeadlessContract(t *testing.T) {
 	}
 	interactive = func() bool { return false }
 	var called, cliOnly, replace bool
-	installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
-		called, cliOnly, replace = true, cli, backup
+	installUpdate = func(r update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
+		called, cliOnly, replace = true, options.CLIOnly, options.Replace
 		fmt.Fprintln(stdout, "synthetic installer")
 		return nil
 	}
@@ -108,7 +108,7 @@ func TestUpdateStillOffersSkillWhenCLIIsCurrent(t *testing.T) {
 		}
 		return choice, nil
 	}
-	installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
+	installUpdate = func(r update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
 		called = true
 		return nil
 	}
@@ -129,38 +129,31 @@ func TestUpdateStillOffersSkillWhenCLIIsCurrent(t *testing.T) {
 	}
 }
 
-func TestUpdateCompletionExplainsSelectedScope(t *testing.T) {
+func TestUpdateCompletionDelegatesHumanOutputAndPreservesJSON(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		cliOnly, skill bool
-		wantSkill      string
+		name    string
+		cliOnly bool
 	}{
-		{"existing skills", false, true, "Updated; locations kept"},
-		{"new skills", false, false, "Installed"},
-		{"CLI only with skills", true, true, "Left unchanged"},
-		{"CLI only without managed skills", true, false, "Not managed by AJX"},
+		{"CLI and skills", false},
+		{"CLI only", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home := offline(t)
-			if tc.skill {
-				dir := filepath.Join(home, ".local/share/ajx/current/skill")
-				for _, part := range []string{"prompts", "schemas", "references", "assets", "examples"} {
-					if err := os.MkdirAll(filepath.Join(dir, part), 0o755); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old skill"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
+			offline(t)
 			oldLatest, oldInstall, oldBuild := latestRelease, installUpdate, Build
 			t.Cleanup(func() { latestRelease, installUpdate, Build = oldLatest, oldInstall, oldBuild })
 			Build = "previous-build"
 			release := update.Release{Schema: 1, Version: ajx.Version, Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}
 			latestRelease = func() (update.Release, error) { return release, nil }
-			installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
+			jsonOutput := false
+			installUpdate = func(r update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
+				if options.CLIOnly != tc.cliOnly || options.NoSummary != jsonOutput {
+					t.Errorf("incorrect installer options: %+v", options)
+				}
 				fmt.Fprintln(stdout, "Downloading the update...")
 				fmt.Fprintln(stdout, "Preserved previous installation: synthetic-backup")
+				if !options.NoSummary {
+					fmt.Fprintln(stdout, "Update complete: synthetic installer summary")
+				}
 				return nil
 			}
 			flag := "--with-skills"
@@ -171,8 +164,8 @@ func TestUpdateCompletionExplainsSelectedScope(t *testing.T) {
 			if code != 0 || errors != "" {
 				t.Fatalf("update failed: %d %s %s", code, output, errors)
 			}
-			for _, want := range []string{updateLogo + "\nv" + ajx.Version + "\n\n+", "Update complete", tc.wantSkill,
-				"Preserved previous installation: synthetic-backup", "Details: ajx version --json"} {
+			for _, want := range []string{"Update complete: synthetic installer summary",
+				"Preserved previous installation: synthetic-backup"} {
 				if !strings.Contains(output, want) {
 					t.Errorf("missing %q in completion:\n%s", want, output)
 				}
@@ -180,15 +173,13 @@ func TestUpdateCompletionExplainsSelectedScope(t *testing.T) {
 			if strings.Count(output, "Update complete") != 1 {
 				t.Errorf("expected one completion summary:\n%s", output)
 			}
-			if strings.Contains(output, "fresh agent session") == tc.cliOnly {
-				t.Errorf("incorrect session guidance for CLI-only=%v:\n%s", tc.cliOnly, output)
-			}
 			for _, unwanted := range []string{release.Commit, release.SkillHash, "PATH", "Custom Kiro", "\x1b["} {
 				if strings.Contains(output, unwanted) {
 					t.Errorf("unexpected %q in human completion:\n%s", unwanted, output)
 				}
 			}
 
+			jsonOutput = true
 			code, output, errors = run(t, "update", flag, "--json")
 			doc := decode(t, output) // Rejects extra logo, progress, or boxed text on stdout.
 			if code != 0 || doc["ok"] != true || doc["updated"] != true {
@@ -221,7 +212,7 @@ func TestFailedInstallerNeverPrintsCompletion(t *testing.T) {
 	latestRelease = func() (update.Release, error) {
 		return update.Release{Schema: 1, Version: ajx.Version, Commit: strings.Repeat("a", 40), SkillHash: strings.Repeat("b", 64)}, nil
 	}
-	installUpdate = func(r update.Release, cli, backup bool, stdout, stderr io.Writer) error {
+	installUpdate = func(r update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "synthetic installation error")
 		return fmt.Errorf("installer failed")
 	}

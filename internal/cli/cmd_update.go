@@ -20,6 +20,12 @@ var latestRelease = func() (update.Release, error) {
 var chooseUpdate = wizard.UpdateChoice
 var installUpdate = runUpdateInstaller
 
+type updateInstallOptions struct {
+	CLIOnly   bool
+	Replace   bool
+	NoSummary bool
+}
+
 func cmdUpdate(ns *Namespace) (int, error) {
 	if ns.Bool("cli_only") && ns.Bool("with_skills") {
 		return 2, usageErr(ns, "choose --cli-only or --with-skills, not both")
@@ -88,7 +94,10 @@ func cmdUpdate(ns *Namespace) (int, error) {
 	if ns.Bool("json") {
 		writer = Stderr
 	}
-	if err := installUpdate(release, scope == "cli", ns.Bool("replace"), writer, Stderr); err != nil {
+	options := updateInstallOptions{
+		CLIOnly: scope == "cli", Replace: ns.Bool("replace"), NoSummary: ns.Bool("json"),
+	}
+	if err := installUpdate(release, options, writer, Stderr); err != nil {
 		return 1, err
 	}
 	document["updated"] = true
@@ -98,56 +107,11 @@ func cmdUpdate(ns *Namespace) (int, error) {
 			true:  "Your installed skill was left unchanged.",
 			false: "Start a fresh agent session to load the updated skill.",
 		}[scope == "cli"])
-	} else {
-		printUpdateComplete(Stdout, release.Version, scope == "cli", state.SkillInstalled)
 	}
 	return 0, nil
 }
 
-const updateLogo = `   ░███        ░█████ ░██    ░██
-  ░██░██         ░██   ░██  ░██
- ░██  ░██        ░██    ░██░██
-░█████████       ░██     ░███
-░██    ░██ ░██   ░██    ░██░██
-░██    ░██ ░██   ░██   ░██  ░██
-░██    ░██  ░██████   ░██    ░██`
-
-func printUpdateComplete(w io.Writer, version string, cliOnly, skillInstalled bool) {
-	skillStatus := "Installed"
-	if cliOnly {
-		skillStatus = "Not managed by AJX"
-		if skillInstalled {
-			skillStatus = "Left unchanged"
-		}
-	} else if skillInstalled {
-		skillStatus = "Updated; locations kept"
-	}
-	lines := []string{
-		"Update complete",
-		"",
-		fmt.Sprintf("%-14s%s", "CLI", "Ready"),
-		fmt.Sprintf("%-14s%s", "Agent skills", skillStatus),
-	}
-	width := 40
-	for _, line := range lines {
-		if len(line) > width {
-			width = len(line)
-		}
-	}
-	border := "+" + strings.Repeat("-", width+2) + "+"
-	fmt.Fprintf(w, "\n%s\nv%s\n\n", updateLogo, version)
-	fmt.Fprintln(w, border)
-	for _, line := range lines {
-		fmt.Fprintf(w, "| %-*s |\n", width, line)
-	}
-	fmt.Fprintln(w, border)
-	if !cliOnly {
-		fmt.Fprintln(w, "\nNext: start a fresh agent session to load the updated skill.")
-	}
-	fmt.Fprintln(w, "\nDetails: ajx version --json")
-}
-
-func runUpdateInstaller(release update.Release, cliOnly, replace bool, stdout, stderr io.Writer) error {
+func runUpdateInstaller(release update.Release, options updateInstallOptions, stdout, stderr io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -179,11 +143,14 @@ func runUpdateInstaller(release update.Release, cliOnly, replace bool, stdout, s
 	if err := os.WriteFile(script, []byte(ajx.Installer), 0o600); err != nil {
 		return err
 	}
-	args := []string{script, "--version", "v" + release.Version, "--no-path", "--update", "--no-summary"}
-	if cliOnly {
+	args := []string{script, "--version", "v" + release.Version, "--no-path", "--update", "--compact-summary"}
+	if options.NoSummary {
+		args = append(args, "--no-summary")
+	}
+	if options.CLIOnly {
 		args = append(args, "--no-skills")
 	}
-	if replace {
+	if options.Replace {
 		args = append(args, "--replace")
 	}
 	command := exec.Command("/bin/bash", args...)

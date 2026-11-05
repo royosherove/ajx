@@ -120,7 +120,8 @@ bash ajx-install.sh --help
 | `--no-skills` | Install only the CLI |
 | `--update` | Refresh existing managed skill locations without adding new ones |
 | `--no-path` | Leave shell startup files untouched; invoke `~/.local/bin/ajx` directly |
-| `--no-summary` | Omit the completion summary when a caller displays its own; keep progress and diagnostics |
+| `--compact-summary` | Show the concise summary used by `ajx update` |
+| `--no-summary` | Omit either completion summary; keep progress and diagnostics |
 | `--version v1.0.0` | Pin to a specific released version instead of selecting the newest |
 | `--replace` | Move conflicting existing files/folders to adjacent `.ajx-backup-*` paths before installing |
 | `--package-dir DIR` | Install from a trusted, already downloaded package; no network needed |
