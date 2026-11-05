@@ -25,6 +25,7 @@ func initOptions(ns *Namespace) wizard.Options {
 		Dir: ns.Str("dir"), Product: ns.Str("product"), ID: ns.Str("id"), Force: ns.Bool("force"),
 		Harness: ns.Str("harness"), Reporter: ns.Str("reporter"), Model: ns.Str("model"),
 		ReporterModel: ns.Str("reporter_model"), Task: ns.Str("task"), Materials: ns.List("material"),
+		TaskVerbatim: ns.Has("task"), CheckNames: ns.List("check_name"), ProductVersionCmd: ns.Str("product_version_cmd"),
 		Checks: ns.List("check"), Timeout: ns.Int("timeout", 0), Repetitions: ns.Int("repetitions", 0),
 		TimeoutSet: ns.Has("timeout"), RepetitionsSet: ns.Has("repetitions"),
 		Fixture: ns.Str("fixture"), Environment: ns.Str("environment"), Image: ns.Str("image"),

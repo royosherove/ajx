@@ -34,6 +34,7 @@ Commands:
   init <dir> --product NAME [--harness NAME]   scaffold a trial for your chosen CLI
                                    (asks the rest in a terminal; --no-input never asks)
   example <dir>                   generate fictional reports offline; no agent calls
+  docs [TOPIC]                    read bundled guide, trial, checks, reporting or measurement docs
   doctor [trial.toml]              harness/auth/runner availability; model identity vs task identity;
                                    env overrides and collisions; preflight (no secrets printed)
   validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings
@@ -52,8 +53,11 @@ Commands:
   version | completion bash|zsh|fish
   update [--check] [--with-skills | --cli-only]   update from public releases; no GitHub login
 
---json on init, validate, doctor, run, status, report, export, update and plugins prints one JSON
-document for agents and pipelines (see docs/GO-CLI.md).
+--json on init, docs, validate, doctor, run, status, report, export, update and plugins prints one JSON
+document for agents and pipelines.
+Start with: ajx docs guide   |   Trial syntax: ajx docs trial   |   Checks: ajx docs checks
+Public quickstart: https://ajx.dev/agents/
+CLI and JSON reference: https://github.com/royosherove/ajx/blob/main/docs/GO-CLI.md
 `
 
 // ConsoleActions are the console subcommands; anything else after
@@ -82,7 +86,7 @@ func BuildParser() *Parser {
 		Help: "show program's version number and exit"})
 	sub := p.Subcommands("cmd", true)
 
-	s := on(sub.Add("init", ""), cmdInit)
+	s := on(sub.Add("init", "scaffold a trial; use `ajx docs trial` for fields and `ajx docs checks` for success checks"), cmdInit)
 	s.Add(&Arg{Dest: "dir", Deferred: true})
 	s.Add(&Arg{Flags: []string{"--product"}, Deferred: true, Help: ""})
 	s.Opt("--id", "", "")
@@ -91,11 +95,14 @@ func BuildParser() *Parser {
 	s.Opt("--reporter", "", "")
 	s.Opt("--model", "", "worker model (default: the harness default)")
 	s.Opt("--reporter-model", "MODEL", "reporter model (default: the harness default)")
-	s.Opt("--task", "TEXT", "the outcome the user wants, written into task-prompt.md")
+	s.Opt("--task", "TEXT", "complete worker prompt, written verbatim into task-prompt.md; include allowed materials in this text")
+	s.Opt("--product-version-cmd", "CMD", "command that records the product version before and after each run")
 	s.Add(&Arg{Flags: []string{"--material"}, Kind: Append, Metavar: "TEXT",
 		Help: "a URL or document the worker may use (repeatable)"})
 	s.Add(&Arg{Flags: []string{"--check"}, Kind: Append, Metavar: "CHECK",
 		Help: "success check: a shell command, file:GLOB or http:URL (repeatable)"})
+	s.Add(&Arg{Flags: []string{"--check-name"}, Kind: Append, Metavar: "NAME",
+		Help: "readable check name; supply one per --check in the same order, or omit all (repeatable)"})
 	s.IntOpt("--timeout", "SECONDS", "worker time limit (default 1800)", nil)
 	s.IntOpt("--repetitions", "N", "attempts per cell (default 1)", nil)
 	s.Opt("--fixture", "DIR", "starting files copied into every fresh workspace")
@@ -108,6 +115,10 @@ func BuildParser() *Parser {
 
 	s = on(sub.Add("example", ""), cmdExample)
 	s.Pos("dir", "")
+
+	s = on(sub.Add("docs", "read bundled documentation without network access"), cmdDocs)
+	s.OptPos("topic", "guide, trial, checks, reporting or measurement; omit to list topics")
+	jsonFlag(s, "the topic list or document")
 
 	s = on(sub.Add("plugins", ""), cmdPlugins)
 	jsonFlag(s, "the plugins")
@@ -199,7 +210,7 @@ func BuildParser() *Parser {
 		Help: "a new, empty output folder (changed settings)"})
 	c.Flag("--accept-warnings", "only when the user accepted the readiness warnings listed by `since`, in their own words")
 
-	s = on(sub.Add("ci", "headless evaluation for pipelines: validate, doctor, run, decide; see docs/GO-CLI.md"), cmdCI)
+	s = on(sub.Add("ci", "headless evaluation for pipelines: validate, doctor, run, decide; see `ajx docs checks`"), cmdCI)
 	s.Pos("trial", "")
 	s.Opt("--output", "DIR", "output folder for this evaluation (default: the trial's output_dir); must be fresh unless --allow-reuse")
 	s.Opt("--junit", "FILE", "JUnit XML path (default <output>/junit.xml)")

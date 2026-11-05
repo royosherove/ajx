@@ -216,7 +216,7 @@ func TestInitFromFlagsHeadless(t *testing.T) {
 		t.Fatalf("fixture %v", util.Get(sp, "task", "fixture_dir"))
 	}
 	prompt, _ := os.ReadFile(filepath.Join(dir, "task-prompt.md"))
-	if !strings.Contains(string(prompt), "Convert orders.json to orders.csv.") || !strings.Contains(string(prompt), "- jq --help") {
+	if string(prompt) != "Convert orders.json to orders.csv." {
 		t.Fatalf("prompt: %s", prompt)
 	}
 	// headless and missing settings: argparse's error, no prompt

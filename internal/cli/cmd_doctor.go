@@ -200,15 +200,17 @@ func doctor(trial string, r *report) (int, error) {
 				ok = false
 			}
 		}
-		if !ok {
-			r.line("NOT READY: fix the FAILED/PROBLEMS lines above before `ajx run`.")
-		}
 		r.line("Review the declared permissions and TASK identity before running. Model authentication and " +
 			"task access are separate. Environment profiles report which restrictions are enforced.")
 	}
+	r.doc["ready"] = ok
 	if ok {
+		r.doc["exit_code"] = 0
+		r.line("READY: the checked prerequisites passed. Run only within the authorized scope.")
 		return 0, nil
 	}
+	r.doc["exit_code"] = 1
+	r.line("NOT READY: fix the FAILED/PROBLEMS or missing harnesses above before `ajx run`.")
 	return 1, nil
 }
 
@@ -397,6 +399,15 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 			r.line("    task identity: not checked ([task] identity_cmd unset; set it for any task that uses an account)")
 		}
 		checks["default_aws_identity"] = nil
+		checks["aws_profile_source"] = nil
+		if local {
+			for _, name := range []string{"AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+				if source := envcheck.StartupSource(name, eff); source != "" {
+					checks["aws_profile_source"] = source
+					break
+				}
+			}
+		}
 		if local && envcheck.UsesAWS(sp, auth, view) {
 			d := once("tool\x00"+envcheck.DefaultAWSIdentity+"\x00"+shell+"\x00"+envSig(eff), func() any {
 				return envcheck.IdentityResult(ctx, envcheck.DefaultAWSIdentity, ws, eff, shell)
@@ -441,6 +452,7 @@ func doctorCells(sp util.M, tmp string, r *report) (bool, error) {
 		cellDoc["auth_identity_probe"] = commandProbeDoc(authProbe)
 		cellDoc["task_identity"] = identityDoc(checks["task_identity"])
 		cellDoc["default_aws_identity"] = identityDoc(checks["default_aws_identity"])
+		cellDoc["aws_profile_source"] = checks["aws_profile_source"]
 		cellDoc["warnings"] = strs(ws2)
 		cellDoc["problems"] = strs(append(cellProblems, probs...))
 		cellDoc["runner"] = rn.Describe()

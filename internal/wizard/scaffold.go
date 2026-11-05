@@ -28,8 +28,11 @@ type Options struct {
 	Harness, Reporter          string
 	Model, ReporterModel       string
 	Task                       string
+	TaskVerbatim               bool // an explicit --task is already the complete worker prompt
 	Materials                  []string
 	Checks                     []string // shell command, "file:GLOB", "http:URL", "shell:CMD"
+	CheckNames                 []string // optional names paired with Checks in order
+	ProductVersionCmd          string
 	Timeout, Repetitions       int
 	TimeoutSet, RepetitionsSet bool   // distinguish omitted CLI flags from explicit zero
 	Fixture                    string // as given (relative to the working directory or absolute)
@@ -144,6 +147,17 @@ func Resolve(o *Options) error {
 		if _, err := ParseCheck(c); err != nil {
 			return spec.Errorf("%s", err.Error())
 		}
+	}
+	if len(o.CheckNames) > 0 && len(o.CheckNames) != len(o.Checks) {
+		return spec.Errorf("provide one --check-name for every --check, in the same order, or omit all check names")
+	}
+	for _, name := range o.CheckNames {
+		if strings.TrimSpace(name) == "" {
+			return spec.Errorf("--check-name must not be empty")
+		}
+	}
+	if o.TaskVerbatim && strings.TrimSpace(o.Task) == "" {
+		return spec.Errorf("--task must not be empty")
 	}
 	switch o.Environment {
 	case "", "local":
@@ -353,6 +367,9 @@ func Render(o Options, trialDir string) (string, string, error) {
 	if o.Timeout > 0 {
 		t = replaceLine(t, "timeout_seconds = ", "timeout_seconds = "+strconv.Itoa(o.Timeout), false)
 	}
+	if o.ProductVersionCmd != "" {
+		t = replaceLine(t, "product_version_cmd = ", "product_version_cmd = "+tomlString(o.ProductVersionCmd), true)
+	}
 	if len(o.Materials) > 0 {
 		t = replaceLine(t, "materials = []", "materials = "+tomlArray(o.Materials), true)
 	}
@@ -365,17 +382,20 @@ func Render(o Options, trialDir string) (string, string, error) {
 	}
 	if len(o.Checks) > 0 {
 		var blocks []string
-		for _, raw := range o.Checks {
+		for i, raw := range o.Checks {
 			c, err := ParseCheck(raw)
 			if err != nil {
 				return "", "", spec.Errorf("%s", err.Error())
 			}
-			b := "[[verify]]\nname = " + tomlString(c.Name) + "\n"
+			if len(o.CheckNames) > 0 {
+				c.Name = o.CheckNames[i]
+			}
+			b := "[[verify]]\nname = " + tomlString(c.Name) + "\ntype = " + tomlString(c.Type) + "\n"
 			switch c.Type {
 			case "file_exists":
-				b += "type = \"file_exists\"\npath = " + tomlString(c.Value) + "\n"
+				b += "path = " + tomlString(c.Value) + "\n"
 			case "http":
-				b += "type = \"http\"\nurl = " + tomlString(c.Value) + "\n"
+				b += "url = " + tomlString(c.Value) + "\n"
 			default:
 				b += "run = " + tomlString(c.Value) + "\n"
 			}
@@ -409,6 +429,9 @@ func containerProfile(image string) string {
 }
 
 func renderPrompt(o Options) string {
+	if o.TaskVerbatim {
+		return o.Task
+	}
 	if strings.TrimSpace(o.Task) == "" {
 		return strings.ReplaceAll(promptTemplate, "{product}", o.Product)
 	}
