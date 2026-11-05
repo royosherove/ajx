@@ -89,6 +89,23 @@ The skill's prompts, schemas, references, page assets and examples are compiled
 into the binary. Set `AJX_SKILL_DIR` to a `skills/ajx` checkout to read them from
 disk instead. `ajx version` prints the fingerprint of the resources in use.
 
+Read the bundled references directly, without a source checkout or network:
+
+```sh
+ajx docs                  # list available topics
+ajx docs guide            # coordinator workflow
+ajx docs trial            # complete trial.toml example
+ajx docs checks           # headless setup and success-check syntax
+ajx docs reporting        # report artifacts and evidence
+ajx docs artifacts        # JSON field paths and raw transcript decoding
+ajx docs measurement      # metric definitions and limits
+ajx docs trial --json     # source and content in one JSON document
+```
+
+These commands read the same skill resources as the runner. The Python CLI
+also supports the text forms. The public quickstart is at
+[ajx.dev/agents](https://ajx.dev/agents/).
+
 ## Relation to the Python CLI
 
 The coordinating skill and the AJX Console run whichever `ajx` you invoke.
@@ -152,21 +169,37 @@ Every question has a flag, so an agent can scaffold a complete trial in one call
 
 ```sh
 ajx init trials/jq --product jq --harness codex --no-input \
-  --task "Convert the three orders in orders.json to orders.csv, keeping every value." \
+  --task "Use jq and its built-in help to convert the three orders in orders.json to orders.csv, keeping every value." \
   --material "jq --help" \
-  --check "test -s orders.csv" --check "file:orders.csv" \
+  --check "test -s orders.csv" --check-name "nonempty CSV" \
+  --check "file:orders.csv" --check-name "saved CSV" \
+  --product-version-cmd "jq --version" \
   --model example-model --timeout 600 --repetitions 2 --fixture fixtures/orders
 ```
 
 | Flag | Writes |
 |---|---|
-| `--task TEXT` | `task-prompt.md`: "I want to try PRODUCT." followed by the task and a list of the materials |
+| `--task TEXT` | `task-prompt.md`: exactly the supplied argument, without added framing, trimming, or a final newline |
 | `--material TEXT` (repeatable) | `[task] materials` |
 | `--check CHECK` (repeatable) | a `[[verify]]` entry: a shell command (or `shell:CMD`), `file:GLOB` beneath the workspace, or `http:URL` |
+| `--check-name NAME` (repeatable) | readable check names, paired with `--check` values in order; name every check or omit all names |
+| `--product-version-cmd CMD` | `[trial] product_version_cmd`, recorded before and after each run |
 | `--model`, `--reporter-model` | the cell's and the reporter's `model` |
 | `--timeout SECONDS`, `--repetitions N` | `timeout_seconds`, `repetitions` |
 | `--fixture DIR` | `[task] fixture_dir`; the folder must exist |
 | `--environment container --image IMAGE` | an `[environments.container]` profile with the documented defaults, selected by the cell |
+
+An explicit `--task` is the complete prompt. `--material` records allowed
+materials in the trial metadata and does not append them to that prompt;
+include any instructions about using them in the task text. Shell command
+substitution such as `--task "$(cat task.md)"` removes trailing newlines before
+AJX receives the argument. To preserve a file byte for byte, copy it to
+`task-prompt.md` after scaffolding and before approving or launching the trial.
+The interactive wizard still composes its prompt from the task and materials
+entered in the form.
+
+Generated checks include their explicit `type`, including `type = "shell"`.
+Older trial files that omit this field still default to shell checks.
 
 Without these flags, `ajx init` writes exactly the Python CLI's scaffold. A
 container trial still needs an image prepared as described in
@@ -182,11 +215,15 @@ ANSI escape codes unless stdout is a terminal, and `NO_COLOR` turns styling off.
 
 Every document has `schema_version` (currently `1`) and `command`. New fields
 may appear within a schema version; existing fields keep their meaning.
+`doctor` ends with an explicit `READY` or `NOT READY` line; its JSON `ready`
+boolean carries the same verdict. Readiness covers the checked prerequisites,
+not authorization or a guarantee that the task will succeed.
 
 | Command | Main fields |
 |---|---|
+| `docs --json` | `topics[]` (`topic`, `path`), `source`, `quickstart`; with a topic: `topic`, `source`, `content` |
 | `validate --json` | `ok`, `trial` (`id`, `product`, `path`, `sha256`), `prompt` (`path`, `sha256`), `runs[]` (`run_id`, `cell`, `repetition`, `harness`, `model`, `config`, `auth`, `environment`, `agent_configuration`, `backend`), `verify_checks`, `setup`, `teardown`, `preflight`, `identity_cmd_set`, `output_dir`, `warnings[]` (`cell`, `text`), `profiles[]`, `lines[]` |
-| `doctor --json` | `ready`, `exit_code`, `harnesses[]` (`name`, `checked`: host or container, `installed`, `version`, `verified_live`, `resume`, `reporter`, `clean`, `telemetry`), `reporter` (`harness`, `model`, `auth`, `problems[]`), `cells[]` (`auth`, `auth_identity`, `task_identity`, `default_aws_identity`, `warnings[]`, `problems[]`, `runner`, or for environment profiles `backend`, `backend_prerequisites`, `mount_probe`), `command_environments[]` (`cells`, `task_identity`, `preflight[]`, `warnings[]`), `verify[]`, `lines[]` |
+| `doctor --json` | `ready`, `exit_code`, `harnesses[]` (`name`, `checked`: host or container, `installed`, `version`, `verified_live`, `resume`, `reporter`, `clean`, `telemetry`), `reporter` (`harness`, `model`, `auth`, `problems[]`), `cells[]` (`auth`, `auth_identity`, `task_identity`, `default_aws_identity`, `aws_profile_source`, `warnings[]`, `problems[]`, `runner`, or for environment profiles `backend`, `backend_prerequisites`, `mount_probe`), `command_environments[]` (`cells`, `task_identity`, `preflight[]`, `warnings[]`), `verify[]`, `lines[]` |
 | `status --json` | `ok`, `exit_code`, `output_dir`, `stages[]`, `runs[]` (`run_id`, `dir`, `stages` (stage to status), `marks[]`, `verified`, `checks_with_auth_errors[]`, `teardown_status`, `cleanup_confirmed`, `stage_errors[]`, and `events[]` with `--tail N`), `cleanup_not_confirmed[]` |
 | `run --json` | `ok`, `exit_code`, `output_dir`, `matrix_report`, `markdown`, `order[]`, `status` (the `status --json` document); with `--dry-run`, `plan` (the matrix plan) |
 | `report --json` | `index`, `matrix_markdown`, `matrix_json`, `runs_rendered[]`, `synthesis` |

@@ -4,6 +4,7 @@
 Commands:
   init <dir> --product NAME [--harness NAME]   scaffold a trial for your chosen CLI
   example <dir>                   generate fictional reports offline; no agent calls
+  docs [TOPIC]                    read bundled setup, reporting, artifact and measurement docs
   doctor [trial.toml]              harness/auth/runner availability; model identity vs task identity;
                                    env overrides and collisions; preflight (no secrets printed)
   validate <trial.toml>            check the trial file, print the run plan, prompt hash and env warnings
@@ -17,6 +18,9 @@ Commands:
   console list | stop [--all]      running console servers; stopping one never stops a run
   console since|wait|note|start|again|state <trial>   the coordinating agent's view of the same trial
   plugins                          list registered harness/auth/runner/check plugins
+
+Start with: ajx docs guide   |   Trial syntax: ajx docs trial   |   Checks: ajx docs checks
+Public quickstart: https://ajx.dev/agents/
 """
 
 import argparse
@@ -146,6 +150,27 @@ def cmd_example(args):
     return 0
 
 
+DOCUMENTATION_TOPICS = {
+    "guide": "SKILL.md",
+    "trial": "examples/trial.toml",
+    "checks": "references/headless.md",
+    "reporting": "references/reporting.md",
+    "artifacts": "references/artifacts.md",
+    "measurement": "references/measurement.md",
+}
+
+
+def cmd_docs(args):
+    if not args.topic:
+        for topic, path in DOCUMENTATION_TOPICS.items():
+            print(f"ajx docs {topic:12s} {path}")
+        print("Documents come from this CLI's bundled skill. Public quickstart: https://ajx.dev/agents/")
+        return 0
+    path = Path(__file__).resolve().parents[1] / DOCUMENTATION_TOPICS[args.topic]
+    print(path.read_text(encoding="utf-8"), end="")
+    return 0
+
+
 def cmd_plugins(args):
     plugins.load()
     for kind in plugins.KINDS:
@@ -193,10 +218,10 @@ def cmd_doctor(args):
         for cmd in spec["verify"]:
             print(f"verify  {cmd['type']:10s} {cmd['name']}")
         print(f"workspace_root={spec['trial']['workspace_root']} output_dir={spec['trial']['output_dir']}")
-        if not ok:
-            print("NOT READY: fix the FAILED/PROBLEMS lines above before `ajx run`.")
         print("Review the declared permissions and TASK identity before running. Model authentication and "
               "task access are separate. Environment profiles report which restrictions are enforced.")
+    print("READY: the checked prerequisites passed. Run only within the authorized scope." if ok else
+          "NOT READY: fix the FAILED/PROBLEMS or missing harnesses above before `ajx run`.")
     return 0 if ok else 1
 
 
@@ -281,6 +306,11 @@ def _doctor_cells(spec, tmp):
         else:
             print("    task identity: not checked ([task] identity_cmd unset; set it for any task that uses an account)")
         checks["default_aws_identity"] = None
+        checks["aws_profile_source"] = None
+        if checks["local_runner"]:
+            checks["aws_profile_source"] = next(
+                (source for name in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE")
+                 if (source := envcheck.startup_source(name, eff))), None)
         if checks["local_runner"] and envcheck.uses_aws(spec, auth, view):
             checks["default_aws_identity"] = once(
                 ("tool", envcheck.DEFAULT_AWS_IDENTITY, view["shell"], sig(eff)),
@@ -681,6 +711,8 @@ def main(argv=None):
     s = sub.add_parser("init"); s.add_argument("dir"); s.add_argument("--product", required=True); s.add_argument("--id"); s.add_argument("--force", action="store_true")
     s.add_argument("--harness", default="claude-code"); s.add_argument("--reporter"); s.set_defaults(fn=cmd_init)
     s = sub.add_parser("example"); s.add_argument("dir"); s.set_defaults(fn=cmd_example)
+    s = sub.add_parser("docs", help="read bundled documentation without network access")
+    s.add_argument("topic", nargs="?", choices=DOCUMENTATION_TOPICS); s.set_defaults(fn=cmd_docs)
     s = sub.add_parser("plugins"); s.set_defaults(fn=cmd_plugins)
     s = sub.add_parser("doctor"); s.add_argument("trial", nargs="?"); s.set_defaults(fn=cmd_doctor)
     s = sub.add_parser("validate"); s.add_argument("trial"); s.add_argument("--cells"); s.set_defaults(fn=cmd_validate)
