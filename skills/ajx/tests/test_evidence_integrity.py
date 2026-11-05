@@ -106,6 +106,23 @@ class EvidenceIntegrityTest(unittest.TestCase):
         flags = evidence.isolation_scan(tel, spec, {"paths": {"workspace": "/work/0123456789"}})
         self.assertEqual(len(flags), 2)
 
+    def test_own_ajx_paths_do_not_hide_separate_external_paths(self):
+        spec = {"trial": {"product": "AJX", "output_dir": "/outer/results", "workspace_root": "/work"},
+                "path": "/outer/trial.toml"}
+        state = {"paths": {"workspace": "/work/0123456789"}}
+        cases = (
+            ({"file_path": "/work/0123456789/ajx/SKILL.md"}, False),
+            ({"command": "cat /work/0123456789/ajx/SKILL.md"}, False),
+            ({"command": "cat /work/0123456789/ajx/SKILL.md /opt/shared/ajx/SKILL.md"}, True),
+            ({"command": "cat /work/0123456789/ajx/SKILL.md;cat /opt/shared/ajx/SKILL.md"}, True),
+            ({"file_path": "/work/0123456789-other/ajx/SKILL.md"}, True),
+            ({"file_path": "/work/0123456789/../shared/ajx/SKILL.md"}, True),
+        )
+        for tool_input, flagged in cases:
+            with self.subTest(tool_input=tool_input):
+                tel = evidence.assign_ids({"events": [tool_event("a", "Read", tool_input, None)]})
+                self.assertEqual(bool(evidence.isolation_scan(tel, spec, state)), flagged)
+
 
 if __name__ == "__main__":
     unittest.main()

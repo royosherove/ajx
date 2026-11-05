@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/royosherove/ajx/internal/envcheck"
 	"github.com/royosherove/ajx/internal/measure"
@@ -179,6 +180,53 @@ func unexpectedAJXMention(text, product string) bool {
 	return false
 }
 
+func pathTokenBoundary(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune("\"'`;|&<>\\(){}[],=", r)
+}
+
+// Scrub complete owned path tokens, stopping at shell and JSON delimiters.
+// A separate external path, prefix collision, or traversal must stay visible.
+func scrubOwnPathTokens(text, ownPath string) string {
+	if ownPath == "" {
+		return text
+	}
+	base := filepath.Clean(ownPath)
+	var out strings.Builder
+	offset := 0
+	for search := 0; search < len(text); {
+		next := strings.Index(text[search:], ownPath)
+		if next < 0 {
+			break
+		}
+		start := search + next
+		end := start + len(ownPath)
+		search = end
+		before, _ := utf8.DecodeLastRuneInString(text[:start])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+		if start > 0 && !pathTokenBoundary(before) ||
+			end < len(text) && after != '/' && !pathTokenBoundary(after) {
+			continue
+		}
+		for end < len(text) {
+			r, width := utf8.DecodeRuneInString(text[end:])
+			if pathTokenBoundary(r) {
+				break
+			}
+			end += width
+		}
+		search = end
+		clean := filepath.Clean(text[start:end])
+		if clean != base && !strings.HasPrefix(clean, base+"/") {
+			continue
+		}
+		out.WriteString(text[offset:start])
+		out.WriteString("<own>")
+		offset = end
+	}
+	out.WriteString(text[offset:])
+	return out.String()
+}
+
 // IsolationScan flags tool inputs that reach outside the run's own workspace
 // toward evaluation material.
 func IsolationScan(tel, sp, state M) []any {
@@ -199,9 +247,6 @@ func IsolationScan(tel, sp, state M) []any {
 		{"harness transcripts", "/.claude/projects"},
 	}
 	scrubList := append([]string{}, own...)
-	if !ownSet[root] {
-		scrubList = append(scrubList, root)
-	}
 	sort.SliceStable(scrubList, func(i, j int) bool { return util.RuneLen(scrubList[i]) > util.RuneLen(scrubList[j]) })
 	runEntry := regexp.MustCompile(regexp.QuoteMeta(root) + `/[0-9a-f]{10}`)
 	flags := []any{}
@@ -217,10 +262,12 @@ func IsolationScan(tel, sp, state M) []any {
 		}
 		scrubbed := blob
 		for _, p := range scrubList {
-			if p == "" {
-				continue
-			}
-			scrubbed = strings.ReplaceAll(scrubbed, p, "<own>")
+			scrubbed = scrubOwnPathTokens(scrubbed, p)
+		}
+		// The shared workspace root itself is expected, but its other
+		// descendants are not automatically owned by this run.
+		if root != "" {
+			scrubbed = strings.ReplaceAll(scrubbed, root, "<workspace-root>")
 		}
 		var hits []string
 		for _, n := range needles {

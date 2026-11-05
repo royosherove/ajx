@@ -92,3 +92,25 @@ func TestCopiedAJXInstructionsOutsideWorkspaceRemainFlagged(t *testing.T) {
 		t.Fatalf("copied AJX instructions outside the workspace were exempted: %v", flags)
 	}
 }
+
+func TestOwnAJXPathsDoNotHideSeparateExternalPaths(t *testing.T) {
+	sp := M{"trial": M{"product": "AJX", "output_dir": "/outer/results", "workspace_root": "/work"},
+		"path": "/outer/trial.toml"}
+	state := M{"paths": M{"workspace": "/work/0123456789"}}
+	for _, tc := range []struct {
+		input   M
+		flagged bool
+	}{
+		{M{"file_path": "/work/0123456789/ajx/SKILL.md"}, false},
+		{M{"command": "cat /work/0123456789/ajx/SKILL.md"}, false},
+		{M{"command": "cat /work/0123456789/ajx/SKILL.md /opt/shared/ajx/SKILL.md"}, true},
+		{M{"command": "cat /work/0123456789/ajx/SKILL.md;cat /opt/shared/ajx/SKILL.md"}, true},
+		{M{"file_path": "/work/0123456789-other/ajx/SKILL.md"}, true},
+		{M{"file_path": "/work/0123456789/../shared/ajx/SKILL.md"}, true},
+	} {
+		tel := AssignIDs(M{"events": []any{tool("a", "Read", tc.input, "", "")}})
+		if flags := IsolationScan(tel, sp, state); (len(flags) > 0) != tc.flagged {
+			t.Errorf("input %v: got flags %v, want flagged=%v", tc.input, flags, tc.flagged)
+		}
+	}
+}

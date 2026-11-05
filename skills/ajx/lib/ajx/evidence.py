@@ -2,6 +2,7 @@
 per-ask cost attribution, and reconciled phase measurements."""
 
 import json
+import os
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -41,11 +42,13 @@ def isolation_scan(tel, spec, state):
         if ev["kind"] != "tool":
             continue
         blob = json.dumps(ev.get("input_raw"), ensure_ascii=False) if ev.get("input_raw") is not None else ev.get("input", "")
-        # The run's own paths (and the user-chosen workspace root) are legitimate even when they sit
-        # under the trial dir or contain "ajx"; scrub them before any needle check.
+        # Scrub complete owned tokens without hiding a separate external path.
         scrubbed = blob
-        for own_path in sorted(own | {root}, key=len, reverse=True):
-            scrubbed = scrubbed.replace(own_path, "<own>")
+        for own_path in sorted(own, key=len, reverse=True):
+            scrubbed = _scrub_own_path_tokens(scrubbed, own_path)
+        # The shared root is expected, but its other descendants are not owned.
+        if root:
+            scrubbed = scrubbed.replace(root, "<workspace-root>")
         hits = [label for label, needle in needles.items() if needle and needle in scrubbed]
         if _unexpected_ajx_mention(scrubbed, spec["trial"].get("product", "")):
             hits.append("mentions 'ajx'")
@@ -55,6 +58,32 @@ def isolation_scan(tel, spec, state):
         if hits:
             flags.append({"eid": ev["eid"], "reasons": sorted(set(hits)), "input": ev.get("input", "")[:200]})
     return flags
+
+
+def _path_token_boundary(char):
+    return char.isspace() or char in "\"'`;|&<>\\(){}[],="
+
+
+def _scrub_own_path_tokens(text, own_path):
+    """Keep external paths, prefix collisions and traversals available to the scan."""
+    if not own_path:
+        return text
+    base = os.path.normpath(own_path)
+    parts, offset = [], 0
+    for match in re.finditer(re.escape(own_path), text):
+        start, end = match.span()
+        if start < offset or (start and not _path_token_boundary(text[start - 1])):
+            continue
+        if end < len(text) and text[end] != "/" and not _path_token_boundary(text[end]):
+            continue
+        while end < len(text) and not _path_token_boundary(text[end]):
+            end += 1
+        clean = os.path.normpath(text[start:end])
+        if clean != base and not clean.startswith(base + "/"):
+            continue
+        parts.extend((text[offset:start], "<own>"))
+        offset = end
+    return "".join(parts) + text[offset:]
 
 
 def _unexpected_ajx_mention(text, product):
