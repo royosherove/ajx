@@ -52,6 +52,30 @@ Missing prerequisites return errors; do not retry them as if the product failed.
 `ajx ci` also validates and checks readiness itself, so a pipeline with a
 prepared trial can invoke that command directly.
 
+An explicit `--task` is the complete worker prompt and is written verbatim.
+`--material` records supplied materials in the trial metadata; include access
+instructions in the task text when the worker needs them. Shell command
+substitution removes trailing newlines before AJX sees its argument. When exact
+file bytes matter, write or copy the final `task-prompt.md` before validation
+and approval, then preserve it for the attempt.
+
+### Check syntax when scaffolding
+
+The native `ajx init` accepts repeatable `--check` arguments:
+
+| Argument | Generated check |
+|---|---|
+| `--check 'test -s result.json'` | Shell command; exit zero passes |
+| `--check 'shell:test -s result.json'` | Explicit shell form |
+| `--check 'file:result.json'` | File exists beneath the worker workspace |
+| `--check 'http:https://example.com/health'` | HTTP endpoint check |
+
+These are syntax examples, not sufficient verification for every task. If a
+task requires correct JSON values, compare the values, not just file existence.
+Shell quoting is applied by the calling shell before AJX receives the command.
+The annotated [trial configuration](../examples/trial.toml) shows `[[verify]]`
+fields for checks authored directly in TOML.
+
 ## Interpret the result
 
 `ajx ci` exits 0 only when every cell meets the policy's verified-success target
@@ -78,6 +102,9 @@ folder for a changed product, prompt, check or lifecycle command.
 reflects stage and cleanup status; failed task verification can still exit 0.
 Use `ajx ci` for an automated product gate, and inspect the evidence and asks
 when deciding what to improve.
+
+See [Read AJX results programmatically](artifacts.md) for artifact field paths,
+raw transcript decoding, and examples of checking what a passing result proves.
 
 `ajx improve`, baseline regression gates, cost and time limits in the policy, and
 bounded automatic improvement loops remain proposals. The Python CLI has no

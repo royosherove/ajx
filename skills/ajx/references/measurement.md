@@ -1,5 +1,8 @@
 # Measurement protocol
 
+For the generated `measurements.json` field paths and examples of querying a
+completed run, see [Read AJX results programmatically](artifacts.md).
+
 ## Boundaries and provenance
 
 Use recorded timestamps and usage records, never recollection, for measured costs. Capture the original task stopping point separately from later verification and report generation. Define outcome milestones before comparing trials.

@@ -2,6 +2,10 @@
 
 Read after task execution. Give narrative guidance to the original task agent after preserving its stopping point. Extract asks in a separate pass after the journey exists. The journey and raw asks are the two primary artifacts.
 
+For file locations, JSON field paths, raw transcript decoding, and the distinction
+between task success and reporting completion, see
+[Read AJX results programmatically](artifacts.md).
+
 ## Raw asks: `asks.md`
 
 Create the full asks register from the completed first-person journey. Each ask links to journey events and original evidence. Several observations can support one ask; several asks can address one underlying obstacle. Preserve those relationships and shared costs.
