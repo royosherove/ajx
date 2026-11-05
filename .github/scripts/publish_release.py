@@ -22,12 +22,17 @@ def github_json(path):
 
 def is_main_build(run, commit):
     """Accept completed CI from this repository, never a PR or another ref."""
+    workflow = run.get("path", "")
+    if not isinstance(workflow, str):
+        return False
+    workflow_path, separator, workflow_ref = workflow.partition("@")
     return (
         type(run.get("id")) is int and run["id"] > 0
         and type(run.get("run_attempt")) is int and run["run_attempt"] > 0
         and run.get("head_sha") == commit and run.get("head_branch") == "main"
         and run.get("event") in ("push", "workflow_dispatch")
-        and run.get("path") == ".github/workflows/ci.yml"
+        and workflow_path == ".github/workflows/ci.yml"
+        and (not separator or workflow_ref in ("main", "refs/heads/main", commit))
         and run.get("status") == "completed" and run.get("conclusion") == "success"
         and run.get("repository", {}).get("full_name") == REPOSITORY
         and run.get("head_repository", {}).get("full_name") == REPOSITORY

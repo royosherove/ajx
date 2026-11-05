@@ -70,11 +70,24 @@ class MainBuildTest(unittest.TestCase):
         ])
         self.assertEqual(selected, self.run["id"])
 
+    def test_main_workflow_path_accepts_documented_ref_suffixes(self):
+        for ref in ("main", "refs/heads/main", self.commit):
+            with self.subTest(ref=ref):
+                run = {**self.run, "path": f".github/workflows/ci.yml@{ref}"}
+                selected, _ = self.download([
+                    {"workflow_runs": [run]}, self.inventory, run, self.inventory,
+                ])
+                self.assertEqual(selected, self.run["id"])
+
     def test_untrusted_or_unfinished_runs_never_download(self):
         invalid = [
             ("head_sha", "b" * 40), ("head_branch", "feature/example"),
             ("event", "pull_request"), ("event", "pull_request_target"),
             ("path", ".github/workflows/other.yml"),
+            ("path", ".github/workflows/ci.yml@feature/example"),
+            ("path", ".github/workflows/ci.yml@" + "b" * 40),
+            ("path", ".github/workflows/ci.yml@"),
+            ("path", None),
             ("status", "in_progress"), ("conclusion", "failure"),
             ("conclusion", "cancelled"), ("id", "12"), ("run_attempt", 0),
             ("repository", {"id": 8, "full_name": "example/other"}),
