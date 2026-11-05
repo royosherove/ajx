@@ -435,6 +435,11 @@ def cmd_status(args):
         if verify.get("checks_with_auth_errors"):
             verified += f" ({len(verify['checks_with_auth_errors'])} check(s) hit credential errors)"
         print(f"{d.name:20s} " + " ".join(f"{m:>7s}" for m in marks) + f"  {verified}")
+        for active in _active_stages(st):
+            elapsed = active["elapsed_seconds"]
+            elapsed = f"{elapsed:.1f}s" if elapsed is not None else "unknown"
+            print(f"  {active['stage']}: started {active['started_at'] or 'unknown'}; elapsed {elapsed}"
+                  " (stage marker age; process liveness unverified)")
     for line in cleanup:
         print(f"CLEANUP NOT CONFIRMED {line}")
     if cleanup:
@@ -447,6 +452,27 @@ def cmd_status(args):
 
 
 TEARDOWN_MARKS = {"auth_errors": "AUTH", "failed": "FAIL", "skipped": "SKIP"}
+
+
+def _active_stages(state):
+    """Adapter-independent marker age, not model progress or a completion estimate."""
+    from datetime import datetime
+    active = []
+    for stage in runner.STAGES:
+        record = (state.get("stages") or {}).get(stage) or {}
+        if record.get("status") != "running":
+            continue
+        start = record.get("started_at") or record.get("at")
+        elapsed = None
+        try:
+            at = parse_ts(start)
+            seconds = (datetime.now(at.tzinfo) - at).total_seconds()
+            if seconds >= 0:
+                elapsed = round(seconds, 3)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            pass
+        active.append({"stage": stage, "started_at": start, "elapsed_seconds": elapsed})
+    return active
 
 
 def _status_tail(spec, states, limit):

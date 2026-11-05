@@ -404,13 +404,14 @@ class StatusTailTest(unittest.TestCase):
             self.assertIn("f-r1: last 1 worker events", stdout)
             self.assertEqual([e[1:] for e in EVENT_LINE.findall(stdout)], [("text ", "Reading the README before the next step")])
 
-    def test_status_without_tail_is_unchanged(self):
+    def test_status_without_tail_shows_stage_age_without_reading_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             trial, out = _trial(tmp)
             _run_dir(out, _layout(tmp), execute="running", run_json=False)
             code, stdout, _ = _run_cli(["status", str(trial)])
             self.assertEqual(code, 0)
-            self.assertEqual(len(stdout.splitlines()), 2)
+            self.assertIn("execute: started", stdout)
+            self.assertIn("elapsed", stdout)
             self.assertEqual(FakeTail.calls, [])
 
     def test_directory_mode_finds_the_harness_in_run_json_or_environment_json(self):

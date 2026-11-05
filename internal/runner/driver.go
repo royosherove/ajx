@@ -223,7 +223,16 @@ func (r *Run) skip(stage string) bool {
 // Go runs the wanted stages of this attempt (Python Run.go). ctx cancellation
 // is an interruption: the worker is stopped, cleanup runs, and the returned
 // error satisfies util.Interrupted.
-func (r *Run) Go(ctx context.Context, stages []string, keepWorkspace bool) (M, error) {
+func (r *Run) Go(ctx context.Context, stages []string, keepWorkspace bool) (state M, err error) {
+	defer func() {
+		if syncErr := r.syncRunRecord(); syncErr != nil {
+			if err == nil {
+				err = syncErr
+			} else {
+				r.Log(fmt.Sprintf("[%s] final run.json update failed: %v", r.RunID, syncErr))
+			}
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}

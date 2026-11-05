@@ -367,9 +367,16 @@ func WriteRunJSON(sp, cellM M, rep int, runDir string, state M, h plugin.Harness
 		limitations = append(limitations, fmt.Sprintf("isolation flags on %d tool call(s); see telemetry.execute.json", len(flags)))
 	}
 	hr := rec(tel["harness_reported"])
-	ajxVisible := util.Truthy(hr["ajx_skills_visible"])
+	ajxVisible := util.Truthy(hr["ajx_skills_visible"]) || util.Truthy(hr["ajx_slash_commands_visible"])
 	if ajxVisible {
-		limitations = append(limitations, "evaluation-aware run: AJX skills were listed in the worker's session (user config)")
+		limitations = append(limitations, "AJX extensions were listed in the harness session inventory; "+
+			"listing does not establish their origin, activation, or exposure to evaluation instructions")
+	}
+	inventory := M{}
+	for _, key := range []string{"skills_visible", "slash_commands_visible", "ajx_skills_visible", "ajx_slash_commands_visible"} {
+		if value, ok := hr[key]; ok {
+			inventory[key] = value
+		}
 	}
 	for _, l := range CredentialLimitations(env, verify, rec(state["teardown"])) {
 		limitations = append(limitations, l)
@@ -497,7 +504,8 @@ func WriteRunJSON(sp, cellM M, rep int, runDir string, state M, h plugin.Harness
 		"evaluation_wrapper_sha256": pyfmt.Index(sp, "sha256"),
 		"ajx_skill_revision":        res.Fingerprint(),
 		"invocation_timing":         "before_task",
-		"report_instructions_visible_during_task": ajxVisible,
+		"report_instructions_visible_during_task": nil,
+		"reported_extension_inventory":            inventory,
 		"product": M{"name": pyfmt.Index(trial, "product"), "version": env["product_version_before"],
 			"version_after": env["product_version_after"]},
 		"agent": M{
@@ -527,6 +535,7 @@ func WriteRunJSON(sp, cellM M, rep int, runDir string, state M, h plugin.Harness
 		"task_outcome_verified": verify["outcome"],
 		"verification_scope":    scope,
 		"journey_provenance":    state["journey_provenance"],
+		"narration_failure":     state["narration_failure"],
 		"reporter":              reporterRec,
 		"review_status":         review,
 		"evidence": M{
@@ -661,6 +670,41 @@ func ProfileMD(v any) string {
 		} else {
 			b.WriteString(pyfmt.Escape(string(r), true))
 		}
+	}
+	return b.String()
+}
+
+// comparabilityMD formats inventories as values, not escaped Python list
+// representations. Markdown metacharacters and HTML remain literal evidence.
+func comparabilityMD(v any) string {
+	if items, ok := v.([]any); ok {
+		if len(items) == 0 {
+			return "none"
+		}
+		values := make([]string, len(items))
+		for i, item := range items {
+			values[i] = comparabilityMD(item)
+		}
+		return strings.Join(values, ", ")
+	}
+	if items, ok := v.([]string); ok {
+		values := make([]any, len(items))
+		for i, item := range items {
+			values[i] = item
+		}
+		return comparabilityMD(values)
+	}
+	s := "unknown"
+	if v != nil {
+		s = pyfmt.Str(v)
+	}
+	text := pyfmt.Escape(pyfmt.Strip(pyfmt.CollapseSpace(s)), false)
+	var b strings.Builder
+	for _, r := range text {
+		if strings.ContainsRune("\\`*[]_|", r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
 	}
 	return b.String()
 }
@@ -1393,7 +1437,7 @@ func MatrixData(sp M, o MatrixOpts) (matrix M, err error) {
 	}
 	md = append(md, "", "## Comparability", "")
 	for _, k := range reportui.ConsistencyOrder(consistency) {
-		md = append(md, "- "+k+": "+ProfileMD(consistency[k]))
+		md = append(md, "- "+k+": "+comparabilityMD(consistency[k]))
 	}
 	if len(clusters) > 0 {
 		md = append(md, "", "## Asks across runs (clustered; clustering is inferred by the reporter model)", "",

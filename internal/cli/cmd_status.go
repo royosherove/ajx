@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/royosherove/ajx/internal/plugin"
 	"github.com/royosherove/ajx/internal/render"
@@ -236,6 +237,14 @@ func status(path string, tail int, _ bool) (int, error) {
 			marks = append(marks, fmt.Sprintf("%7s", m))
 		}
 		outln(fmt.Sprintf("%-20s ", filepath.Base(d)) + strings.Join(marks, " ") + "  " + row.verified)
+		for _, active := range activeStages(row, time.Now()) {
+			elapsed := "unknown"
+			if seconds, ok := util.Num(active["elapsed_seconds"]); ok {
+				elapsed = fmt.Sprintf("%.1fs", seconds)
+			}
+			outf("  %s: started %s; elapsed %s (runner: %s)\n",
+				util.S(active["stage"]), util.Str(util.Or(active["started_at"], "unknown")), elapsed, row.liveness)
+		}
 	}
 	for _, line := range cleanup {
 		outln("CLEANUP NOT CONFIRMED " + line)
@@ -288,7 +297,8 @@ func statusDoc(path string, tail *int) (int, util.M, error) {
 		}
 		rec := util.M{"run_id": filepath.Base(d), "dir": d, "stages": row.stages, "marks": strs(row.marks),
 			"verified": row.outcome, "checks_with_auth_errors": strs(row.authErrs), "teardown_status": nilIfEmpty(row.teardown),
-			"cleanup_confirmed": confirmed, "runner_state": row.liveness, "stage_errors": stageErrors(row.state)}
+			"cleanup_confirmed": confirmed, "runner_state": row.liveness, "stage_errors": stageErrors(row.state),
+			"active_stages": activeStages(row, time.Now())}
 		if tail != nil && *tail > 0 {
 			rec["events"] = tailEvents(sp, row, *tail)
 		}
@@ -309,6 +319,26 @@ func statusDoc(path string, tail *int) (int, util.M, error) {
 	doc["ok"] = code == 0
 	doc["exit_code"] = code
 	return code, doc, nil
+}
+
+// The stage marker is the only progress signal shared by every adapter.
+// Elapsed time measures that marker's age, not model progress or completion.
+// Liveness is reported separately; a stale lock is never shown as active.
+func activeStages(row runRow, now time.Time) []util.M {
+	active := []util.M{}
+	for _, stage := range runner.Stages {
+		if row.stages[stage] != "running" {
+			continue
+		}
+		record := util.MapOr(util.Get(row.state, "stages", stage))
+		start := util.Or(record["started_at"], record["at"])
+		item := util.M{"stage": stage, "started_at": start, "elapsed_seconds": nil}
+		if at, err := util.ParseTS(util.S(start)); err == nil && !at.After(now) {
+			item["elapsed_seconds"] = float64(now.Sub(at).Milliseconds()) / 1000
+		}
+		active = append(active, item)
+	}
+	return active
 }
 
 func stageErrors(state util.M) []any {
