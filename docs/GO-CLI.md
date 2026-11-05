@@ -95,6 +95,9 @@ Read the bundled references directly, without a source checkout or network:
 ajx docs                  # list available topics
 ajx docs guide            # coordinator workflow
 ajx docs trial            # complete trial.toml example
+ajx docs briefing         # task planning and configuration boundaries
+ajx docs environments     # explicit environment profiles
+ajx docs console          # local console handoffs
 ajx docs checks           # headless setup and success-check syntax
 ajx docs reporting        # report artifacts and evidence
 ajx docs artifacts        # JSON field paths and raw transcript decoding
@@ -147,7 +150,7 @@ Paste several URLs or put one URL on each line. **Shift+Tab goes back** without
 discarding your text. Single-line questions still use Enter to continue.
 
 Worker and reporter models each have a picker for the selected harness. Use
-the arrow keys to browse, `/` to filter, and Enter to choose. Choose **Agent
+the arrow keys to browse, `/` to filter, and Enter to choose. Choose **Harness
 default** to use that CLI's configured model, or **Custom model ID or alias**
 to enter a model not listed. The web console offers the same suggestions, plus
 models seen in the trial. See [model choices and aliases](HARNESS-SUPPORT.md#choose-a-model).
@@ -232,12 +235,12 @@ not authorization or a guarantee that the task will succeed.
 |---|---|
 | `docs --json` | `topics[]` (`topic`, `path`), `source`, `quickstart`; with a topic: `topic`, `source`, `content` |
 | `validate --json` | `ok`, `trial` (`id`, `product`, `path`, `sha256`), `prompt` (`path`, `sha256`), `runs[]` (`run_id`, `cell`, `repetition`, `harness`, `model`, `config`, `auth`, `environment`, `agent_configuration`, `backend`), `verify_checks`, `setup`, `teardown`, `preflight`, `identity_cmd_set`, `output_dir`, `warnings[]` (`cell`, `text`), `profiles[]`, `lines[]` |
-| `doctor --json` | `ready`, `exit_code`, `harnesses[]` (`name`, `checked`: host or container, `installed`, `version`, `verified_live`, `resume`, `reporter`, `clean`, `telemetry`), `reporter` (`harness`, `model`, `auth`, `problems[]`), `cells[]` (`auth`, `auth_identity`, `task_identity`, `default_aws_identity`, `aws_profile_source`, `warnings[]`, `problems[]`, `runner`, or for environment profiles `backend`, `backend_prerequisites`, `mount_probe`), `command_environments[]` (`cells`, `task_identity`, `preflight[]`, `warnings[]`), `verify[]`, `lines[]` |
+| `doctor --json` | `ready`, `exit_code`, `harnesses[]` (`name`, `checked`: host or container, `installed`, `version`, `verified_live`, `resume`, `reporter`, `clean`, `telemetry`), `reporter` (`harness`, `model`, `auth`, `problems[]`), `cells[]` (`auth`, `auth_identity`, `task_identity`, `default_aws_identity`, `aws_profile_source`, `configuration`, `shell_startup`, `aws_settings_sources`, `warnings[]`, `problems[]`, `runner`, or for environment profiles `backend`, `backend_prerequisites`, `mount_probe`), `command_environments[]` (`cells`, `task_identity`, `preflight[]`, `warnings[]`), `verify[]`, `lines[]` |
 | `status --json` | `ok`, `exit_code`, `output_dir`, `stages[]`, `runs[]` (`run_id`, `dir`, `stages` (stage to status), `marks[]`, `verified`, `checks_with_auth_errors[]`, `teardown_status`, `cleanup_confirmed`, `stage_errors[]`, and `events[]` with `--tail N`), `cleanup_not_confirmed[]` |
 | `run --json` | `ok`, `exit_code`, `output_dir`, `matrix_report`, `markdown`, `order[]`, `status` (the `status --json` document); with `--dry-run`, `plan` (the matrix plan) |
 | `report --json` | `index`, `matrix_markdown`, `matrix_json`, `runs_rendered[]`, `synthesis` |
 | `export --json` | `run_id`, `dest`, `files[]`, `replacements` (label to count), `replacement_order[]`, `warnings[]` |
-| `init --json` | `dir`, `trial_file`, `prompt_file`, `written[]`, `kept[]`, `trial_id`, `harness`, `reporter`, `valid`, `problem`, `next[]` |
+| `init --json` | `dir`, `trial_file`, `prompt_file`, `prompt_sha256`, `written[]`, `kept[]`, `trial_id`, `harness`, `reporter`, `valid`, `problem`, `next[]` |
 | `plugins --json` | `harness[]`, `auth[]`, `runner[]`, `check[]` (`name`, `source`, and the same attributes as the text listing), `notes[]` |
 | `version --json` | `version`, `implementation`, `build`, `skill_fingerprint`, `skill_resources` |
 | `update --check --json` | `status` (`current_version`, `release`, `cli_update_available`, `skill_update_available`, `skill_installed`, `newer_than_release`), `updated`, `message`; updating adds `scope` (`all` or `cli`) |
