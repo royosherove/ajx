@@ -200,7 +200,11 @@ func (r *Run) mark(stage, status string, extra M) error {
 		rec[k] = v
 	}
 	r.stages()[stage] = rec
-	return r.save()
+	if err := r.save(); err != nil {
+		return err
+	}
+	r.Log(fmt.Sprintf("[%s] stage %s: %s", r.RunID, stage, status))
+	return nil
 }
 
 // syncRunRecord updates derived metadata after all stage and cleanup work.
