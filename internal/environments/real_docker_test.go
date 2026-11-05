@@ -84,9 +84,9 @@ func TestRealPersistentToolsWriteAndNetworkBoundariesTwoAttemptsAndRelease(t *te
 		"read fixture":           "test -r /fixtures/input.txt",
 		"read-only fixture":      "if printf bad >> /fixtures/input.txt 2>/dev/null; then exit 90; fi",
 		"read-only root":         "if printf bad > /ajx-forbidden-root 2>/dev/null; then exit 90; fi",
-		"unrelated host absent":  "test ! -e " + shQuote(sentinel),
-		"report absent":          "test ! -e " + shQuote(a.RunDir),
-		"other workspace absent": "test ! -e " + shQuote(b.Workspace),
+		"unrelated host absent":  "test ! -e " + util.ShellQuote(sentinel),
+		"report absent":          "test ! -e " + util.ShellQuote(a.RunDir),
+		"other workspace absent": "test ! -e " + util.ShellQuote(b.Workspace),
 		"cannot stop supervisor": "if kill -STOP 1 2>/dev/null; then exit 90; fi",
 		"non-root identity":      `test "$(id -u)" != 0`,
 	}
@@ -105,7 +105,7 @@ func TestRealPersistentToolsWriteAndNetworkBoundariesTwoAttemptsAndRelease(t *te
 		"try:s.connect(('127.0.0.1'," + strconv.Itoa(port) + "))\n" +
 		"except OSError:pass\n" +
 		"else:raise SystemExit('host listener unexpectedly reachable')\n"
-	if res := shell(t, first, a, "python3 -c "+shQuote(script), 600); res["exit_code"] != int64(0) {
+	if res := shell(t, first, a, "python3 -c "+util.ShellQuote(script), 600); res["exit_code"] != int64(0) {
 		t.Fatal(res)
 	}
 	isolated := shell(t, second, b, `test ! -e installed-during-setup.txt; test ! -e "$HOME/.local/bin/ajx-probe"`, 600)
@@ -136,7 +136,7 @@ func TestRealTimeoutStopsDetachedWorkersAndKeepsEnvironmentForTeardown(t *testin
 	launch := "import subprocess,time\nfrom pathlib import Path\n" +
 		"subprocess.Popen(['python3','-c'," + pyRepr(worker) + "],start_new_session=True)\n" +
 		"Path('before-timeout').write_text('evidence')\ntime.sleep(120)\n"
-	response := shell(t, r, ctx, "python3 -c "+shQuote(launch), 1)
+	response := shell(t, r, ctx, "python3 -c "+util.ShellQuote(launch), 1)
 	abort := util.MapOr(response["environment_abort"])
 	if response["timed_out"] != true || abort["confirmed"] != true || abort["environment_retained"] != true {
 		t.Fatal(response)

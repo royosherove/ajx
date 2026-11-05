@@ -327,7 +327,7 @@ func TestParityWithPython(t *testing.T) {
 		}
 	}
 	for i, s := range quotes {
-		if got := shlexQuote(s); got != py.Quote[i] {
+		if got := util.ShellQuote(s); got != py.Quote[i] {
 			t.Errorf("shlex.quote(%q) go %s py %s", s, got, py.Quote[i])
 		}
 	}

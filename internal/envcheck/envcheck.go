@@ -456,19 +456,6 @@ func viewErrors(view M) []string {
 
 const envMark = "__AJX_ENV__"
 
-var safeShellWord = regexp.MustCompile(`^[\w@%+=:,./-]+$`)
-
-// ShQuote is shlex.quote.
-func ShQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if safeShellWord.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
 // ShellEnv is the exported variables a command sees inside `<shell> -c`,
 // after the shell's startup files; nil when the shell could not be probed.
 // `env -0` first; a Python dump where env has no -0.
@@ -480,9 +467,9 @@ func ShellEnv(ctx context.Context, shell string, env map[string]string, cwd stri
 	if envBin == "" {
 		envBin = "/usr/bin/env"
 	}
-	dumpers := []string{ShQuote(envBin) + " -0"}
+	dumpers := []string{util.ShellQuote(envBin) + " -0"}
 	if py := util.Which("python3"); py != "" {
-		dumpers = append(dumpers, ShQuote(py)+` -I -c 'import os, sys; sys.stdout.write(chr(0).join(k + "=" + v for k, v in os.environ.items()))'`)
+		dumpers = append(dumpers, util.ShellQuote(py)+` -I -c 'import os, sys; sys.stdout.write(chr(0).join(k + "=" + v for k, v in os.environ.items()))'`)
 	}
 	path := shell
 	if !strings.Contains(shell, "/") {

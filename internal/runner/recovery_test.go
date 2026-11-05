@@ -281,10 +281,10 @@ func TestFailedSetupRunsTeardownAndNeverReplaysSetup(t *testing.T) {
 		t.Run(fmt.Sprint("cleanup-fails-", failCleanup), func(t *testing.T) {
 			root := resolvePath(t.TempDir())
 			resource, count, allow := filepath.Join(root, "resource"), filepath.Join(root, "setup-count"), filepath.Join(root, "allow")
-			setup := fmt.Sprintf("echo x >> %s; touch %s; exit 9", shellQuote(count), shellQuote(resource))
-			teardown := "rm -f " + shellQuote(resource)
+			setup := fmt.Sprintf("echo x >> %s; touch %s; exit 9", util.ShellQuote(count), util.ShellQuote(resource))
+			teardown := "rm -f " + util.ShellQuote(resource)
 			if failCleanup {
-				teardown = "test -f " + shellQuote(allow) + " && " + teardown
+				teardown = "test -f " + util.ShellQuote(allow) + " && " + teardown
 			}
 			body := fmt.Sprintf("[[setup]]\nrun = %q\n[[teardown]]\nrun = %q\n", setup, teardown)
 			sp := loadSpec(t, writeTrial(t, root, body, ""))

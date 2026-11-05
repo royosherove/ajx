@@ -2,7 +2,6 @@ package builtin
 
 import (
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/royosherove/ajx/internal/plugin"
@@ -102,31 +101,9 @@ func (r *WrapperRunner) Wrap(argv []string, ctx *plugin.Ctx, env map[string]stri
 		}
 	}
 	if joins {
-		return append(prefix, ShlexJoin(argv)), nil
+		return append(prefix, util.ShellJoin(argv)), nil
 	}
 	return append(prefix, argv...), nil
-}
-
-var shlexUnsafe = regexp.MustCompile(`[^\w@%+=:,./-]`)
-
-// ShlexQuote is Python shlex.quote.
-func ShlexQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if !shlexUnsafe.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-// ShlexJoin is Python shlex.join.
-func ShlexJoin(argv []string) string {
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = ShlexQuote(a)
-	}
-	return strings.Join(parts, " ")
 }
 
 // expandUser is Path.expanduser for "~" and "~/...".

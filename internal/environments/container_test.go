@@ -621,7 +621,7 @@ func TestManagementSubprocessEnvironmentDoesNotInheritHostOrWorkerAuth(t *testin
 	r := mustNew(t, containerProfile(t, tr.base, nil))
 	script := filepath.Join(tr.root, "synthetic-docker")
 	record := filepath.Join(tr.root, "record")
-	writeFile(t, script, "#!/bin/sh\n{ printf '%s\\n' \"$@\"; env; } > "+shQuote(record)+"\nprintf '{}'\n")
+	writeFile(t, script, "#!/bin/sh\n{ printf '%s\\n' \"$@\"; env; } > "+util.ShellQuote(record)+"\nprintf '{}'\n")
 	noErr(t, os.Chmod(script, 0o755))
 	r.SetDocker(script, nil)
 	t.Setenv("SYNTHETIC_HOST_TOKEN", "not-for-docker")

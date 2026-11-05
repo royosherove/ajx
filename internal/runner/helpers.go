@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -61,30 +60,6 @@ func isFile(p string) bool {
 func isDir(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
-}
-
-// ---------------------------------------------------------------- shlex
-
-var shSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
-
-// shellQuote is shlex.quote.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if shSafe.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-// shellJoin is shlex.join.
-func shellJoin(argv []string) string {
-	q := make([]string, len(argv))
-	for i, a := range argv {
-		q[i] = shellQuote(a)
-	}
-	return strings.Join(q, " ")
 }
 
 // ---------------------------------------------------------------- probes

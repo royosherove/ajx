@@ -302,32 +302,6 @@ func pyStrip(s string) string {
 	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) })
 }
 
-// shlexJoin is shlex.join.
-func shlexJoin(args []string) string {
-	safe := regexp.MustCompile(`^[\w@%+=:,./-]+$`)
-	out := make([]string, len(args))
-	for i, a := range args {
-		switch {
-		case a == "":
-			out[i] = "''"
-		case safe.MatchString(a) && isASCII(a):
-			out[i] = a
-		default:
-			out[i] = "'" + strings.ReplaceAll(a, "'", `'"'"'`) + "'"
-		}
-	}
-	return strings.Join(out, " ")
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
 func pathParts(p string) []string {
 	var out []string
 	for _, s := range strings.Split(p, "/") {
@@ -558,7 +532,7 @@ func Load(path string, o LoadOpts) (M, error) {
 		if err := need(ok, "task.identity_cmd list must hold strings"); err != nil {
 			return nil, err
 		}
-		ident = shlexJoin(argv)
+		ident = util.ShellJoin(argv)
 	}
 	identStr, isStr := ident.(string)
 	if err := need(ident == nil || (isStr && pyStrip(identStr) != ""),

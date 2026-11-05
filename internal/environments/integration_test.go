@@ -39,9 +39,9 @@ func TestContextShellCheckedSurfacesEnvironmentErrors(t *testing.T) {
 	// Host checks cannot load credentials from worker-owned paths: Python raises before running anything.
 	ctx.CheckEnv = util.MergeEnv(ctx.Env, map[string]string{"AWS_CONFIG_FILE": filepath.Join(ctx.ConfigDir, "config")})
 	marker := filepath.Join(ctx.Workspace, "ran")
-	_, err = plugin.ContextShellChecked("touch "+shQuote(marker), ctx, 10, "host")
+	_, err = plugin.ContextShellChecked("touch "+util.ShellQuote(marker), ctx, 10, "host")
 	wantErr(t, err, KindValue, "AWS_CONFIG_FILE")
-	if record := plugin.ContextShell("touch "+shQuote(marker), ctx, 10, "host"); record["exit_code"] != nil ||
+	if record := plugin.ContextShell("touch "+util.ShellQuote(marker), ctx, 10, "host"); record["exit_code"] != nil ||
 		!strings.Contains(util.S(record["error"]), "AWS_CONFIG_FILE") {
 		t.Fatal(record)
 	}

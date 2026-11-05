@@ -829,8 +829,8 @@ func scopeGuard(ctx *plugin.Ctx, harness string) {
 		lines := make([]string, len(checks))
 		labels := map[string]bool{}
 		for i, c := range checks {
-			q := shlexQuote(c.path)
-			lines[i] = fmt.Sprintf("if [ -e %s ] || [ -L %s ]; then printf '%%s\\n' %s; exit 42; fi", q, q, shlexQuote(c.label))
+			q := util.ShellQuote(c.path)
+			lines[i] = fmt.Sprintf("if [ -e %s ] || [ -L %s ]; then printf '%%s\\n' %s; exit 42; fi", q, q, util.ShellQuote(c.label))
 			labels[c.label] = true
 		}
 		result := backendShell(strings.Join(lines, "\n")+"\nexit 0", ctx, nil)
@@ -1094,7 +1094,7 @@ func probe(harness string, ctx *plugin.Ctx) util.M {
 	var resolved string
 	if backend == "container" {
 		must(managed, "container agent profiles require EnvironmentRunner.shell")
-		result := backendShell("command -v "+shlexQuote(binary), ctx, nil)
+		result := backendShell("command -v "+util.ShellQuote(binary), ctx, nil)
 		if code, _ := exitCode(result); code != 0 && harness == "kiro-cli" {
 			result = backendShell("command -v kiro-cli", ctx, nil)
 		}
@@ -1128,13 +1128,13 @@ func probe(harness string, ctx *plugin.Ctx) util.M {
 	run := func(args []string, filter []string) string {
 		argv := append([]string{resolved}, args...)
 		if managed {
-			command := shlexJoin(argv)
+			command := util.ShellJoin(argv)
 			if len(filter) > 0 {
 				// Runner output is deliberately bounded. Filter long help text
 				// inside the backend so flags at its beginning are not lost.
 				patterns := make([]string, len(filter))
 				for i, text := range filter {
-					patterns[i] = "*" + shlexQuote(text) + "*"
+					patterns[i] = "*" + util.ShellQuote(text) + "*"
 				}
 				command = "ajx_probe_text=$(" + command + "); ajx_probe_status=$?; " +
 					`[ "$ajx_probe_status" -eq 0 ] || exit "$ajx_probe_status"; ` +
