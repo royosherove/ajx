@@ -25,6 +25,11 @@ as `bin/ajx-python`: use `python3 <skill-dir>/bin/ajx-python ...` only when the
 trial requires Python plugins. Native AJX does not execute Python plugins.
 Never replace an installed native CLI with a source launcher as a setup fix.
 
+Use `ajx docs` to list the bundled references without network access. Read
+`ajx docs briefing` for planning, `ajx docs environments` for explicit profiles,
+`ajx docs console` for console handoffs, and `ajx docs artifacts` when inspecting
+saved results.
+
 ## Flow
 
 For a complete, already authorized unattended trial, follow
@@ -77,6 +82,10 @@ user supplies, what you will handle, and what reports to expect.
 ### 2. Write and check the plan
 
 `ajx init <trial-dir> --product <name> --harness <chosen-cli>` scaffolds `trial.toml` and `task-prompt.md`; fill them from the brief (see `examples/trial.toml` for every option). Keep the task prompt neutral and within the supplied scope; once approved or launched, preserve its exact bytes. Its bytes are hashed. Verify checks must test the user's stated outcome, not the product's internals, and must not require evaluation knowledge. Add a `[[teardown]]` for anything the task creates outside the workspace; `$AJX_RUN_TOKEN` is available to tag and find resources, and `$AJX_TRIAL_DIR` (the directory holding `trial.toml`) lets setup, preflight, verify and teardown commands reach trial files without absolute paths. Both are exported to those commands only, never to the worker's harness; inside a container backend the host path is not mounted, so use it from host-located commands.
+
+For a task already supplied in a file, use `--task-file <path>` to preserve its
+bytes. Shell command substitution strips trailing newlines before `--task`
+receives the text. Use either `--task-file` or `--task`, not both.
 
 For explicit environment/agent profiles, see `examples/environment-profiles/`.
 Select `environment` and `agent_configuration` per cell, or set trial defaults.

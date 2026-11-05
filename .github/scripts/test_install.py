@@ -359,6 +359,13 @@ else:
                                     text=True, capture_output=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout
+        skill = binary.parent.parent
+        for topic in ("briefing", "environments", "console"):
+            document = json.loads(cli("docs", topic, "--json"))
+            self.assertEqual(document["topic"], topic)
+            self.assertEqual(document["content"],
+                             (skill / "references" / f"{topic}.md").read_text())
+            self.assertTrue(document["source"].startswith("embedded:"))
         try:
             output = cli("console", "demo", str(trial), "--no-open")
             url = re.search(r"http://127\.0\.0\.1:\d+\S*", output).group(0)

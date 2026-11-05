@@ -122,7 +122,7 @@ func BuildParser() *Parser {
 	s.Pos("dir", "")
 
 	s = on(sub.Add("docs", "read bundled documentation without network access"), cmdDocs)
-	s.OptPos("topic", "guide, trial, checks, reporting, artifacts or measurement; omit to list topics")
+	s.OptPos("topic", "guide, trial, briefing, environments, console, checks, reporting, artifacts or measurement; omit to list topics")
 	jsonFlag(s, "the topic list or document")
 
 	s = on(sub.Add("plugins", ""), cmdPlugins)
